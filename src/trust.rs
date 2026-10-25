@@ -1,4 +1,8 @@
 use std::sync::Arc;
+#[cfg(feature = "ca")]
+use std::sync::{Mutex, PoisonError};
+#[cfg(feature = "ca")]
+use std::time::{Duration, Instant};
 
 use rustls::DigitallySignedStruct;
 use rustls::DistinguishedName;
@@ -189,6 +193,8 @@ impl Trust {
             any,
             checks: PinnedChecks::of(policy),
             provider,
+            #[cfg(feature = "ca")]
+            ca_trusted: Mutex::default(),
         }))
     }
 
@@ -297,10 +303,12 @@ impl ServerCertVerifier for PeerServerVerifier {
 
 /// Verifies the certificate a client presents to a listening server.
 ///
-/// With only a store-backed pin set, an unpinned certificate is deferred past the
-/// certificate check and refused when its handshake signature verifies: it is recorded as
-/// waiting only after proving it holds the key. With a CA policy beside the pins, an
-/// untrusted certificate is recorded as waiting without that proof.
+/// With a store-backed pin set, a certificate that is neither pinned nor trusted by the CA
+/// policy is not refused when it is presented: rustls calls
+/// [`verify_client_cert`](ClientCertVerifier::verify_client_cert) before the client's
+/// CertificateVerify signature, so the client has not yet shown it holds the key. The decision
+/// is deferred to the signature check, which records the certificate as waiting only once the
+/// signature verifies, and then refuses the handshake.
 #[derive(Debug)]
 pub struct PeerClientVerifier {
     pins: Option<Pins>,
@@ -309,34 +317,79 @@ pub struct PeerClientVerifier {
     any: bool,
     checks: PinnedChecks,
     provider: Arc<CryptoProvider>,
+    /// Certificates the CA policy trusted at presentation, whose signature is still to come.
+    /// The signature check receives only the certificate, not the chain the CA policy needed,
+    /// so this is how it tells a trusted certificate from a deferred one.
+    #[cfg(feature = "ca")]
+    ca_trusted: Mutex<Vec<(Fingerprint, Instant)>>,
 }
 
-impl PeerClientVerifier {
-    fn has_ca(&self) -> bool {
-        #[cfg(feature = "ca")]
-        {
-            self.ca.is_some()
-        }
-        #[cfg(not(feature = "ca"))]
-        {
-            false
-        }
-    }
+/// How long a CA-trusted certificate waits for its signature before being forgotten.
+#[cfg(feature = "ca")]
+const CA_TRUSTED_TTL: Duration = Duration::from_secs(30);
+/// Bound on certificates awaiting their signature.
+#[cfg(feature = "ca")]
+const CA_TRUSTED_MAX: usize = 4096;
 
-    /// Whether unpinned certificates are deferred to the signature check.
+impl PeerClientVerifier {
+    /// Whether unpinned, untrusted certificates are deferred to the signature check.
     fn defers(&self) -> bool {
-        !self.any && !self.has_ca() && self.pins.as_ref().is_some_and(Pins::records_waiting)
+        !self.any && self.pins.as_ref().is_some_and(Pins::records_waiting)
     }
 
     fn pinned(&self, der: &[u8]) -> bool {
         self.pins.as_ref().is_some_and(|pins| pins.matches(der))
     }
 
-    /// After a valid signature: a deferred, unpinned certificate has now proved its key, so
-    /// it is recorded as waiting and refused.
-    fn settle(&self, certificate: &CertificateDer<'_>) -> Result<(), rustls::Error> {
-        if !self.defers() || self.pinned(certificate.as_ref()) {
-            return Ok(());
+    #[cfg(feature = "ca")]
+    fn note_ca_trusted(&self, der: &[u8]) {
+        let mut waiting = self
+            .ca_trusted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let now = Instant::now();
+        waiting.retain(|(_, at)| now.duration_since(*at) < CA_TRUSTED_TTL);
+        if waiting.len() < CA_TRUSTED_MAX {
+            waiting.push((Fingerprint::of_certificate(der), now));
+        }
+    }
+
+    /// Consumes one note for `der`; whether there was one.
+    fn take_ca_trusted(&self, der: &[u8]) -> bool {
+        #[cfg(feature = "ca")]
+        {
+            let fingerprint = Fingerprint::of_certificate(der);
+            let mut waiting = self
+                .ca_trusted
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let now = Instant::now();
+            waiting.retain(|(_, at)| now.duration_since(*at) < CA_TRUSTED_TTL);
+            if let Some(index) = waiting.iter().position(|(had, _)| *had == fingerprint) {
+                waiting.swap_remove(index);
+                return true;
+            }
+        }
+        #[cfg(not(feature = "ca"))]
+        let _ = der;
+        false
+    }
+
+    /// After the signature check: a valid signature means the peer holds the key, so a
+    /// deferred certificate is recorded as waiting and refused. An invalid one is refused
+    /// without a record.
+    fn settle(
+        &self,
+        certificate: &CertificateDer<'_>,
+        verified: Result<HandshakeSignatureValid, rustls::Error>,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        if !self.defers() {
+            return verified;
+        }
+        let trusted = self.take_ca_trusted(certificate.as_ref());
+        let verified = verified?;
+        if trusted || self.pinned(certificate.as_ref()) {
+            return Ok(verified);
         }
         if let Some(pins) = &self.pins {
             pins.record_waiting(certificate.as_ref());
@@ -373,15 +426,16 @@ impl ClientCertVerifier for PeerClientVerifier {
         if let Some(ca) = &self.ca
             && ca.trusts(certificate, intermediates, now)?
         {
+            if self.defers() {
+                self.note_ca_trusted(certificate.as_ref());
+            }
             return Ok(ClientCertVerified::assertion());
         }
         #[cfg(not(feature = "ca"))]
         let _ = (intermediates, now);
         if self.defers() {
+            // Not recorded here: the client has not yet proved it holds the key.
             return Ok(ClientCertVerified::assertion());
-        }
-        if let Some(pins) = &self.pins {
-            pins.record_waiting(certificate.as_ref());
         }
         Err(rustls::Error::General(
             "peer certificate is not trusted".to_owned(),
@@ -395,9 +449,8 @@ impl ClientCertVerifier for PeerClientVerifier {
         signed: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         let algorithms = &self.provider.signature_verification_algorithms;
-        let verified = verify_tls12_signature(message, certificate, signed, algorithms)?;
-        self.settle(certificate)?;
-        Ok(verified)
+        let verified = verify_tls12_signature(message, certificate, signed, algorithms);
+        self.settle(certificate, verified)
     }
 
     fn verify_tls13_signature(
@@ -407,9 +460,8 @@ impl ClientCertVerifier for PeerClientVerifier {
         signed: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         let algorithms = &self.provider.signature_verification_algorithms;
-        let verified = verify_tls13_signature(message, certificate, signed, algorithms)?;
-        self.settle(certificate)?;
-        Ok(verified)
+        let verified = verify_tls13_signature(message, certificate, signed, algorithms);
+        self.settle(certificate, verified)
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {

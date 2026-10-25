@@ -47,7 +47,7 @@ pub fn dial<S: Read + Write>(
 /// Accepts a peer over `io`, completing the handshake before returning.
 ///
 /// A client whose certificate the configured [`Trust`](crate::Trust) refuses fails the
-/// handshake; when the trust is a store-backed pin set it is recorded as waiting first.
+/// handshake; when the trust is a store-backed pin set it is recorded as waiting once it has proved its key.
 ///
 /// # Errors
 ///
