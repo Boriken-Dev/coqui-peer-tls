@@ -11,35 +11,26 @@ package and is self-contained. Development documentation lives with the source a
 | `generate` | `rcgen`: `Identity::generate`, `Identity::open_or_create` | off |
 | `ca` | `x509-parser`, `globset`: `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio`, `tokio-rustls`: module `asynch` | off |
-| `serde` | `serde`: text form of `Policy` | off |
+| `serde` | `serde`, `coqui-peer/serde`: text form of `Policy`, `Fingerprint` as text; the consumer picks the format | off |
 | `acl` | `coqui-net-acl`: `Policy::acl`, re-exported as `coqui_peer_tls::acl` | off |
 
-MSRV Rust 1.89. A default build depends on `rustls` (ring provider), `sha1`, `sha2`, `subtle`
-and `data-encoding`. No `unsafe` code. Nothing installs a process-wide crypto provider, and
+This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sans-IO
+`Handshake`); its API header is in that crate. MSRV Rust 1.89. A default build depends on
+`coqui-peer`, `rustls` (ring provider) and `data-encoding`. No `unsafe` code. Nothing installs a process-wide crypto provider, and
 nothing reads a file or an environment variable unless the caller passes a path. TLS 1.3 is
 the default; TLS 1.2 only when a policy allows it.
 
-## Fingerprint, Digest
+## Fingerprint, Digest (from `coqui-peer`)
 
 ```rust
-pub enum Digest { Sha256, Sha384, Sha512, Sha1 }
-impl Digest { pub const fn name(self) -> &'static str; pub const fn size(self) -> usize;
-              pub fn of_certificate(self, der: &[u8]) -> Fingerprint; }   // FromStr: "sha256", ...; "md5" is an error
-pub struct Fingerprint;      // Copy, Eq (constant time), Ord, Hash, Display = canonical, FromStr
-impl Fingerprint {
-    pub fn of_certificate(der: &[u8]) -> Fingerprint;      // SHA-256
-    pub fn from_bytes(bytes: [u8; 32]) -> Fingerprint;     // SHA-256
-    pub fn digest(&self) -> Digest;  pub fn as_bytes(&self) -> &[u8];
-    pub fn hex(&self) -> String;                           // 64 lowercase hex for sha256
-    pub fn canonical(&self) -> String;                     // "sha256:<hex>", also Display
-    pub fn to_base32_grouped(&self) -> String;             // sha256 only: 13 groups of 4, '-' separated
-}
+pub type Fingerprint = coqui_peer::PeerId;      // Copy, Eq (constant time), Ord, Hash, Display = "sha256:<hex>", FromStr
+pub use coqui_peer::{Digest, PeerId, KeyMaterial, TrustStore, WaitingEntry, WaitingLimits};
 ```
 
-`FromStr` accepts `sha256:<hex>` (also `sha384:`, `sha512:`, `sha1:`), bare hex of 64, 96, 128
-or 40 characters, colon-separated hex pairs (`AA:BB:...`, with or without the `sha256:`
-prefix), and 52 base32 characters for SHA-256. An MD5 digest (name `md5` or 32 hex characters)
-is `PeerError::WeakDigest`. Whether a policy lets a pin use a digest is a `Policy` matter.
+The id of a certificate is `Fingerprint::of(der)` (SHA-256) or `Digest::Sha384.of(der)`. Text
+forms, `canonical()`, `hex()`, `to_base32_grouped()` and the parsing rules (`sha256:<hex>`, bare
+hex, colon pairs, grouped base32; MD5 is `PeerError::WeakDigest`) are the core crate's. Whether a
+policy lets a pin use a digest is a `Policy` matter.
 
 ## Identity (`Identity`, `PeerIdentity`)
 
@@ -99,29 +90,23 @@ prove its key. Names are not checked on the pinned path.
   Caps are per source IP address; the full `SocketAddr` is stored.
 - A pin whose digest the policy does not list is `PeerError::Policy` when the verifier is built.
 
-## TrustStore
+## TrustStore (from `coqui-peer`) and certificates
+
+The store, `WaitingEntry { id, source }`, `WaitingLimits`, the pairing flow and the rule that a
+peer is recorded only after it proved its key are `coqui-peer`'s; see its API header. This
+crate keeps certificates in it as `KeyMaterial` with method `tls` and label `CERTIFICATE`:
 
 ```rust
-pub struct TrustStore;                     // Clone
-pub struct WaitingLimits { pub per_source: usize, pub total: usize, pub rerecord: Duration }   // Default: 16, 1000, 60 s
-impl TrustStore {
-    pub fn open(state_dir: &Path) -> Result<TrustStore, PeerError>;     // creates <state_dir>/peers/{accepted,waiting}
-    pub fn with_limits(self, limits: WaitingLimits) -> TrustStore;
-    pub fn waiting(&self) -> Result<Vec<WaitingEntry>, PeerError>;   // WaitingEntry { fingerprint, source: Option<SocketAddr> }
-    pub fn accepted(&self) -> Result<Vec<Fingerprint>, PeerError>;
-    pub fn accept(&self, fingerprint: &Fingerprint) -> Result<(), PeerError>;   // waiting -> accepted
-    pub fn accept_certificate(&self, der: &[u8]) -> Result<Fingerprint, PeerError>;
-    pub fn remove(&self, fingerprint: &Fingerprint) -> Result<bool, PeerError>;
-    pub fn is_accepted(&self, fingerprint: &Fingerprint) -> bool;
-    pub fn record_waiting(&self, der: &[u8], fingerprint: &Fingerprint, source: Option<SocketAddr>);
-}
+pub const METHOD: &str = "tls";
+pub fn certificate_key(der: &[u8]) -> Result<KeyMaterial, PeerError>;
+pub trait TrustStoreExt {
+    fn accept_certificate(&self, der: &[u8]) -> Result<PeerId, PeerError>;
+    fn record_waiting_certificate(&self, der: &[u8], source: Option<SocketAddr>);
+}                                                  // implemented for TrustStore
 ```
 
-`accept` checks that the stored certificate hashes to its file name
-(`NotWaiting`, `AlreadyAccepted`, `Certificate`). `record_waiting` is bounded: at most
-`per_source` entries per source (the oldest of that source is replaced), the same certificate
-from the same source at most every `rerecord`, `total` in all, certificates over 64 KiB
-ignored. Callers that pass `source: None` share one bucket.
+A store-backed `Pins` counts a peer as accepted only when its entry names method `tls`.
+`record_waiting` is bounded as in the core: per source IP, the rerecord interval, a total.
 
 ## Policy
 
@@ -171,6 +156,9 @@ a shorter rerecord time, and an ACL with a `permit` default.
 
 ### Text form, version 1 (feature `serde`)
 
+Build a `Policy` in code (constructors and public fields); the text form is optional. The crate
+parses no format itself: with `serde` the consumer reads it with its own `toml` or `serde_json`.
+
 TOML or JSON object. Keys: `policy_version` (must be 1 when present), `profile` (a built-in
 preset name to start from; unknown names are errors; free text when read with
 `deserialize_over`), `tls_versions` (`"1.2"`, `"1.3"`), `cipher_suites`, `kx_groups`,
@@ -208,13 +196,27 @@ returned `PeerIdentity` is verified. The server name sent is `SERVER_NAME`; trus
 fingerprint, never by name. `accept_with` chooses the server configuration from the
 ClientHello, for example by ALPN, so one port serves peers and other clients.
 
+## The method (`Tls`, `TlsHandshake`)
+
+```rust
+pub struct Tls;      // Clone, Default
+impl Tls { pub fn new() -> Tls; pub fn with_client(self, Arc<ClientConfig>) -> Tls; pub fn with_server(self, Arc<ServerConfig>) -> Tls; }
+impl coqui_peer::Method for Tls { /* name() = "tls"; initiate(); respond(source: Option<SocketAddr>) */ }
+pub struct TlsHandshake;   // client(Arc<ClientConfig>), server(Arc<ServerConfig>, Option<SocketAddr>)
+impl coqui_peer::Handshake for TlsHandshake { /* Output = rustls::Connection, Framing::Stream */ }
+```
+
+`receive` feeds rustls (`read_tls`, `process_new_packets`); `transmit` drains `write_tls`;
+`is_complete` is `!is_handshaking()`. `finish` gives `Established { peer, key: Some(certificate),
+session: Connection }`; the connection keeps application data that arrived with the last
+handshake bytes. The server handshake scopes its `source` around each `receive`, so waiting
+entries carry the address exactly as `accept` does. A role without a configuration is
+`PeerError::Unsupported`. Run it with `coqui_peer::drive_stream` / `drive_messages` (the
+latter needs a reliable, ordered message channel) or the `tokio` forms.
+
 ## Errors
 
-`PeerError` (non-exhaustive): `InvalidFingerprint`, `WeakDigest` (MD5), `Certificate`, `Tls`,
-`Policy(String)`, `TrustPattern`, `NotWaiting`, `AlreadyAccepted`, `Path`, `Unsupported`,
-`Io(io::Error)`. `Display` never includes key material or paths.
-
-## On-disk formats (version 2)
+## On-disk formats
 
 For peers in other languages. All files are UTF-8 with LF line endings.
 
@@ -224,18 +226,17 @@ For peers in other languages. All files are UTF-8 with LF line endings.
   `sha256:<64 lowercase hex>` (`openssl x509 -outform DER | sha256sum` gives the hex).
   Grouped base32 (RFC 4648 alphabet, no padding, 52 characters, groups of four joined by `-`)
   is a display form.
-- **Trust store** — under `<state_dir>/peers/`: `accepted/<64 lowercase hex>.pem` and
-  `waiting/<64 lowercase hex>.pem`, each one `CERTIFICATE` block whose DER hashes to the name.
-  A waiting file may start with one line `Source: <ip>:<port>` (IPv6 as `[addr]:port`), the
-  address the handshake came from; version 1 files have none and read with no source.
-  `:` is not valid in Windows file names, so the name has no `sha256:` prefix. File names in
-  the grouped base32 spelling are also read. Accepting moves a file from `waiting` to
-  `accepted`, rewritten as the bare certificate block.
-- **Vectors** — `tests/vectors/identity-{a,b}.pem`, `identity-{a,b}.fingerprint` (three lines:
-  canonical, bare hex, grouped base32) and `tests/vectors/store/peers/...` are checked by
-  `tests/vectors.rs`; other implementations can check against the same bytes.
+- **Trust store** — `coqui-peer`'s format, version 3: `peers/{accepted,waiting}/<64 hex>.pem`,
+  header lines `Method: tls` and (waiting) `Source: <ip>:<port>`, then one `CERTIFICATE` block
+  whose DER hashes to the name. Versions 1 and 2 (no `Method:` line) read as `tls`. The store
+  vectors live in that crate.
+- **Vectors** — `tests/vectors/identity-{a,b}.pem` and `identity-{a,b}.fingerprint` (three
+  lines: canonical, bare hex, grouped base32) are checked by `tests/vectors.rs`; the policy
+  vectors under `tests/vectors/policy/` are byte-exact text forms (TOML and JSON, read in
+  tests through dev-dependencies only).
 
-Format changes bump a version and the changelog; version 1 files stay readable (the text form of `Policy` is still version 1).
+Format changes bump a version and the changelog; older versions stay readable (the text form
+of `Policy` is still version 1).
 
 ## Gotchas
 
