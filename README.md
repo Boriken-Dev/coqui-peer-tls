@@ -9,20 +9,27 @@
 **Mutual-TLS identity between peers, with no RPC layer.** Each side has a self-issued
 certificate and tells the other only its fingerprint. You get back an authenticated, encrypted
 byte stream and the verified peer identity; nothing is installed process-wide, and nothing is
-read from a file or the environment unless you give it a path. See the
+read from a file or the environment unless you give it a path. This is the TLS method of
+[`coqui-peer`](https://github.com/Boriken-Dev/coqui-peer), which holds the peer id, the trust
+store and the sans-IO handshake trait; this crate adds X.509 and rustls on top. See the
 [documentation](https://boriken-dev.github.io/coqui-peer-tls/).
 
 ## Features
 
-- **Fingerprints** — SHA-256 of the certificate, written `sha256:<hex>`; grouped base32 for
-  screens; SHA-384, SHA-512 and (legacy) SHA-1 pins can be read.
+- **Fingerprints** — `Fingerprint` is the `PeerId` of `coqui-peer`: SHA-256 of the
+  certificate, written `sha256:<hex>`; grouped base32 for screens; SHA-384, SHA-512 and
+  (legacy) SHA-1 pins can be read.
 - **Trust you choose** — pinned fingerprints, a CA with subject and SAN globs, both, or any
   certificate whose key the peer proves.
-- **Pairing** — a peer that proves its key and is not trusted is recorded as waiting; an
-  operator accepts it by fingerprint.
+- **Pairing** — a peer that proves its key and is not trusted is recorded as waiting in the
+  `coqui-peer` `TrustStore` (certificates are kept under the method name `tls`); an operator
+  accepts it by fingerprint.
 - **Policy** — strict by default (TLS 1.3 only), with `compatible` and `legacy` presets and
   fields you can change; a policy is a plain value you can build, name and store.
 - **Verifiers as values** — hand the rustls verifiers to another TLS stack.
+- **A `coqui-peer` method** — `Tls` and `TlsHandshake` implement the sans-IO `Method` and
+  `Handshake` traits, so the same TLS runs over message transports (WebSocket messages,
+  datagrams on a reliable channel) with the core crate's drivers.
 - **Streams** — blocking `dial`/`accept` over any `Read + Write`; async over any
   `AsyncRead + AsyncWrite` with `tokio`. `accept` reads the peer address from a TCP stream;
   other streams use `accept_from`.
@@ -39,7 +46,7 @@ cargo add coqui-peer-tls --git https://github.com/Boriken-Dev/coqui-peer-tls
 | `generate` | `rcgen` | `Identity::generate`, `open_or_create` |
 | `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa` |
 | `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_from`, `accept_with`, `accept_with_from` |
-| `serde` | `serde` | reading and writing a `Policy` |
+| `serde` | `serde`, `coqui-peer/serde` | reading and writing a `Policy` and `Fingerprint` as text, in the format you choose |
 | `acl` | `coqui-net-acl` | an access control list inside a `Policy` |
 
 ## Quick start
@@ -77,7 +84,19 @@ rustls offers TLS 1.2 and 1.3 only. TLS 1.0, 1.1 and non-AEAD suites cannot be o
 this crate, and asking for them is an error that lists what is supported. MD5 pins are never
 accepted. Cipher suites are chosen by IANA name from `Policy::supported_cipher_suites()`.
 
-The text form (`serde` feature) is a versioned format, version 1:
+Build a policy in code first; this is the whole API:
+
+```rust,ignore
+let mut policy = Policy::compatible();
+policy.pin_digests.push(Digest::Sha1);
+policy.waiting_per_source = 4;
+let built = server_config_with(&identity, &trust, &[b"my-protocol/1"], &policy)?;
+for weaker in &built.weakened { log::warn!("{} = {}", weaker.setting, weaker.value); }
+```
+
+With the `serde` feature a `Policy` also reads and writes a versioned text form (version 1).
+The crate parses no format itself: enable `serde` and call your own `toml::from_str` or
+`serde_json::from_str`. The fields are:
 
 ```toml
 policy_version = 1
