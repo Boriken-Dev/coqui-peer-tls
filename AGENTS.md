@@ -1,6 +1,6 @@
-# `coqui-peer` — API header
+# `coqui-peer-tls` — API header
 
-Header-file-style reference for the `coqui-peer` crate: every public item with its signature,
+Header-file-style reference for the `coqui-peer-tls` crate: every public item with its signature,
 contract and gotchas, so the crate can be used without reading its source. It ships inside the
 package and is self-contained. Development documentation lives with the source at
 <https://github.com/Boriken-Dev/coqui-peer-tls>.
@@ -12,7 +12,7 @@ package and is self-contained. Development documentation lives with the source a
 | `ca` | `x509-parser`, `globset`: `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio`, `tokio-rustls`: module `asynch` | off |
 | `serde` | `serde`: text form of `Policy` | off |
-| `acl` | `coqui-net-acl`: `Policy::acl`, re-exported as `coqui_peer::acl` | off |
+| `acl` | `coqui-net-acl`: `Policy::acl`, re-exported as `coqui_peer_tls::acl` | off |
 
 MSRV Rust 1.89. A default build depends on `rustls` (ring provider), `sha1`, `sha2`, `subtle`
 and `data-encoding`. No `unsafe` code. Nothing installs a process-wide crypto provider, and

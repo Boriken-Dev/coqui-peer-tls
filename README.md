@@ -1,9 +1,9 @@
-# coqui-peer
+# coqui-peer-tls
 
 [![Version](https://img.shields.io/badge/version-0.1.0--dev-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/CHANGELOG.md#unreleased)
 [![Rust version](https://img.shields.io/badge/rust-1.89%2B-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/Cargo.toml)
 [![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/LICENSE)
-[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://boriken-dev.github.io/coqui-peer-tls/rust/coqui_peer/index.html)
+[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://boriken-dev.github.io/coqui-peer-tls/rust/coqui_peer_tls/index.html)
 [![CI](https://img.shields.io/github/actions/workflow/status/Boriken-Dev/coqui-peer-tls/test.yml)](https://github.com/Boriken-Dev/coqui-peer-tls/actions/workflows/test.yml)
 
 **Mutual-TLS identity between peers, with no RPC layer.** Each side has a self-issued
@@ -30,7 +30,7 @@ read from a file or the environment unless you give it a path. See the
 ## Installation
 
 ```bash
-cargo add coqui-peer --git https://github.com/Boriken-Dev/coqui-peer-tls
+cargo add coqui-peer-tls --git https://github.com/Boriken-Dev/coqui-peer-tls
 ```
 
 | Feature | Adds | Needed for |
@@ -46,7 +46,7 @@ cargo add coqui-peer --git https://github.com/Boriken-Dev/coqui-peer-tls
 
 ```rust,ignore
 use std::sync::Arc;
-use coqui_peer::{Identity, Pins, Trust, client_config, dial, server_config, accept};
+use coqui_peer_tls::{Identity, Pins, Trust, client_config, dial, server_config, accept};
 
 let me = Identity::open_or_create(path)?;                 // `generate` feature
 let trust = Trust::Pinned(Pins::fixed(["sha256:3f15...".parse()?]));

@@ -1,5 +1,5 @@
 [package]
-name = "coqui-peer"
+name = "coqui-peer-tls"
 version = "0.1.0"
 description = "Mutual-TLS peer identity: certificate fingerprints, pinned, CA and key-proof trust, a trust store, policy profiles and encrypted streams"
 readme = "README.md"

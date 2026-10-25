@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
-use coqui_peer::{
+use coqui_peer_tls::{
     CaPolicy, Identity, Pins, Policy, Trust, TrustStore, accept, client_config_with,
     crypto_provider, dial, server_config_with,
 };
@@ -177,6 +177,6 @@ fn a_stolen_certificate_is_refused_and_not_recorded_over_tls12() {
 #[test]
 fn a_genuine_unknown_client_is_recorded_over_tls12() {
     let mut policy = Policy::compatible();
-    policy.tls_versions = vec![coqui_peer::TlsVersion::V1_2];
+    policy.tls_versions = vec![coqui_peer_tls::TlsVersion::V1_2];
     genuine_unknown_client_is_recorded(&policy);
 }

@@ -6,7 +6,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 
-use coqui_peer::{
+use coqui_peer_tls::{
     CaPolicy, Fingerprint, Identity, Pins, Trust, TrustStore, accept, client_config, dial,
     server_config,
 };
@@ -307,7 +307,7 @@ async fn async_dial_and_accept_over_any_stream() {
     let accepting = tokio::spawn(async move {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let (mut stream, peer) =
-            coqui_peer::asynch::accept_from(server_config, far, "192.0.2.1:1".parse().unwrap())
+            coqui_peer_tls::asynch::accept_from(server_config, far, "192.0.2.1:1".parse().unwrap())
                 .await
                 .unwrap();
         let mut byte = [0u8; 4];
@@ -317,7 +317,9 @@ async fn async_dial_and_accept_over_any_stream() {
         peer.fingerprint
     });
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    let (mut stream, peer) = coqui_peer::asynch::dial(client_config, near).await.unwrap();
+    let (mut stream, peer) = coqui_peer_tls::asynch::dial(client_config, near)
+        .await
+        .unwrap();
     stream.write_all(b"ping").await.unwrap();
     let mut back = [0u8; 4];
     stream.read_exact(&mut back).await.unwrap();
@@ -334,17 +336,22 @@ async fn accept_with_chooses_the_configuration_from_the_hello() {
         Arc::new(client_config(&client, &pinned(server.fingerprint()), &[ALPN]).unwrap());
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
-        let (stream, peer) =
-            coqui_peer::asynch::accept_with_from(far, "192.0.2.1:1".parse().unwrap(), |hello| {
+        let (stream, peer) = coqui_peer_tls::asynch::accept_with_from(
+            far,
+            "192.0.2.1:1".parse().unwrap(),
+            |hello| {
                 assert_eq!(hello.alpn().unwrap().next(), Some(ALPN));
                 chosen
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         drop(stream);
         peer.fingerprint
     });
-    let (_stream, peer) = coqui_peer::asynch::dial(client_config, near).await.unwrap();
+    let (_stream, peer) = coqui_peer_tls::asynch::dial(client_config, near)
+        .await
+        .unwrap();
     assert_eq!(peer.fingerprint, server.fingerprint());
     assert_eq!(accepting.await.unwrap(), client.fingerprint());
 }

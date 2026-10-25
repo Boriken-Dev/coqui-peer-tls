@@ -2,14 +2,14 @@
 //! `tests/vectors/policy/`, in TOML and in JSON, for implementations in other languages.
 //!
 //! Regenerating them is a format change:
-//! `cargo test -p coqui-peer --all-features --test policy_vectors -- --ignored regenerate`
+//! `cargo test -p coqui-peer-tls --all-features --test policy_vectors -- --ignored regenerate`
 #![cfg(all(feature = "serde", feature = "acl"))]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use coqui_peer::Policy;
-use coqui_peer::acl::{Acl, Action, IpNet, Rule};
+use coqui_peer_tls::Policy;
+use coqui_peer_tls::acl::{Acl, Action, IpNet, Rule};
 
 fn directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/policy")
