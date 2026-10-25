@@ -1,16 +1,16 @@
 # coqui-peer
 
-[![Version](https://img.shields.io/badge/version-0.1.0--dev-blue.svg)](https://github.com/Boriken-Dev/coqui-access/blob/main/CHANGELOG.md#unreleased)
-[![Rust version](https://img.shields.io/badge/rust-1.89%2B-blue.svg)](https://github.com/Boriken-Dev/coqui-access/blob/main/Cargo.toml)
-[![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue.svg)](https://github.com/Boriken-Dev/coqui-access/blob/main/LICENSE)
-[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://boriken-dev.github.io/coqui-access/rust/coqui_peer/)
-[![CI](https://img.shields.io/github/actions/workflow/status/Boriken-Dev/coqui-access/test.yml)](https://github.com/Boriken-Dev/coqui-access/actions/workflows/test.yml)
+[![Version](https://img.shields.io/badge/version-0.1.0--dev-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/CHANGELOG.md#unreleased)
+[![Rust version](https://img.shields.io/badge/rust-1.89%2B-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/Cargo.toml)
+[![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/LICENSE)
+[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://boriken-dev.github.io/coqui-peer-tls/rust/coqui_peer/index.html)
+[![CI](https://img.shields.io/github/actions/workflow/status/Boriken-Dev/coqui-peer-tls/test.yml)](https://github.com/Boriken-Dev/coqui-peer-tls/actions/workflows/test.yml)
 
 **Mutual-TLS identity between peers, with no RPC layer.** Each side has a self-issued
 certificate and tells the other only its fingerprint. You get back an authenticated, encrypted
 byte stream and the verified peer identity; nothing is installed process-wide, and nothing is
 read from a file or the environment unless you give it a path. See the
-[documentation](https://boriken-dev.github.io/coqui-access/).
+[documentation](https://boriken-dev.github.io/coqui-peer-tls/).
 
 ## Features
 
@@ -30,7 +30,7 @@ read from a file or the environment unless you give it a path. See the
 ## Installation
 
 ```bash
-cargo add coqui-peer --git https://github.com/Boriken-Dev/coqui-access
+cargo add coqui-peer --git https://github.com/Boriken-Dev/coqui-peer-tls
 ```
 
 | Feature | Adds | Needed for |
@@ -133,16 +133,17 @@ a document over your own base policy. Committed examples for every preset are in
 ## Development
 
 ```bash
-cargo test -p coqui-peer --all-features
-cargo clippy -p coqui-peer --all-targets --all-features -- -D warnings
+cargo fmt --all --check
+cargo test --all-features
+cargo clippy --all-targets --all-features -- -D warnings
 ```
 
 ### Releasing
 
 This project follows [Semantic Versioning](https://semver.org/) and keeps a
-[`CHANGELOG.md`](https://github.com/Boriken-Dev/coqui-access/blob/main/CHANGELOG.md).
+[`CHANGELOG.md`](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/CHANGELOG.md).
 Pushing a tag matching `v*` triggers the release workflow of the repository.
 
 ## License
 
-MPL-2.0 — see [LICENSE](https://github.com/Boriken-Dev/coqui-access/blob/main/LICENSE).
+MPL-2.0 — see [LICENSE](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/LICENSE).
