@@ -10,7 +10,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::config::crypto_provider;
 use crate::error::PeerError;
-use crate::fingerprint::Fingerprint;
+use coqui_peer::PeerId as Fingerprint;
 
 /// A verified peer: the certificate the other side proved it holds the key of.
 ///
@@ -83,7 +83,7 @@ impl Identity {
             .with_single_cert(vec![certificate.clone()], key.clone_key())
             .map_err(|_| PeerError::Certificate)?;
         Ok(Self {
-            fingerprint: Fingerprint::of_certificate(certificate.as_ref()),
+            fingerprint: Fingerprint::of(certificate.as_ref()),
             certificate,
             key,
         })

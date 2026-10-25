@@ -49,6 +49,20 @@ impl fmt::Display for PeerError {
     }
 }
 
+impl From<coqui_peer::Error> for PeerError {
+    fn from(error: coqui_peer::Error) -> Self {
+        match error {
+            coqui_peer::Error::InvalidId => Self::InvalidFingerprint,
+            coqui_peer::Error::WeakDigest => Self::WeakDigest,
+            coqui_peer::Error::UnknownDigest(_) => Self::Policy(error.to_string()),
+            coqui_peer::Error::NotWaiting => Self::NotWaiting,
+            coqui_peer::Error::AlreadyAccepted => Self::AlreadyAccepted,
+            coqui_peer::Error::Io(error) => Self::Io(error),
+            _ => Self::Certificate,
+        }
+    }
+}
+
 impl std::error::Error for PeerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {

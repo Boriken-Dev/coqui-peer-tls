@@ -189,9 +189,7 @@ fn unknown_suites_groups_and_versions_are_clear_errors_that_list_what_is_support
 async fn a_sha1_pin_is_accepted_only_when_the_policy_allows_it() {
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     let sha1_pin = |identity: &Identity| {
-        Trust::Pinned(Pins::fixed([
-            Digest::Sha1.of_certificate(identity.certificate_der())
-        ]))
+        Trust::Pinned(Pins::fixed([Digest::Sha1.of(identity.certificate_der())]))
     };
     // Strict refuses to build with a SHA-1 pin, and names the digest.
     let strict = Policy::default();
@@ -217,9 +215,7 @@ async fn a_sha1_pin_is_accepted_only_when_the_policy_allows_it() {
     } = client_config_with(&client, &sha1_pin(&server), &[ALPN], &legacy).unwrap();
     assert!(exchange(server_config, client_config).await);
     // A SHA-384 pin is fine under strict.
-    let sha384 = Trust::Pinned(Pins::fixed([
-        Digest::Sha384.of_certificate(client.certificate_der())
-    ]));
+    let sha384 = Trust::Pinned(Pins::fixed([Digest::Sha384.of(client.certificate_der())]));
     assert!(server_config_with(&server, &sha384, &[ALPN], &strict).is_ok());
 }
 
