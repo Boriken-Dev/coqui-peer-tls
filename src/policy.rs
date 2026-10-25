@@ -6,8 +6,7 @@ use rustls::SupportedProtocolVersion;
 use rustls::crypto::CryptoProvider;
 
 use crate::error::PeerError;
-use crate::fingerprint::{Digest, Fingerprint};
-use crate::store::WaitingLimits;
+use coqui_peer::{Digest, PeerId as Fingerprint, WaitingLimits};
 
 /// The version of the serialized form of [`Policy`] (`policy_version`).
 pub const POLICY_VERSION: u32 = 1;
@@ -416,7 +415,7 @@ mod text {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     use super::{POLICY_VERSION, Policy, TlsVersion};
-    use crate::fingerprint::Digest;
+    use coqui_peer::Digest;
 
     macro_rules! as_text {
         ($type:ty) => {
@@ -435,7 +434,6 @@ mod text {
         };
     }
     as_text!(TlsVersion);
-    as_text!(Digest);
 
     /// The serialized form, version 1. On reading, every field but `policy_version` is
     /// optional and starts from the named `profile` (strict when absent).

@@ -131,11 +131,7 @@ fn genuine_unknown_client_is_recorded(policy: &Policy) {
         assert!(!accepted, "ca: {with_ca}");
         let waiting = store.waiting().unwrap();
         assert_eq!(waiting.len(), 1, "ca: {with_ca}");
-        assert_eq!(
-            waiting[0].fingerprint,
-            client.fingerprint(),
-            "ca: {with_ca}"
-        );
+        assert_eq!(waiting[0].id, client.fingerprint(), "ca: {with_ca}");
         assert!(waiting[0].source.is_some_and(|s| s.ip().is_loopback()));
     }
 }

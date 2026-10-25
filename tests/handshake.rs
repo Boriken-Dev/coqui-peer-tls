@@ -122,7 +122,7 @@ fn an_unknown_peer_that_proved_its_key_waits_and_is_let_in_once_accepted() {
     let _ = refused;
     let waiting = store.waiting().unwrap();
     assert_eq!(waiting.len(), 1);
-    assert_eq!(waiting[0].fingerprint, client.fingerprint());
+    assert_eq!(waiting[0].id, client.fingerprint());
 
     store.accept(&client.fingerprint()).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

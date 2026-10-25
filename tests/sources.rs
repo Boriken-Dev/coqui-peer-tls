@@ -7,8 +7,8 @@ use std::thread;
 use std::time::Duration;
 
 use coqui_peer_tls::{
-    Identity, Pins, Policy, Trust, TrustStore, WaitingLimits, accept, accept_from, client_config,
-    dial, server_config, server_config_with,
+    Identity, Pins, Policy, Trust, TrustStore, TrustStoreExt, WaitingLimits, accept, accept_from,
+    client_config, dial, server_config, server_config_with,
 };
 
 fn store() -> (tempfile::TempDir, TrustStore) {
@@ -19,11 +19,7 @@ fn store() -> (tempfile::TempDir, TrustStore) {
 
 fn record(store: &TrustStore, identity: &Identity, source: &str) {
     let source: SocketAddr = source.parse().unwrap();
-    store.record_waiting(
-        identity.certificate_der(),
-        &identity.fingerprint(),
-        Some(source),
-    );
+    store.record_waiting_certificate(identity.certificate_der(), Some(source));
 }
 
 #[test]
@@ -59,13 +55,9 @@ fn one_source_filling_its_cap_does_not_block_another() {
     assert!(
         waiting
             .iter()
-            .all(|entry| entry.fingerprint != noisy[0].fingerprint())
+            .all(|entry| entry.id != noisy[0].fingerprint())
     );
-    assert!(
-        waiting
-            .iter()
-            .any(|entry| entry.fingerprint == quiet.fingerprint())
-    );
+    assert!(waiting.iter().any(|entry| entry.id == quiet.fingerprint()));
 }
 
 #[test]
@@ -106,7 +98,7 @@ fn the_recorded_address_is_the_one_the_client_connected_from() {
 
     let waiting = store.waiting().unwrap();
     assert_eq!(waiting.len(), 1);
-    assert_eq!(waiting[0].fingerprint, client.fingerprint());
+    assert_eq!(waiting[0].id, client.fingerprint());
     assert_eq!(waiting[0].source, Some(local));
 }
 

@@ -13,9 +13,8 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 
 use crate::error::PeerError;
-use crate::fingerprint::{Digest, Fingerprint};
 use crate::policy::Policy;
-use crate::store::{TrustStore, WaitingLimits};
+use coqui_peer::{Digest, PeerId as Fingerprint, TrustStore, WaitingLimits};
 
 /// A set of pinned certificate fingerprints: fixed, or the accepted peers of a
 /// [`TrustStore`].
@@ -52,13 +51,18 @@ impl Pins {
                 for digest in [Digest::Sha256, Digest::Sha384, Digest::Sha512, Digest::Sha1] {
                     let mut ours = None;
                     for pin in pins.iter().filter(|pin| pin.digest() == digest) {
-                        let ours = ours.get_or_insert_with(|| digest.of_certificate(der));
+                        let ours = ours.get_or_insert_with(|| digest.of(der));
                         found |= pin == ours;
                     }
                 }
                 found
             }
-            PinsKind::Store(store) => store.is_accepted(&Fingerprint::of_certificate(der)),
+            PinsKind::Store(store) => {
+                let id = Fingerprint::of(der);
+                store
+                    .accepted_key(&id)
+                    .is_some_and(|key| key.method == crate::METHOD)
+            }
         }
     }
 
@@ -81,12 +85,10 @@ impl Pins {
     }
 
     fn record_waiting(&self, der: &[u8]) {
-        if let PinsKind::Store(store) = &self.0 {
-            store.record_waiting(
-                der,
-                &Fingerprint::of_certificate(der),
-                crate::source::current(),
-            );
+        if let PinsKind::Store(store) = &self.0
+            && let Ok(key) = crate::certificate_key(der)
+        {
+            store.record_waiting(&key, crate::source::current());
         }
     }
 }
@@ -354,7 +356,7 @@ impl PeerClientVerifier {
         let now = Instant::now();
         waiting.retain(|(_, at)| now.duration_since(*at) < CA_TRUSTED_TTL);
         if waiting.len() < CA_TRUSTED_MAX {
-            waiting.push((Fingerprint::of_certificate(der), now));
+            waiting.push((Fingerprint::of(der), now));
         }
     }
 
@@ -362,7 +364,7 @@ impl PeerClientVerifier {
     fn take_ca_trusted(&self, der: &[u8]) -> bool {
         #[cfg(feature = "ca")]
         {
-            let fingerprint = Fingerprint::of_certificate(der);
+            let fingerprint = Fingerprint::of(der);
             let mut waiting = self
                 .ca_trusted
                 .lock()

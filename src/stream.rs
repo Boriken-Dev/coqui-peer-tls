@@ -6,9 +6,9 @@ use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, StreamOwned};
 
 use crate::error::PeerError;
-use crate::fingerprint::Fingerprint;
 use crate::identity::PeerIdentity;
 use crate::source::with_source;
+use coqui_peer::PeerId as Fingerprint;
 
 /// The server name sent in the handshake. Trust is by fingerprint, so the name carries no
 /// meaning; it only has to be a valid DNS name.
@@ -21,7 +21,7 @@ pub(crate) fn identity_of(
         .and_then(<[_]>::first)
         .ok_or(PeerError::Certificate)?;
     Ok(PeerIdentity {
-        fingerprint: Fingerprint::of_certificate(certificate.as_ref()),
+        fingerprint: Fingerprint::of(certificate.as_ref()),
         certificate: certificate.as_ref().to_vec(),
     })
 }
@@ -101,7 +101,7 @@ fn accept_as<S: Read + Write>(
         while connection.is_handshaking() {
             connection.complete_io(&mut io).map_err(PeerError::Io)?;
         }
-        Ok(())
+        Ok::<(), PeerError>(())
     })?;
     let peer = identity_of(connection.peer_certificates())?;
     Ok((StreamOwned::new(connection, io), peer))
