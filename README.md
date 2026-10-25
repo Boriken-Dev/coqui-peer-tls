@@ -34,7 +34,7 @@ cargo add coqui-peer --git https://github.com/Boriken-Dev/coqui-access
 
 | Feature | Adds | Needed for |
 | --- | --- | --- |
-| `tls12` (default) | rustls `tls12` | the `compatible` and `legacy` presets |
+| `tls12` | rustls `tls12` | the `compatible` and `legacy` presets |
 | `generate` | `rcgen` | `Identity::generate`, `open_or_create` |
 | `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa` |
 | `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_with` |

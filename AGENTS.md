@@ -7,7 +7,7 @@ package and is self-contained. Development documentation lives with the source a
 
 | Feature | Adds | Default |
 | --- | --- | --- |
-| `tls12` | rustls `tls12` (needed by `Policy::compatible()` and `legacy()`) | on |
+| `tls12` | rustls `tls12` (needed by `Policy::compatible()` and `legacy()`) | off |
 | `generate` | `rcgen`: `Identity::generate`, `Identity::open_or_create` | off |
 | `ca` | `x509-parser`, `globset`: `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio`, `tokio-rustls`: module `asynch` | off |

@@ -13,7 +13,7 @@ exclude = [".*", "*.local.*"]
 [features]
 # TLS 1.2 support in rustls, needed by the `compatible` and `legacy` profiles. It adds only
 # code to rustls; without it a policy that asks for TLS 1.2 is a clear error.
-default = ["tls12"]
+default = []
 tls12 = ["rustls/tls12", "tokio-rustls?/tls12"]
 # Generate self-signed identities (rcgen).
 generate = ["dep:rcgen"]
