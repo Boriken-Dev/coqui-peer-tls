@@ -1,0 +1,455 @@
+use std::sync::Arc;
+
+use rustls::DigitallySignedStruct;
+use rustls::DistinguishedName;
+use rustls::SignatureScheme;
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature};
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+
+use crate::error::PeerError;
+use crate::fingerprint::{Digest, Fingerprint};
+use crate::policy::Policy;
+use crate::store::{TrustStore, WaitingLimits};
+
+/// A set of pinned certificate fingerprints: fixed, or the accepted peers of a
+/// [`TrustStore`].
+///
+/// A fixed pin matches a certificate by hashing it with the pin's own digest, and every pin
+/// is compared in constant time whatever its digest. A store holds SHA-256 pins.
+#[derive(Debug, Clone)]
+pub struct Pins(PinsKind);
+
+#[derive(Debug, Clone)]
+enum PinsKind {
+    Fixed(Vec<Fingerprint>),
+    Store(TrustStore),
+}
+
+impl Pins {
+    /// Exactly these fingerprints.
+    pub fn fixed(fingerprints: impl IntoIterator<Item = Fingerprint>) -> Self {
+        Self(PinsKind::Fixed(fingerprints.into_iter().collect()))
+    }
+
+    /// The peers accepted in `store`, read at every handshake. A server using this also
+    /// records refused peers that proved their key as waiting in the store.
+    pub fn store(store: TrustStore) -> Self {
+        Self(PinsKind::Store(store))
+    }
+
+    /// Whether the certificate with this DER encoding is pinned.
+    pub fn matches(&self, der: &[u8]) -> bool {
+        match &self.0 {
+            PinsKind::Fixed(pins) => {
+                // Every pin is compared, in constant time, whatever matches first.
+                let mut found = false;
+                for digest in [Digest::Sha256, Digest::Sha384, Digest::Sha512, Digest::Sha1] {
+                    let mut ours = None;
+                    for pin in pins.iter().filter(|pin| pin.digest() == digest) {
+                        let ours = ours.get_or_insert_with(|| digest.of_certificate(der));
+                        found |= pin == ours;
+                    }
+                }
+                found
+            }
+            PinsKind::Store(store) => store.is_accepted(&Fingerprint::of_certificate(der)),
+        }
+    }
+
+    fn check_digests(&self, policy: &Policy) -> Result<(), PeerError> {
+        if let PinsKind::Fixed(pins) = &self.0 {
+            pins.iter().try_for_each(|pin| policy.check_pin(pin))?;
+        }
+        Ok(())
+    }
+
+    fn with_limits(&self, limits: WaitingLimits) -> Self {
+        match &self.0 {
+            PinsKind::Store(store) => Self(PinsKind::Store(store.clone().with_limits(limits))),
+            PinsKind::Fixed(_) => self.clone(),
+        }
+    }
+
+    fn records_waiting(&self) -> bool {
+        matches!(self.0, PinsKind::Store(_))
+    }
+
+    fn record_waiting(&self, der: &[u8]) {
+        if let PinsKind::Store(store) = &self.0 {
+            store.record_waiting(der, &Fingerprint::of_certificate(der), None);
+        }
+    }
+}
+
+/// A CA trust policy: certificates signed by the CAs in a PEM file whose subject and
+/// subject alternative names match optional globs.
+#[cfg(feature = "ca")]
+#[derive(Debug, Clone)]
+pub struct CaPolicy {
+    /// PEM file with the trusted CA certificates.
+    pub ca_file: std::path::PathBuf,
+    /// Globs matched against the subject, rendered as by `x509-parser`; empty matches any.
+    pub subject: Vec<String>,
+    /// Globs matched against the DNS, email, URI and IP subject alternative names; empty
+    /// matches any.
+    pub san: Vec<String>,
+}
+
+#[cfg(feature = "ca")]
+type MaybeCa = Option<crate::ca::Ca>;
+#[cfg(not(feature = "ca"))]
+type MaybeCa = Option<()>;
+
+/// Whom to trust.
+///
+/// Every policy requires the peer to prove it holds the certificate's key in the handshake.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum Trust {
+    /// Only pinned certificates.
+    Pinned(Pins),
+    /// Certificates signed by a CA and matching name globs. Server role only.
+    #[cfg(feature = "ca")]
+    Ca(CaPolicy),
+    /// A pinned certificate, or one the CA policy trusts. Server role only.
+    #[cfg(feature = "ca")]
+    PinnedOrCa {
+        /// The pinned certificates.
+        pins: Pins,
+        /// The CA policy.
+        ca: CaPolicy,
+    },
+    /// Any certificate whose key the peer proves; the caller decides from the returned
+    /// [`PeerIdentity`](crate::PeerIdentity) afterwards.
+    AnyWithKeyProof,
+}
+
+/// What the pinned path additionally requires, from the [`Policy`].
+#[derive(Debug, Clone, Copy)]
+struct PinnedChecks {
+    validity: bool,
+    chain_allowed: bool,
+}
+
+impl PinnedChecks {
+    fn of(policy: &Policy) -> Self {
+        Self {
+            validity: policy.check_validity,
+            chain_allowed: policy.allow_chain_when_pinned,
+        }
+    }
+}
+
+impl Trust {
+    /// The verifier a server uses for client certificates, under the strict policy.
+    ///
+    /// # Errors
+    ///
+    /// As [`client_cert_verifier_with`](Trust::client_cert_verifier_with).
+    pub fn client_cert_verifier(&self) -> Result<Arc<PeerClientVerifier>, PeerError> {
+        self.client_cert_verifier_with(&Policy::default())
+    }
+
+    /// The verifier a server uses for client certificates.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Certificate`] / [`PeerError::TrustPattern`] when the CA file or globs
+    /// are unusable; [`PeerError::Policy`] when a pin uses a digest the policy refuses or
+    /// the policy cannot build a crypto provider.
+    pub fn client_cert_verifier_with(
+        &self,
+        policy: &Policy,
+    ) -> Result<Arc<PeerClientVerifier>, PeerError> {
+        let provider = policy.crypto_provider()?;
+        let (pins, ca, any): (Option<Pins>, MaybeCa, bool) = match self {
+            Self::Pinned(pins) => (Some(pins.clone()), None, false),
+            #[cfg(feature = "ca")]
+            Self::Ca(ca) => (None, Some(crate::ca::Ca::load(ca, &provider)?), false),
+            #[cfg(feature = "ca")]
+            Self::PinnedOrCa { pins, ca } => (
+                Some(pins.clone()),
+                Some(crate::ca::Ca::load(ca, &provider)?),
+                false,
+            ),
+            Self::AnyWithKeyProof => (None, None, true),
+        };
+        if let Some(pins) = &pins {
+            pins.check_digests(policy)?;
+        }
+        let pins = pins.map(|pins| pins.with_limits(policy.waiting_limits()));
+        #[cfg(not(feature = "ca"))]
+        let _ = ca;
+        Ok(Arc::new(PeerClientVerifier {
+            pins,
+            #[cfg(feature = "ca")]
+            ca,
+            any,
+            checks: PinnedChecks::of(policy),
+            provider,
+        }))
+    }
+
+    /// The verifier a client uses for the server certificate, under the strict policy.
+    ///
+    /// # Errors
+    ///
+    /// As [`server_cert_verifier_with`](Trust::server_cert_verifier_with).
+    pub fn server_cert_verifier(&self) -> Result<Arc<PeerServerVerifier>, PeerError> {
+        self.server_cert_verifier_with(&Policy::default())
+    }
+
+    /// The verifier a client uses for the server certificate.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Unsupported`] for CA policies, which only servers apply;
+    /// [`PeerError::Policy`] when a pin uses a digest the policy refuses.
+    pub fn server_cert_verifier_with(
+        &self,
+        policy: &Policy,
+    ) -> Result<Arc<PeerServerVerifier>, PeerError> {
+        let (pins, any) = match self {
+            Self::Pinned(pins) => (Some(pins.clone()), false),
+            Self::AnyWithKeyProof => (None, true),
+            #[cfg(feature = "ca")]
+            _ => return Err(PeerError::Unsupported),
+        };
+        if let Some(pins) = &pins {
+            pins.check_digests(policy)?;
+        }
+        Ok(Arc::new(PeerServerVerifier {
+            pins,
+            any,
+            checks: PinnedChecks::of(policy),
+            provider: policy.crypto_provider()?,
+        }))
+    }
+}
+
+/// Verifies the certificate a server presents to a dialing client.
+///
+/// Names are not checked: a certificate is taken because it is pinned, and because the
+/// server proves in the handshake that it holds the key. Validity dates and the absence of
+/// a chain are checked as the [`Policy`] says, after the pin matched.
+#[derive(Debug)]
+pub struct PeerServerVerifier {
+    pins: Option<Pins>,
+    any: bool,
+    checks: PinnedChecks,
+    provider: Arc<CryptoProvider>,
+}
+
+impl ServerCertVerifier for PeerServerVerifier {
+    fn verify_server_cert(
+        &self,
+        certificate: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        if self.any {
+            return Ok(ServerCertVerified::assertion());
+        }
+        if self
+            .pins
+            .as_ref()
+            .is_some_and(|pins| pins.matches(certificate.as_ref()))
+        {
+            check_pinned(certificate, intermediates, now, self.checks)?;
+            Ok(ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::General(
+                "peer certificate does not match a pinned identity".to_owned(),
+            ))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signed: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        let algorithms = &self.provider.signature_verification_algorithms;
+        verify_tls12_signature(message, certificate, signed, algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signed: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        let algorithms = &self.provider.signature_verification_algorithms;
+        verify_tls13_signature(message, certificate, signed, algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// Verifies the certificate a client presents to a listening server.
+///
+/// With only a store-backed pin set, an unpinned certificate is deferred past the
+/// certificate check and refused when its handshake signature verifies: it is recorded as
+/// waiting only after proving it holds the key. With a CA policy beside the pins, an
+/// untrusted certificate is recorded as waiting without that proof.
+#[derive(Debug)]
+pub struct PeerClientVerifier {
+    pins: Option<Pins>,
+    #[cfg(feature = "ca")]
+    ca: Option<crate::ca::Ca>,
+    any: bool,
+    checks: PinnedChecks,
+    provider: Arc<CryptoProvider>,
+}
+
+impl PeerClientVerifier {
+    fn has_ca(&self) -> bool {
+        #[cfg(feature = "ca")]
+        {
+            self.ca.is_some()
+        }
+        #[cfg(not(feature = "ca"))]
+        {
+            false
+        }
+    }
+
+    /// Whether unpinned certificates are deferred to the signature check.
+    fn defers(&self) -> bool {
+        !self.any && !self.has_ca() && self.pins.as_ref().is_some_and(Pins::records_waiting)
+    }
+
+    fn pinned(&self, der: &[u8]) -> bool {
+        self.pins.as_ref().is_some_and(|pins| pins.matches(der))
+    }
+
+    /// After a valid signature: a deferred, unpinned certificate has now proved its key, so
+    /// it is recorded as waiting and refused.
+    fn settle(&self, certificate: &CertificateDer<'_>) -> Result<(), rustls::Error> {
+        if !self.defers() || self.pinned(certificate.as_ref()) {
+            return Ok(());
+        }
+        if let Some(pins) = &self.pins {
+            pins.record_waiting(certificate.as_ref());
+        }
+        Err(rustls::Error::General(
+            "peer certificate is not trusted".to_owned(),
+        ))
+    }
+}
+
+impl ClientCertVerifier for PeerClientVerifier {
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        #[cfg(feature = "ca")]
+        if let Some(ca) = &self.ca {
+            return ca.root_hint_subjects();
+        }
+        &[]
+    }
+
+    fn verify_client_cert(
+        &self,
+        certificate: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        now: UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        if self.any {
+            return Ok(ClientCertVerified::assertion());
+        }
+        if self.pinned(certificate.as_ref()) {
+            check_pinned(certificate, intermediates, now, self.checks)?;
+            return Ok(ClientCertVerified::assertion());
+        }
+        #[cfg(feature = "ca")]
+        if let Some(ca) = &self.ca
+            && ca.trusts(certificate, intermediates, now)?
+        {
+            return Ok(ClientCertVerified::assertion());
+        }
+        #[cfg(not(feature = "ca"))]
+        let _ = (intermediates, now);
+        if self.defers() {
+            return Ok(ClientCertVerified::assertion());
+        }
+        if let Some(pins) = &self.pins {
+            pins.record_waiting(certificate.as_ref());
+        }
+        Err(rustls::Error::General(
+            "peer certificate is not trusted".to_owned(),
+        ))
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signed: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        let algorithms = &self.provider.signature_verification_algorithms;
+        let verified = verify_tls12_signature(message, certificate, signed, algorithms)?;
+        self.settle(certificate)?;
+        Ok(verified)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &CertificateDer<'_>,
+        signed: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        let algorithms = &self.provider.signature_verification_algorithms;
+        let verified = verify_tls13_signature(message, certificate, signed, algorithms)?;
+        self.settle(certificate)?;
+        Ok(verified)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.provider
+            .signature_verification_algorithms
+            .supported_schemes()
+    }
+}
+
+/// What a pinned certificate must also be, checked only after its pin matched: alone (no
+/// chain, since there is no CA to chain to) and within its validity dates. A custom verifier
+/// loses rustls's own date check, and a pin does not change when a certificate expires.
+fn check_pinned(
+    certificate: &CertificateDer<'_>,
+    intermediates: &[CertificateDer<'_>],
+    now: UnixTime,
+    checks: PinnedChecks,
+) -> Result<(), rustls::Error> {
+    if !checks.chain_allowed && !intermediates.is_empty() {
+        return Err(rustls::Error::General(
+            "the peer presented a certificate chain: a pinned peer presents one certificate"
+                .to_owned(),
+        ));
+    }
+    if !checks.validity {
+        return Ok(());
+    }
+    let (not_before, not_after) = crate::x509::validity(certificate.as_ref()).map_err(|_| {
+        rustls::Error::General("the peer certificate validity period cannot be read".to_owned())
+    })?;
+    let now = i64::try_from(now.as_secs()).unwrap_or(i64::MAX);
+    if now < not_before {
+        return Err(rustls::Error::InvalidCertificate(
+            rustls::CertificateError::NotValidYet,
+        ));
+    }
+    if now > not_after {
+        return Err(rustls::Error::InvalidCertificate(
+            rustls::CertificateError::Expired,
+        ));
+    }
+    Ok(())
+}
