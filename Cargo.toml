@@ -1,0 +1,49 @@
+[package]
+name = "coqui-peer"
+description = "Mutual-TLS peer identity: certificate fingerprints, pinned, CA and key-proof trust, a trust store, policy profiles and encrypted streams"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+exclude = [".*", "*.local.*"]
+
+[features]
+# TLS 1.2 support in rustls, needed by the `compatible` and `legacy` profiles. It adds only
+# code to rustls; without it a policy that asks for TLS 1.2 is a clear error.
+default = ["tls12"]
+tls12 = ["rustls/tls12", "tokio-rustls?/tls12"]
+# Generate self-signed identities (rcgen).
+generate = ["dep:rcgen"]
+# Trust certificates signed by a CA file and matching subject and SAN globs.
+ca = ["dep:x509-parser", "dep:globset"]
+# Async dial and accept over tokio-rustls.
+tokio = ["dep:tokio", "dep:tokio-rustls"]
+# Read and write `Policy` in its versioned text form.
+serde = ["dep:serde", "coqui-net-acl?/serde"]
+# An access control list inside `Policy` (the `coqui-net-acl` crate).
+acl = ["dep:coqui-net-acl"]
+
+[dependencies]
+data-encoding = { version = "2", default-features = false, features = ["alloc"] }
+rustls = { workspace = true }
+sha1 = "0.11.0"
+sha2.workspace = true
+subtle.workspace = true
+coqui-net-acl = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+rcgen = { workspace = true, optional = true }
+x509-parser = { workspace = true, optional = true }
+globset = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["net"] }
+tokio-rustls = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
+serde_json = "1"
+toml.workspace = true
+tokio = { workspace = true, features = ["macros", "net", "rt", "io-util"] }

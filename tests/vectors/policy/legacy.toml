@@ -1,0 +1,9 @@
+policy_version = 1
+profile = "legacy"
+tls_versions = ["1.2", "1.3"]
+pin_digests = ["sha256", "sha384", "sha512", "sha1"]
+check_validity = true
+allow_chain_when_pinned = false
+waiting_per_source = 16
+waiting_total = 1000
+waiting_rerecord_secs = 60
