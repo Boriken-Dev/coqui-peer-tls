@@ -1,0 +1,93 @@
+name: Test
+
+# On demand: workflow_dispatch (optionally at a ref), or a pushed "ci-*" tag, which is
+# throwaway and deleted after its run. Not run on every push.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to test (branch, tag, or SHA)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      ref:
+        description: "Git ref to test (branch, tag, or SHA)"
+        type: string
+        required: false
+        default: ""
+  push:
+    tags:
+      - "ci-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }}, Rust ${{ matrix.toolchain }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        toolchain: [stable, "1.89"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+        if: matrix.toolchain == 'stable'
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --all-features
+      - run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  # Each feature set builds, lints and tests on its own, so a feature that only works
+  # beside another is caught.
+  features:
+    name: Features (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "none"
+            flags: "--no-default-features"
+          - name: "all"
+            flags: "--all-features"
+          - name: "tls12"
+            flags: "--no-default-features --features tls12"
+          - name: "acl"
+            flags: "--no-default-features --features acl"
+          - name: "generate"
+            flags: "--no-default-features --features generate"
+          - name: "ca"
+            flags: "--no-default-features --features ca"
+          - name: "tokio"
+            flags: "--no-default-features --features tokio"
+          - name: "serde"
+            flags: "--no-default-features --features serde"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets ${{ matrix.flags }} -- -D warnings
+      - run: cargo test ${{ matrix.flags }}
