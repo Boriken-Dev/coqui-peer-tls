@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
 use rustls::pki_types::{CertificateDer, ServerName};
@@ -7,6 +8,7 @@ use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, Str
 use crate::error::PeerError;
 use crate::fingerprint::Fingerprint;
 use crate::identity::PeerIdentity;
+use crate::source::with_source;
 
 /// The server name sent in the handshake. Trust is by fingerprint, so the name carries no
 /// meaning; it only has to be a valid DNS name.
@@ -44,22 +46,63 @@ pub fn dial<S: Read + Write>(
     Ok((StreamOwned::new(connection, io), peer))
 }
 
+/// A stream that can name the remote address it is connected to.
+///
+/// [`accept`] uses it to record where a refused peer came from. A stream without an address,
+/// or one that is not TCP, is accepted with [`accept_from`].
+pub trait PeerAddr {
+    /// The remote address, when known.
+    fn peer_addr(&self) -> Option<SocketAddr>;
+}
+
+impl PeerAddr for TcpStream {
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        TcpStream::peer_addr(self).ok()
+    }
+}
+
 /// Accepts a peer over `io`, completing the handshake before returning.
 ///
 /// A client whose certificate the configured [`Trust`](crate::Trust) refuses fails the
-/// handshake; when the trust is a store-backed pin set it is recorded as waiting once it has proved its key.
+/// handshake; when the trust is a store-backed pin set and the client proved it holds the
+/// certificate's key, it is recorded as waiting under the address of `io`.
 ///
 /// # Errors
 ///
 /// [`PeerError::Io`] when the handshake fails.
-pub fn accept<S: Read + Write>(
+pub fn accept<S: Read + Write + PeerAddr>(
+    config: Arc<ServerConfig>,
+    io: S,
+) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
+    let source = io.peer_addr();
+    accept_as(config, io, source)
+}
+
+/// [`accept`] for a stream that is not a [`TcpStream`], with the address it came from given.
+///
+/// # Errors
+///
+/// [`PeerError::Io`] when the handshake fails.
+pub fn accept_from<S: Read + Write>(
+    config: Arc<ServerConfig>,
+    io: S,
+    source: SocketAddr,
+) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
+    accept_as(config, io, Some(source))
+}
+
+fn accept_as<S: Read + Write>(
     config: Arc<ServerConfig>,
     mut io: S,
+    source: Option<SocketAddr>,
 ) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
     let mut connection = ServerConnection::new(config).map_err(|_| PeerError::Tls)?;
-    while connection.is_handshaking() {
-        connection.complete_io(&mut io).map_err(PeerError::Io)?;
-    }
+    with_source(source, || {
+        while connection.is_handshaking() {
+            connection.complete_io(&mut io).map_err(PeerError::Io)?;
+        }
+        Ok(())
+    })?;
     let peer = identity_of(connection.peer_certificates())?;
     Ok((StreamOwned::new(connection, io), peer))
 }

@@ -91,6 +91,12 @@ prove its key. Names are not checked on the pinned path.
   as waiting only after its handshake signature verifies (TLS 1.3 and 1.2), then refused:
   every waiting entry is key-proven. `verify_client_cert` runs before that signature, so it
   records nothing. A stolen public certificate fails the handshake and leaves no entry.
+- The recorded source is the address the handshake came from. `accept` (sync and `asynch`,
+  `accept_with`) requires `PeerAddr`, implemented for `std::net::TcpStream` and
+  `tokio::net::TcpStream`; any other stream uses `accept_from(config, io, SocketAddr)` /
+  `asynch::accept_from` / `asynch::accept_with_from`. `with_source(Option<SocketAddr>, f)`
+  scopes the address for a host that drives rustls itself; outside it, entries have no source.
+  Caps are per source IP address; the full `SocketAddr` is stored.
 - A pin whose digest the policy does not list is `PeerError::Policy` when the verifier is built.
 
 ## TrustStore
@@ -101,13 +107,13 @@ pub struct WaitingLimits { pub per_source: usize, pub total: usize, pub rerecord
 impl TrustStore {
     pub fn open(state_dir: &Path) -> Result<TrustStore, PeerError>;     // creates <state_dir>/peers/{accepted,waiting}
     pub fn with_limits(self, limits: WaitingLimits) -> TrustStore;
-    pub fn waiting(&self) -> Result<Vec<Fingerprint>, PeerError>;
+    pub fn waiting(&self) -> Result<Vec<WaitingEntry>, PeerError>;   // WaitingEntry { fingerprint, source: Option<SocketAddr> }
     pub fn accepted(&self) -> Result<Vec<Fingerprint>, PeerError>;
     pub fn accept(&self, fingerprint: &Fingerprint) -> Result<(), PeerError>;   // waiting -> accepted
     pub fn accept_certificate(&self, der: &[u8]) -> Result<Fingerprint, PeerError>;
     pub fn remove(&self, fingerprint: &Fingerprint) -> Result<bool, PeerError>;
     pub fn is_accepted(&self, fingerprint: &Fingerprint) -> bool;
-    pub fn record_waiting(&self, der: &[u8], fingerprint: &Fingerprint, source: Option<IpAddr>);
+    pub fn record_waiting(&self, der: &[u8], fingerprint: &Fingerprint, source: Option<SocketAddr>);
 }
 ```
 
@@ -115,7 +121,7 @@ impl TrustStore {
 (`NotWaiting`, `AlreadyAccepted`, `Certificate`). `record_waiting` is bounded: at most
 `per_source` entries per source (the oldest of that source is replaced), the same certificate
 from the same source at most every `rerecord`, `total` in all, certificates over 64 KiB
-ignored. The verifiers record with `source: None`, which shares one bucket.
+ignored. Callers that pass `source: None` share one bucket.
 
 ## Policy
 
@@ -185,11 +191,16 @@ pub fn server_config_with(&Identity, &Trust, &[&[u8]], &Policy) -> Result<Built<
 pub fn crypto_provider() -> Arc<CryptoProvider>;       // default ring provider
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
 pub fn dial<S: Read + Write>(Arc<ClientConfig>, S) -> Result<(StreamOwned<ClientConnection, S>, PeerIdentity), PeerError>;
-pub fn accept<S: Read + Write>(Arc<ServerConfig>, S) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;
+pub fn accept<S: Read + Write + PeerAddr>(Arc<ServerConfig>, S) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;
+pub fn accept_from<S: Read + Write>(Arc<ServerConfig>, S, source: SocketAddr) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;
+pub trait PeerAddr { fn peer_addr(&self) -> Option<SocketAddr>; }   // std and tokio TcpStream
+pub fn with_source<R>(Option<SocketAddr>, impl FnOnce() -> R) -> R;
 // feature tokio, module asynch:
 pub async fn dial<S>(Arc<ClientConfig>, S) -> Result<(client::TlsStream<S>, PeerIdentity), PeerError>;
-pub async fn accept<S>(Arc<ServerConfig>, S) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
-pub async fn accept_with<S>(S, select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
+pub async fn accept<S: PeerAddr>(Arc<ServerConfig>, S) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
+pub async fn accept_from<S>(Arc<ServerConfig>, S, SocketAddr) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
+pub async fn accept_with_from<S>(S, SocketAddr, select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
+pub async fn accept_with<S: PeerAddr>(S, select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
 ```
 
 Both complete the handshake before returning, so a refused certificate is an error and the
@@ -203,7 +214,7 @@ ClientHello, for example by ALPN, so one port serves peers and other clients.
 `Policy(String)`, `TrustPattern`, `NotWaiting`, `AlreadyAccepted`, `Path`, `Unsupported`,
 `Io(io::Error)`. `Display` never includes key material or paths.
 
-## On-disk formats (version 1)
+## On-disk formats (version 2)
 
 For peers in other languages. All files are UTF-8 with LF line endings.
 
@@ -215,14 +226,16 @@ For peers in other languages. All files are UTF-8 with LF line endings.
   is a display form.
 - **Trust store** — under `<state_dir>/peers/`: `accepted/<64 lowercase hex>.pem` and
   `waiting/<64 lowercase hex>.pem`, each one `CERTIFICATE` block whose DER hashes to the name.
+  A waiting file may start with one line `Source: <ip>:<port>` (IPv6 as `[addr]:port`), the
+  address the handshake came from; version 1 files have none and read with no source.
   `:` is not valid in Windows file names, so the name has no `sha256:` prefix. File names in
   the grouped base32 spelling are also read. Accepting moves a file from `waiting` to
-  `accepted`.
+  `accepted`, rewritten as the bare certificate block.
 - **Vectors** — `tests/vectors/identity-{a,b}.pem`, `identity-{a,b}.fingerprint` (three lines:
   canonical, bare hex, grouped base32) and `tests/vectors/store/peers/...` are checked by
   `tests/vectors.rs`; other implementations can check against the same bytes.
 
-Format changes bump a version and the changelog; version 1 files stay readable.
+Format changes bump a version and the changelog; version 1 files stay readable (the text form of `Policy` is still version 1).
 
 ## Gotchas
 

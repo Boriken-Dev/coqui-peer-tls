@@ -24,7 +24,8 @@ read from a file or the environment unless you give it a path. See the
   fields you can change; a policy is a plain value you can build, name and store.
 - **Verifiers as values** — hand the rustls verifiers to another TLS stack.
 - **Streams** — blocking `dial`/`accept` over any `Read + Write`; async over any
-  `AsyncRead + AsyncWrite` with `tokio`.
+  `AsyncRead + AsyncWrite` with `tokio`. `accept` reads the peer address from a TCP stream;
+  other streams use `accept_from`.
 
 ## Installation
 
@@ -37,7 +38,7 @@ cargo add coqui-peer --git https://github.com/Boriken-Dev/coqui-access
 | `tls12` | rustls `tls12` | the `compatible` and `legacy` presets |
 | `generate` | `rcgen` | `Identity::generate`, `open_or_create` |
 | `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa` |
-| `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_with` |
+| `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_from`, `accept_with`, `accept_with_from` |
 | `serde` | `serde` | reading and writing a `Policy` |
 | `acl` | `coqui-net-acl` | an access control list inside a `Policy` |
 
@@ -120,9 +121,9 @@ a document over your own base policy. Committed examples for every preset are in
 ## Limits and future work
 
 - A waiting entry is recorded only after the peer proves it holds the certificate's key, with
-  pins alone or beside a CA policy. The store keeps no source address: entries are bounded
-  per source in memory, and the verifiers do not know the socket address, so they share one
-  bucket.
+  pins alone or beside a CA policy. Each entry stores the address the handshake came from:
+  `accept` takes it from a TCP stream, `accept_from` takes it for any other stream, and the
+  per-source caps (`waiting_per_source`, `waiting_rerecord_secs`) apply per source IP address.
 - Not provided: a handshake probe (`Unknown | Online | Rejected | Offline`), a helper for
   reading and writing one connection from two threads, and QUIC with datagrams.
 - `coqui-net-acl` is its own crate, not part of this one: it needs no TLS and is used on

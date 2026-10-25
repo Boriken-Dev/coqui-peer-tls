@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -35,15 +35,29 @@ impl Default for WaitingLimits {
     }
 }
 
+/// A peer waiting for acceptance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WaitingEntry {
+    /// The certificate's fingerprint.
+    pub fingerprint: Fingerprint,
+    /// The address the handshake came from; `None` when the caller did not know it, or for an
+    /// entry written before the store kept it.
+    pub source: Option<SocketAddr>,
+}
+
 /// Persistent certificate pins: peers an operator accepted, and peers that were turned
 /// away and wait to be accepted.
 ///
-/// On-disk layout (format version 1), under `<state_dir>/peers/`:
+/// On-disk layout (format version 2), under `<state_dir>/peers/`:
 ///
 /// ```text
 /// accepted/<64 lowercase hex>.pem   one CERTIFICATE block; the name is its fingerprint
 /// waiting/<64 lowercase hex>.pem    the same, for a peer that proved its key and was refused
 /// ```
+///
+/// A waiting file may start with one line `Source: <ip>:<port>` before the certificate block
+/// (PEM allows explanatory text there): the address the handshake came from. Version 1 files
+/// have no such line and read with no source.
 ///
 /// Accepting moves a file from `waiting/` to `accepted/` after checking that the
 /// certificate inside hashes to the name. Names in the grouped base32 spelling are also
@@ -87,13 +101,24 @@ impl TrustStore {
         self
     }
 
-    /// Fingerprints awaiting operator acceptance, sorted.
+    /// Peers awaiting operator acceptance, sorted by fingerprint, each with the address it
+    /// connected from. Every entry proved it holds the certificate's key.
     ///
     /// # Errors
     ///
     /// [`PeerError::Io`] when the directory cannot be read.
-    pub fn waiting(&self) -> Result<Vec<Fingerprint>, PeerError> {
-        self.list("waiting")
+    pub fn waiting(&self) -> Result<Vec<WaitingEntry>, PeerError> {
+        Ok(self
+            .list("waiting")?
+            .into_iter()
+            .map(|fingerprint| WaitingEntry {
+                fingerprint,
+                source: self
+                    .existing("waiting", &fingerprint)
+                    .and_then(|path| fs::read_to_string(path).ok())
+                    .and_then(|text| source_of(&text)),
+            })
+            .collect())
     }
 
     /// Accepted fingerprints, sorted.
@@ -130,13 +155,19 @@ impl TrustStore {
         if Fingerprint::of_certificate(certificate.as_ref()) != *fingerprint {
             return Err(PeerError::Certificate);
         }
-        fs::rename(source, self.path("accepted", fingerprint)).map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                PeerError::NotWaiting
-            } else {
-                PeerError::Io(error)
+        // Rewritten without the source line: an accepted file is just the certificate.
+        match write_new(
+            &self.path("accepted", fingerprint),
+            &encode_pem("CERTIFICATE", certificate.as_ref()),
+        ) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                return Err(PeerError::AlreadyAccepted);
             }
-        })
+            Err(error) => return Err(PeerError::Io(error)),
+        }
+        let _ = fs::remove_file(source);
+        Ok(())
     }
 
     /// Accepts a certificate directly, without it having waited.
@@ -185,11 +216,17 @@ impl TrustStore {
 
     /// Records a refused peer's certificate as waiting. Failures are not reported to the peer.
     ///
-    /// Bounded: oversized certificates are ignored; one `source` address holds at most 16
-    /// entries (its oldest is replaced); the same certificate from the same source is
-    /// recorded at most once a minute; the directory holds at most 1000. `None` is the
-    /// source of callers that do not know it, which share one bucket.
-    pub fn record_waiting(&self, der: &[u8], fingerprint: &Fingerprint, source: Option<IpAddr>) {
+    /// Bounded: oversized certificates are ignored; one source IP address holds at most 16
+    /// entries (its oldest is replaced); the same certificate from the same IP address is
+    /// recorded at most once a minute; the directory holds at most 1000. The full `source`
+    /// address is stored with the entry. `None` is the source of callers that do not know it,
+    /// which share one bucket.
+    pub fn record_waiting(
+        &self,
+        der: &[u8],
+        fingerprint: &Fingerprint,
+        source: Option<SocketAddr>,
+    ) {
         if der.len() > MAX_CERTIFICATE_BYTES || self.existing("waiting", fingerprint).is_some() {
             return;
         }
@@ -200,7 +237,7 @@ impl TrustStore {
             return;
         }
         let mut seen = self.seen.lock().unwrap_or_else(PoisonError::into_inner);
-        let held = seen.sources.entry(source).or_default();
+        let held = seen.sources.entry(source.map(|s| s.ip())).or_default();
         let now = Instant::now();
         if held
             .iter()
@@ -215,10 +252,9 @@ impl TrustStore {
                 let _ = fs::remove_file(self.path("waiting", &old));
             }
         }
-        let _ = write_new(
-            &self.path("waiting", fingerprint),
-            &encode_pem("CERTIFICATE", der),
-        );
+        let mut text = source.map_or_else(String::new, |s| format!("Source: {s}\n"));
+        text.push_str(&encode_pem("CERTIFICATE", der));
+        let _ = write_new(&self.path("waiting", fingerprint), &text);
     }
 
     fn list(&self, section: &str) -> Result<Vec<Fingerprint>, PeerError> {
@@ -257,6 +293,11 @@ impl TrustStore {
             .join(format!("{}.pem", fingerprint.to_base32_grouped()));
         legacy.is_file().then_some(legacy)
     }
+}
+
+/// The address in a waiting file's leading `Source:` line.
+fn source_of(text: &str) -> Option<SocketAddr> {
+    text.lines().next()?.strip_prefix("Source: ")?.parse().ok()
 }
 
 /// Writes `text` to `path` unless it exists, atomically.
