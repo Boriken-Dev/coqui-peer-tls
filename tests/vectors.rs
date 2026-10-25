@@ -2,12 +2,12 @@
 //! so implementations in other languages can check themselves against the same files.
 //!
 //! Regenerating them is a format change:
-//! `cargo test -p coqui-peer --features generate -- --ignored regenerate_vectors`
+//! `cargo test -p coqui-peer-tls --features generate -- --ignored regenerate_vectors`
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use coqui_peer::{Fingerprint, Identity, TrustStore};
+use coqui_peer_tls::{Fingerprint, Identity, TrustStore};
 
 fn vectors() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors")

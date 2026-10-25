@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use coqui_peer::{
+use coqui_peer_tls::{
     Identity, Pins, Policy, Trust, TrustStore, WaitingLimits, accept, accept_from, client_config,
     dial, server_config, server_config_with,
 };
@@ -146,11 +146,11 @@ async fn async_accept_from_records_the_address_it_is_given() {
     let given: SocketAddr = "[2001:db8::1]:4000".parse().unwrap();
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
-        coqui_peer::asynch::accept_from(server_config, far, given)
+        coqui_peer_tls::asynch::accept_from(server_config, far, given)
             .await
             .is_ok()
     });
-    let _ = coqui_peer::asynch::dial(client_config, near).await;
+    let _ = coqui_peer_tls::asynch::dial(client_config, near).await;
     assert!(!accepting.await.unwrap());
     let waiting = store.waiting().unwrap();
     assert_eq!(waiting.len(), 1);

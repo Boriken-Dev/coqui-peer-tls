@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use coqui_peer::{
+use coqui_peer_tls::{
     Built, Digest, Identity, PeerError, Pins, Policy, TlsVersion, Trust, asynch,
     client_config_with, server_config_with,
 };
