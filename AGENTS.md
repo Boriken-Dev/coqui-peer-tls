@@ -87,9 +87,10 @@ prove its key. Names are not checked on the pinned path.
   returns `PeerError::Unsupported` for them. CA trust checks the chain and the globs.
 - `AnyWithKeyProof` takes any certificate whose key is proven; the caller decides from
   `PeerIdentity` afterwards.
-- With a store-backed pin set alone, an untrusted client is recorded as waiting only after its
-  handshake signature verifies, then refused. With a CA policy beside the pins it is recorded
-  without that proof.
+- With a store-backed pin set, alone or beside a CA policy, an untrusted client is recorded
+  as waiting only after its handshake signature verifies (TLS 1.3 and 1.2), then refused:
+  every waiting entry is key-proven. `verify_client_cert` runs before that signature, so it
+  records nothing. A stolen public certificate fails the handshake and leaves no entry.
 - A pin whose digest the policy does not list is `PeerError::Policy` when the verifier is built.
 
 ## TrustStore

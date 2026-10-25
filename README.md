@@ -119,8 +119,10 @@ a document over your own base policy. Committed examples for every preset are in
 
 ## Limits and future work
 
-- With a CA policy beside pins, an untrusted certificate is recorded as waiting without key
-  proof; with pins alone it is recorded only after proving its key.
+- A waiting entry is recorded only after the peer proves it holds the certificate's key, with
+  pins alone or beside a CA policy. The store keeps no source address: entries are bounded
+  per source in memory, and the verifiers do not know the socket address, so they share one
+  bucket.
 - Not provided: a handshake probe (`Unknown | Online | Rejected | Offline`), a helper for
   reading and writing one connection from two threads, and QUIC with datagrams.
 - `coqui-net-acl` is its own crate, not part of this one: it needs no TLS and is used on
