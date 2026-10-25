@@ -82,7 +82,11 @@ impl Pins {
 
     fn record_waiting(&self, der: &[u8]) {
         if let PinsKind::Store(store) = &self.0 {
-            store.record_waiting(der, &Fingerprint::of_certificate(der), None);
+            store.record_waiting(
+                der,
+                &Fingerprint::of_certificate(der),
+                crate::source::current(),
+            );
         }
     }
 }

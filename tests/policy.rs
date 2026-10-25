@@ -23,7 +23,10 @@ async fn exchange(
 ) -> bool {
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
-        let (mut stream, _) = asynch::accept(Arc::new(server_config), far).await.ok()?;
+        let (mut stream, _) =
+            asynch::accept_from(Arc::new(server_config), far, ([192, 0, 2, 1], 1).into())
+                .await
+                .ok()?;
         let mut byte = [0u8; 4];
         stream.read_exact(&mut byte).await.ok()?;
         stream.write_all(&byte).await.ok()?;
@@ -57,7 +60,10 @@ async fn connect(
     } = client_config_with(&client, &pinned(&server), &[ALPN], client_policy).ok()?;
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
-        let (mut stream, _) = asynch::accept(Arc::new(server_config), far).await.ok()?;
+        let (mut stream, _) =
+            asynch::accept_from(Arc::new(server_config), far, ([192, 0, 2, 1], 1).into())
+                .await
+                .ok()?;
         let mut byte = [0u8; 4];
         stream.read_exact(&mut byte).await.ok()?;
         stream.write_all(&byte).await.ok()?;

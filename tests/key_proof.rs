@@ -129,11 +129,14 @@ fn genuine_unknown_client_is_recorded(policy: &Policy) {
         let trust = trust(&store, with_ca.then_some(ca.as_path()));
         let accepted = handshake(&server, &trust, policy, genuine(&client, policy));
         assert!(!accepted, "ca: {with_ca}");
+        let waiting = store.waiting().unwrap();
+        assert_eq!(waiting.len(), 1, "ca: {with_ca}");
         assert_eq!(
-            store.waiting().unwrap(),
-            vec![client.fingerprint()],
+            waiting[0].fingerprint,
+            client.fingerprint(),
             "ca: {with_ca}"
         );
+        assert!(waiting[0].source.is_some_and(|s| s.ip().is_loopback()));
     }
 }
 

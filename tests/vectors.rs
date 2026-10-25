@@ -74,7 +74,10 @@ fn the_sample_trust_store_reads_as_committed() {
     copy_tree(&vectors().join("store"), directory.path());
     let store = TrustStore::open(directory.path()).unwrap();
     assert_eq!(store.accepted().unwrap(), vec![a]);
-    assert_eq!(store.waiting().unwrap(), vec![b]);
+    let waiting = store.waiting().unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].fingerprint, b);
+    assert_eq!(waiting[0].source, Some("192.0.2.7:4000".parse().unwrap()));
     assert!(store.is_accepted(&a) && !store.is_accepted(&b));
     store.accept(&b).unwrap();
     assert!(store.is_accepted(&b));
@@ -117,7 +120,11 @@ fn regenerate_vectors() {
             root.join("store/peers")
                 .join(section)
                 .join(format!("{}.pem", fingerprint.hex())),
-            certificate_block(&pem),
+            if section == "waiting" {
+                format!("Source: 192.0.2.7:4000\n{}", certificate_block(&pem))
+            } else {
+                certificate_block(&pem).to_owned()
+            },
         )
         .unwrap();
     }

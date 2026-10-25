@@ -120,7 +120,9 @@ fn an_unknown_peer_that_proved_its_key_waits_and_is_let_in_once_accepted() {
     );
     assert_eq!(served.join().unwrap(), None);
     let _ = refused;
-    assert_eq!(store.waiting().unwrap(), vec![client.fingerprint()]);
+    let waiting = store.waiting().unwrap();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].fingerprint, client.fingerprint());
 
     store.accept(&client.fingerprint()).unwrap();
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -304,9 +306,10 @@ async fn async_dial_and_accept_over_any_stream() {
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let (mut stream, peer) = coqui_peer::asynch::accept(server_config, far)
-            .await
-            .unwrap();
+        let (mut stream, peer) =
+            coqui_peer::asynch::accept_from(server_config, far, "192.0.2.1:1".parse().unwrap())
+                .await
+                .unwrap();
         let mut byte = [0u8; 4];
         stream.read_exact(&mut byte).await.unwrap();
         stream.write_all(&byte).await.unwrap();
@@ -331,12 +334,13 @@ async fn accept_with_chooses_the_configuration_from_the_hello() {
         Arc::new(client_config(&client, &pinned(server.fingerprint()), &[ALPN]).unwrap());
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
-        let (stream, peer) = coqui_peer::asynch::accept_with(far, |hello| {
-            assert_eq!(hello.alpn().unwrap().next(), Some(ALPN));
-            chosen
-        })
-        .await
-        .unwrap();
+        let (stream, peer) =
+            coqui_peer::asynch::accept_with_from(far, "192.0.2.1:1".parse().unwrap(), |hello| {
+                assert_eq!(hello.alpn().unwrap().next(), Some(ALPN));
+                chosen
+            })
+            .await
+            .unwrap();
         drop(stream);
         peer.fingerprint
     });
