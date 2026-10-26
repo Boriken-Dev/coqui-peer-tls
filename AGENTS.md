@@ -337,16 +337,17 @@ pub use coqui_peer::pair;                    // Pairing, PairingDesk, PairingOpt
 pub use coqui_peer::{Clock, Random, Invitation, InvitationOptions, RotationOptions, RotationEvent};
 pub const PAIR_ALPN: &[u8] = b"coqui-pair/1";
 pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
-pub struct PairConfig { pub policy: Policy, pub alpn: Vec<u8> }   // Default: strict, PAIR_ALPN
+pub struct PairConfig { pub policy: Policy, pub alpn: Vec<u8>, pub timeout: Duration }  // strict, PAIR_ALPN, 15 min
+pub trait ReadTimeout { fn set_read_timeout(&self, Option<Duration>) -> io::Result<()>; }  // TcpStream
 pub enum ResponderTrust { Unverified, Verified { trust: Box<Trust>, name: Option<ServerName<'static>> } }
 impl ResponderTrust { pub fn pinned(id: PeerId) -> ResponderTrust; }
 pub fn random() -> Random;                   // the TLS provider's secure random source
 pub fn pair_server_config(&Identity, &PairConfig) -> Result<ServerConfig, PeerError>;
 pub fn pair_client_config(&Identity, &Pairing, &ResponderTrust, &PairConfig) -> Result<(ClientConfig, ServerName<'static>), PeerError>;
-pub fn pair_dial<S: Read + Write>(S, &Identity, Pairing, &ResponderTrust, &PairConfig) -> Result<PairDial<S>, PeerError>;
+pub fn pair_dial<S: Read + Write + ReadTimeout>(S, &Identity, Pairing, &ResponderTrust, &PairConfig) -> Result<PairDial<S>, PeerError>;
 impl<S> PairDial<S> { pub fn shown(&self) -> Option<&Shown>; pub fn finish(self, &TrustStore) -> Result<Paired, PeerError>; }
-pub fn pair_accept<S: Read + Write + PeerAddr>(S, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
-pub fn pair_accept_from<S: Read + Write>(S, SocketAddr, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
+pub fn pair_accept<S: Read + Write + PeerAddr + ReadTimeout>(S, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
+pub fn pair_accept_from<S: Read + Write + ReadTimeout>(S, SocketAddr, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
 pub fn announce(&mut impl Write, successor: &Identity) -> Result<(), PeerError>;
 pub fn receive_announcement(&mut impl Read, &TrustStore, sender: &PeerIdentity) -> Result<PeerId, PeerError>;
 impl Identity { pub fn renew_before(&self, margin: Duration) -> bool; pub fn renew_before_at(&self, Duration, SystemTime) -> bool; }
@@ -383,6 +384,18 @@ blocks in `PairingDesk::wait` (rechecks expiry every second on the system clock)
 awaits `PairingDesk::decided` and sweeps the desk every second meanwhile. On success the joiner's
 certificate is accepted in the store before the joiner is told. The address of the stream is the
 source the desk throttles by (`pair_accept_from` for other streams).
+
+**Timeouts.** One side's whole exchange, its TLS handshake included, takes at most
+`PairConfig::timeout` (15 minutes by default, longer than the default `device_ttl`;
+`Duration::MAX` waits forever): the joiner's `pair_dial` and `finish` together, the responder's
+`pair_accept` (or `asynch::pair_respond` from its call). Each responder read also waits at most
+until the responder's own deadline (`PairingResponder::time_left`: `pin_ttl` or `device_ttl` from
+the joiner's first message); past it the joiner is told `Expired` and its slot, code and pending
+place are freed. A stalled transport ends with `PeerError::Io` (`TimedOut` or `WouldBlock`). The
+blocking forms set the timeouts through `ReadTimeout`, implemented for `TcpStream`; a stream that
+cannot time out implements it as a no-op and is bounded by its caller. The async forms use
+`tokio::time::timeout`. A frame's buffer grows as its bytes arrive, so a declared length (at
+most `coqui_peer::MAX_MESSAGE`) costs nothing until it is sent.
 
 **What each TLS version gives.** TLS 1.3 (the strict policy): the exporter is unique to the
 connection, so a relay between two connections fails the PIN confirmation. TLS 1.2 (a policy

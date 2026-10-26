@@ -2,9 +2,9 @@
 //! ALPN, bound to the connection by its exporter; and key rotation over an authenticated one.
 
 use std::io::{self, Read, Write};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use coqui_peer::pair::{
     Channel, Mode, Paired, Pairing, PairingDesk, PairingError, PairingJoiner, PairingResponder,
@@ -39,6 +39,10 @@ pub struct PairConfig {
     /// only the configurations built here admit a key-proven certificate nobody trusts yet.
     /// Default [`PAIR_ALPN`].
     pub alpn: Vec<u8>,
+    /// How long one side's whole exchange may take, the TLS handshake included: the joiner's
+    /// dial and finish together, the responder's accept. `Duration::MAX` waits forever. Default
+    /// 15 minutes, longer than the default `device_ttl` an operator has to approve.
+    pub timeout: Duration,
 }
 
 impl Default for PairConfig {
@@ -46,6 +50,7 @@ impl Default for PairConfig {
         Self {
             policy: Policy::strict(),
             alpn: PAIR_ALPN.to_vec(),
+            timeout: Duration::from_secs(15 * 60),
         }
     }
 }
@@ -174,6 +179,54 @@ pub(crate) fn channel(
     })
 }
 
+/// A stream whose reads can be given a timeout, so a pairing exchange cannot hold a thread
+/// forever. Implemented for `TcpStream`. A stream that cannot time out may implement it as a
+/// no-op; its caller then bounds the exchange another way.
+pub trait ReadTimeout {
+    /// Sets the timeout of every read from now on; `None` waits forever.
+    ///
+    /// # Errors
+    ///
+    /// When the stream refuses the setting.
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()>;
+}
+
+impl ReadTimeout for TcpStream {
+    fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
+        TcpStream::set_read_timeout(self, timeout)
+    }
+}
+
+/// The instant `timeout` from now; `None` when it is too far to represent, which waits forever.
+pub(crate) fn ends(timeout: Duration) -> Option<Instant> {
+    Instant::now().checked_add(timeout)
+}
+
+/// The time left until `until`, at least a millisecond (a zero read timeout is an error).
+pub(crate) fn left(until: Option<Instant>) -> Option<Duration> {
+    until.map(|until| {
+        until
+            .saturating_duration_since(Instant::now())
+            .max(Duration::from_millis(1))
+    })
+}
+
+/// The sooner of `left` and a responder's own time left on the desk's clock.
+pub(crate) fn sooner(left: Option<Duration>, responder: Option<Duration>) -> Option<Duration> {
+    let responder = responder.map(|time| time.max(Duration::from_millis(1)));
+    match (left, responder) {
+        (Some(left), Some(responder)) => Some(left.min(responder)),
+        (left, responder) => left.or(responder),
+    }
+}
+
+pub(crate) fn timed_out(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+    )
+}
+
 /// Writes one message, its length first as four big-endian bytes.
 pub(crate) fn write_frame(io: &mut impl Write, message: &[u8]) -> io::Result<()> {
     let length = u32::try_from(message.len()).map_err(|_| io::ErrorKind::InvalidInput)?;
@@ -182,27 +235,32 @@ pub(crate) fn write_frame(io: &mut impl Write, message: &[u8]) -> io::Result<()>
     io.flush()
 }
 
-/// Reads one message written by [`write_frame`], at most [`MAX_MESSAGE`] bytes.
+/// Reads one message written by [`write_frame`], at most [`MAX_MESSAGE`] bytes. The buffer grows
+/// as bytes arrive, so a declared length costs nothing until it is sent.
 pub(crate) fn read_frame(io: &mut impl Read) -> io::Result<Vec<u8>> {
     let mut length = [0u8; 4];
     io.read_exact(&mut length)?;
-    let length = usize::try_from(u32::from_be_bytes(length)).unwrap_or(usize::MAX);
-    if length > MAX_MESSAGE {
+    let length = u32::from_be_bytes(length);
+    if usize::try_from(length).map_or(true, |length| length > MAX_MESSAGE) {
         return Err(io::ErrorKind::InvalidData.into());
     }
-    let mut message = vec![0u8; length];
-    io.read_exact(&mut message)?;
+    let mut message = Vec::new();
+    io.take(u64::from(length)).read_to_end(&mut message)?;
+    if message.len() != length as usize {
+        return Err(io::ErrorKind::UnexpectedEof.into());
+    }
     Ok(message)
 }
 
 /// A joiner's pairing connection, past the point where it has something to show (or done).
 #[derive(Debug)]
-pub struct PairDial<S: Read + Write> {
+pub struct PairDial<S: Read + Write + ReadTimeout> {
     tls: StreamOwned<ClientConnection, S>,
     joiner: PairingJoiner,
+    until: Option<Instant>,
 }
 
-impl<S: Read + Write> PairDial<S> {
+impl<S: Read + Write + ReadTimeout> PairDial<S> {
     /// What to show a person now: this joiner's PIN with its slot, or the device-flow user
     /// code. `None` when the mode shows nothing.
     pub fn shown(&self) -> Option<&Shown> {
@@ -211,13 +269,15 @@ impl<S: Read + Write> PairDial<S> {
 
     /// Runs the exchange to its end (for a shown code, until the operator acts at the
     /// responder), accepts the responder's certificate in `store`, and closes the connection.
+    /// It waits at most what is left of [`PairConfig::timeout`] from [`pair_dial`].
     ///
     /// # Errors
     ///
     /// [`PeerError::Pairing`] when either side refused; [`PeerError::Io`] when the connection
-    /// fails; [`PeerError::Certificate`] or [`PeerError::Io`] when the store cannot write.
+    /// fails or the timeout passes (`TimedOut`); [`PeerError::Certificate`] or
+    /// [`PeerError::Io`] when the store cannot write.
     pub fn finish(mut self, store: &TrustStore) -> Result<Paired, PeerError> {
-        join_until(&mut self.tls, &mut self.joiner, |_| false)?;
+        join_until(&mut self.tls, &mut self.joiner, self.until, |_| false)?;
         let paired = self.joiner.finish()?;
         match store.accept_key(&paired.peer) {
             Ok(_) | Err(coqui_peer::Error::AlreadyAccepted) => {}
@@ -229,10 +289,11 @@ impl<S: Read + Write> PairDial<S> {
     }
 }
 
-/// Moves joiner messages until `stop` holds, the joiner completes, or it fails.
-fn join_until<S: Read + Write>(
+/// Moves joiner messages until `stop` holds, the joiner completes, it fails, or `until` passes.
+fn join_until<S: Read + Write + ReadTimeout>(
     tls: &mut StreamOwned<ClientConnection, S>,
     joiner: &mut PairingJoiner,
+    until: Option<Instant>,
     stop: impl Fn(&PairingJoiner) -> bool,
 ) -> Result<(), PeerError> {
     loop {
@@ -242,6 +303,9 @@ fn join_until<S: Read + Write>(
         if joiner.is_complete() || stop(joiner) {
             return Ok(());
         }
+        tls.sock
+            .set_read_timeout(left(until))
+            .map_err(PeerError::Io)?;
         let message = read_frame(tls).map_err(PeerError::Io)?;
         if let Err(error) = joiner.receive(&message) {
             // The joiner may have queued a refusal for the responder.
@@ -260,21 +324,28 @@ fn join_until<S: Read + Write>(
 /// An invitation pins the inviter; a PIN pairing may leave the responder
 /// [`Unverified`](ResponderTrust::Unverified) because the PIN authenticates it; the device flow
 /// needs a [`Verified`](ResponderTrust::Verified) responder unless the pairing allows otherwise.
+/// The handshake, this call and [`PairDial::finish`] together wait at most
+/// [`PairConfig::timeout`].
 ///
 /// # Errors
 ///
-/// [`PeerError::Pairing`]; [`PeerError::Io`] when the handshake or connection fails (a pinned
-/// inviter that is someone else is refused here, with [`PeerError::refusal`]);
-/// [`PeerError::Tls`] when the server did not negotiate the pairing ALPN.
-pub fn pair_dial<S: Read + Write>(
+/// [`PeerError::Pairing`]; [`PeerError::Io`] when the handshake or connection fails or the
+/// timeout passes (a pinned inviter that is someone else is refused here, with
+/// [`PeerError::refusal`]); [`PeerError::Tls`] when the server did not negotiate the pairing
+/// ALPN.
+pub fn pair_dial<S: Read + Write + ReadTimeout>(
     stream: S,
     identity: &Identity,
     pairing: Pairing,
     responder: &ResponderTrust,
     config: &PairConfig,
 ) -> Result<PairDial<S>, PeerError> {
+    let until = ends(config.timeout);
     let (client, name) = pair_client_config(identity, &pairing, responder, config)?;
     let verified = responder_verified(&pairing, responder);
+    stream
+        .set_read_timeout(left(until))
+        .map_err(PeerError::Io)?;
     let (tls, peer) = dial_named(Arc::new(client), name, stream)?;
     let exporter = tls
         .conn
@@ -284,8 +355,9 @@ pub fn pair_dial<S: Read + Write>(
     let mut dial = PairDial {
         tls,
         joiner: pairing.join(channel)?,
+        until,
     };
-    join_until(&mut dial.tls, &mut dial.joiner, |joiner| {
+    join_until(&mut dial.tls, &mut dial.joiner, until, |joiner| {
         joiner.shown().is_some()
     })?;
     Ok(dial)
@@ -296,11 +368,16 @@ pub fn pair_dial<S: Read + Write>(
 /// call blocks while the operator decides), and accepting the joiner's certificate in `store`.
 /// The address of `stream` is the source the desk throttles by.
 ///
+/// Every read waits at most the sooner of what is left of [`PairConfig::timeout`] and the
+/// responder's own deadline (`pin_ttl` or `device_ttl` from the joiner's first message); past
+/// that deadline the joiner is told `Expired`.
+///
 /// # Errors
 ///
-/// [`PeerError::Pairing`] when either side refused; [`PeerError::Io`] when the handshake or the
-/// connection fails; [`PeerError::Tls`] when the client did not negotiate the pairing ALPN.
-pub fn pair_accept<S: Read + Write + PeerAddr>(
+/// [`PeerError::Pairing`] when either side refused or the deadline passed; [`PeerError::Io`]
+/// when the handshake or the connection fails or the timeout passes (`TimedOut`);
+/// [`PeerError::Tls`] when the client did not negotiate the pairing ALPN.
+pub fn pair_accept<S: Read + Write + PeerAddr + ReadTimeout>(
     stream: S,
     identity: &Identity,
     store: &TrustStore,
@@ -316,7 +393,7 @@ pub fn pair_accept<S: Read + Write + PeerAddr>(
 /// # Errors
 ///
 /// As [`pair_accept`].
-pub fn pair_accept_from<S: Read + Write>(
+pub fn pair_accept_from<S: Read + Write + ReadTimeout>(
     stream: S,
     source: SocketAddr,
     identity: &Identity,
@@ -327,7 +404,7 @@ pub fn pair_accept_from<S: Read + Write>(
     pair_accept_as(stream, Some(source), identity, store, desk, config)
 }
 
-fn pair_accept_as<S: Read + Write>(
+fn pair_accept_as<S: Read + Write + ReadTimeout>(
     stream: S,
     source: Option<SocketAddr>,
     identity: &Identity,
@@ -335,7 +412,11 @@ fn pair_accept_as<S: Read + Write>(
     desk: &PairingDesk,
     config: &PairConfig,
 ) -> Result<Paired, PeerError> {
+    let until = ends(config.timeout);
     let server = Arc::new(pair_server_config(identity, config)?);
+    stream
+        .set_read_timeout(left(until))
+        .map_err(PeerError::Io)?;
     let (mut tls, peer) = accept_from_as(server, stream, source)?;
     let exporter = tls
         .conn
@@ -343,17 +424,18 @@ fn pair_accept_as<S: Read + Write>(
         .map_err(|_| PeerError::Tls)?;
     let channel = channel(&tls.conn, exporter, identity, &peer, false, &config.alpn)?;
     let mut responder = PairingResponder::new(channel, store, desk, source);
-    let result = respond(&mut tls, &mut responder, desk);
+    let result = respond(&mut tls, &mut responder, desk, until);
     tls.conn.send_close_notify();
     let _ = tls.flush();
     result?;
     Ok(responder.finish()?)
 }
 
-fn respond<S: Read + Write>(
+fn respond<S: Read + Write + ReadTimeout>(
     tls: &mut StreamOwned<ServerConnection, S>,
     responder: &mut PairingResponder,
     desk: &PairingDesk,
+    until: Option<Instant>,
 ) -> Result<(), PeerError> {
     loop {
         while let Some(message) = responder.transmit() {
@@ -365,8 +447,18 @@ fn respond<S: Read + Write>(
         let step = match responder.awaiting() {
             Some(ticket) => responder.resume(desk.wait(ticket)),
             None => {
-                let message = read_frame(tls).map_err(PeerError::Io)?;
-                responder.receive(&message)
+                let wait = sooner(left(until), responder.time_left());
+                tls.sock.set_read_timeout(wait).map_err(PeerError::Io)?;
+                match read_frame(tls) {
+                    Ok(message) => responder.receive(&message),
+                    // Past the responder's deadline the joiner is told; past the transport's
+                    // own timeout the connection just ends.
+                    Err(error) if timed_out(&error) => match responder.check_deadline() {
+                        Err(expired) => Err(expired),
+                        Ok(()) => return Err(PeerError::Io(error)),
+                    },
+                    Err(error) => return Err(PeerError::Io(error)),
+                }
             }
         };
         if let Err(error) = step {

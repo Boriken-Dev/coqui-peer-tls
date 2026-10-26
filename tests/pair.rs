@@ -708,3 +708,150 @@ async fn async_device_flow_on_the_apps_own_port() {
     let outcomes = served.await.unwrap();
     assert!(outcomes.iter().all(Result::is_ok), "{outcomes:?}");
 }
+
+// Timeouts. A stall shows only as a read that times out, so these use the system clock and
+// timeouts of a fraction of a second.
+
+/// A TLS pairing connection to `address` as `client` that sends the PIN-mode first message and
+/// then stalls; returns the stream and the frames it receives until the server closes.
+fn stalling_joiner(address: SocketAddr, client: &Device) -> Vec<Vec<u8>> {
+    let (config, name) = pair_client_config(
+        &client.identity,
+        &Pairing::pin(
+            Pin::parse(&CodeAlphabet::pin(), "000000").unwrap(),
+            PinRole::Typed,
+        ),
+        &ResponderTrust::Unverified,
+        &PairConfig::default(),
+    )
+    .unwrap();
+    let (mut tls, _) =
+        coqui_peer_tls::dial_named(Arc::new(config), name, TcpStream::connect(address).unwrap())
+            .unwrap();
+    let own = coqui_peer_tls::certificate_key(client.identity.certificate_der()).unwrap();
+    let hello = Pairing::pin(
+        Pin::parse(&CodeAlphabet::pin(), "000000").unwrap(),
+        PinRole::Typed,
+    )
+    .join(coqui_peer_tls::pair::Channel {
+        local: own,
+        remote: None,
+        verified: false,
+        binding: None,
+    })
+    .unwrap()
+    .transmit()
+    .unwrap();
+    tls.write_all(&(hello.len() as u32).to_be_bytes()).unwrap();
+    tls.write_all(&hello).unwrap();
+    tls.flush().unwrap();
+    let mut frames = Vec::new();
+    loop {
+        let mut length = [0u8; 4];
+        if tls.read_exact(&mut length).is_err() {
+            return frames;
+        }
+        let mut frame = vec![0u8; u32::from_be_bytes(length) as usize];
+        if tls.read_exact(&mut frame).is_err() {
+            return frames;
+        }
+        frames.push(frame);
+    }
+}
+
+/// The refusal frame for `Expired`: version, tag, reason.
+const EXPIRED: [u8; 3] = [1, 8, 2];
+
+#[test]
+fn a_joiner_that_stalls_is_told_expired_and_its_place_freed() {
+    let hand = Hand::new();
+    let (server, client) = (device(&hand), device(&hand));
+    let desk = PairingDesk::new(random())
+        .with_options(coqui_peer_tls::pair::PairingOptions {
+            pin_ttl: Duration::from_millis(300),
+            ..Default::default()
+        })
+        .unwrap()
+        .with_limits(coqui_peer_tls::pair::DeskLimits {
+            pending_per_source: 1,
+            ..Default::default()
+        });
+    desk.show_pin().unwrap();
+    let (address, served) = responder(&server, &desk, PairConfig::default());
+    let frames = stalling_joiner(address, &client);
+    // Ready, then the refusal once the PIN run's deadline passed.
+    assert_eq!(frames.len(), 2, "{frames:?}");
+    assert_eq!(frames[1], EXPIRED);
+    assert_eq!(refusal(&served.join().unwrap()), Some(PairRefusal::Expired));
+    // Its place is free: the same source is admitted again.
+    desk.show_pin().unwrap();
+    let (address, served) = responder(&server, &desk, PairConfig::default());
+    assert_eq!(stalling_joiner(address, &client)[1], EXPIRED);
+    assert_eq!(refusal(&served.join().unwrap()), Some(PairRefusal::Expired));
+}
+
+#[test]
+fn a_dialer_gives_up_after_its_timeout() {
+    let hand = Hand::new();
+    let client = device(&hand);
+    // A server that accepts the connection and never speaks.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let held = thread::spawn(move || listener.accept().map(|(socket, _)| socket));
+    let config = PairConfig {
+        timeout: Duration::from_millis(200),
+        ..PairConfig::default()
+    };
+    let shown = Pin::parse(&CodeAlphabet::pin(), "000000").unwrap();
+    let result = pair_dial(
+        TcpStream::connect(address).unwrap(),
+        &client.identity,
+        Pairing::pin(shown, PinRole::Typed),
+        &ResponderTrust::Unverified,
+        &config,
+    );
+    let Err(PeerError::Io(error)) = result.map(|_| ()) else {
+        panic!("expected a timeout");
+    };
+    assert!(
+        matches!(
+            error.kind(),
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+        ),
+        "{error:?}"
+    );
+    drop(held.join());
+}
+
+#[tokio::test]
+async fn async_a_joiner_that_stalls_is_told_expired() {
+    let hand = Hand::new();
+    let (server, client) = (device(&hand), device(&hand));
+    let desk = PairingDesk::new(random())
+        .with_options(coqui_peer_tls::pair::PairingOptions {
+            pin_ttl: Duration::from_millis(300),
+            ..Default::default()
+        })
+        .unwrap();
+    desk.show_pin().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (identity, store, served_desk) =
+        (server.identity.clone(), server.store.clone(), desk.clone());
+    let served = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        asynch::pair_accept(
+            socket,
+            &identity,
+            &store,
+            &served_desk,
+            &PairConfig::default(),
+        )
+        .await
+    });
+    let frames = tokio::task::spawn_blocking(move || stalling_joiner(address, &client))
+        .await
+        .unwrap();
+    assert_eq!(frames.last().map(Vec::as_slice), Some(&EXPIRED[..]));
+    assert_eq!(refusal(&served.await.unwrap()), Some(PairRefusal::Expired));
+}
