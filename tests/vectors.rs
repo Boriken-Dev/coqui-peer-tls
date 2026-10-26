@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use coqui_peer_tls::{Fingerprint, Identity};
+use coqui_peer_tls::{Identity, PeerId};
 
 fn vectors() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors")
@@ -30,7 +30,7 @@ fn each_certificate_has_the_committed_fingerprint_in_every_spelling() {
         assert_eq!(fingerprint.to_base32_grouped(), lines[2]);
         assert_eq!(fingerprint.to_string(), lines[0]);
         for line in lines {
-            assert_eq!(line.parse::<Fingerprint>().unwrap(), fingerprint);
+            assert_eq!(line.parse::<PeerId>().unwrap(), fingerprint);
         }
         // An identity file round-trips byte for byte: certificate block, then PKCS#8 key.
         assert_eq!(

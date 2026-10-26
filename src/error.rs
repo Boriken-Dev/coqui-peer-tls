@@ -6,8 +6,8 @@ use std::io;
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PeerError {
-    /// A fingerprint is malformed.
-    InvalidFingerprint,
+    /// A peer id is malformed.
+    InvalidId,
     /// A certificate or its private key is missing or invalid.
     Certificate,
     /// A TLS configuration or handshake was refused.
@@ -34,7 +34,7 @@ pub enum PeerError {
 impl fmt::Display for PeerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::InvalidFingerprint => "certificate fingerprint is invalid",
+            Self::InvalidId => "peer id is invalid",
             Self::Certificate => "certificate or private key is invalid",
             Self::Tls => "TLS configuration or handshake failed",
             Self::WeakDigest => "fingerprint is an MD5 digest, which is not supported",
@@ -52,7 +52,7 @@ impl fmt::Display for PeerError {
 impl From<coqui_peer::Error> for PeerError {
     fn from(error: coqui_peer::Error) -> Self {
         match error {
-            coqui_peer::Error::InvalidId => Self::InvalidFingerprint,
+            coqui_peer::Error::InvalidId => Self::InvalidId,
             coqui_peer::Error::WeakDigest => Self::WeakDigest,
             coqui_peer::Error::UnknownDigest(_) => Self::Policy(error.to_string()),
             coqui_peer::Error::NotWaiting => Self::NotWaiting,

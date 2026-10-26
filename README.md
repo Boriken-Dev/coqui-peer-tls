@@ -16,7 +16,7 @@ store and the sans-IO handshake trait; this crate adds X.509 and rustls on top. 
 
 ## Features
 
-- **Fingerprints** — `Fingerprint` is the `PeerId` of `coqui-peer`: SHA-256 of the
+- **Certificate ids** — a certificate's id is the `PeerId` of `coqui-peer`: SHA-256 of the
   certificate, written `sha256:<hex>`; grouped base32 for screens; SHA-384, SHA-512 and
   (legacy) SHA-1 pins can be read.
 - **Trust you choose** — pinned fingerprints, a CA with subject and SAN globs, both, or any
@@ -57,7 +57,7 @@ cargo add coqui-peer-tls --git https://github.com/Boriken-Dev/coqui-peer-tls
 | `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` |
 | `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa` |
 | `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_from`, `accept_with`, `accept_with_from` |
-| `serde` | `serde`, `coqui-peer/serde` | reading and writing a `Policy` and `Fingerprint` as text, in the format you choose |
+| `serde` | `serde`, `coqui-peer/serde` | reading and writing a `Policy` and `PeerId` as text, in the format you choose |
 | `acl` | `coqui-net-acl` | an access control list inside a `Policy` |
 | `platform-roots` | `rustls-platform-verifier` | `Roots::platform`: servers verified by the operating system's roots |
 
@@ -168,7 +168,7 @@ a document over your own base policy. Committed examples for every preset are in
 | Item | Purpose |
 | --- | --- |
 | `Identity`, `PeerIdentity` | This side's certificate and key; the verified other side. |
-| `Fingerprint`, `Digest` | Certificate hashes and their text forms. |
+| `PeerId`, `Digest` | Certificate hashes and their text forms. |
 | `Trust`, `Pins`, `CaPolicy`, `Roots` | Whom to trust. |
 | `PeerClientVerifier`, `PeerServerVerifier` | The rustls verifiers as values. |
 | `Refusal`, `PeerError::refusal` | Why this side refused a peer's certificate, as a value. |

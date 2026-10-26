@@ -15,7 +15,7 @@ use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use crate::error::{PeerError, Refusal};
 use crate::policy::Policy;
 use crate::roots::Roots;
-use coqui_peer::{Digest, PeerId as Fingerprint, TrustStore, WaitingLimits};
+use coqui_peer::{Digest, PeerId, TrustStore, WaitingLimits};
 
 /// A set of pinned certificate fingerprints: fixed, or the accepted peers of a
 /// [`TrustStore`].
@@ -27,13 +27,13 @@ pub struct Pins(PinsKind);
 
 #[derive(Debug, Clone)]
 enum PinsKind {
-    Fixed(Vec<Fingerprint>),
+    Fixed(Vec<PeerId>),
     Store(TrustStore),
 }
 
 impl Pins {
     /// Exactly these fingerprints.
-    pub fn fixed(fingerprints: impl IntoIterator<Item = Fingerprint>) -> Self {
+    pub fn fixed(fingerprints: impl IntoIterator<Item = PeerId>) -> Self {
         Self(PinsKind::Fixed(fingerprints.into_iter().collect()))
     }
 
@@ -59,7 +59,7 @@ impl Pins {
                 found
             }
             PinsKind::Store(store) => {
-                let id = Fingerprint::of(der);
+                let id = PeerId::of(der);
                 store
                     .accepted_key(&id)
                     .is_some_and(|key| key.method == crate::METHOD)
@@ -366,7 +366,7 @@ pub struct PeerClientVerifier {
     /// The signature check receives only the certificate, not the chain the CA policy needed,
     /// so this is how it tells a trusted certificate from a deferred one.
     #[cfg(feature = "ca")]
-    ca_trusted: Mutex<Vec<(Fingerprint, Instant)>>,
+    ca_trusted: Mutex<Vec<(PeerId, Instant)>>,
 }
 
 /// How long a CA-trusted certificate waits for its signature before being forgotten.
@@ -406,7 +406,7 @@ impl PeerClientVerifier {
         let now = Instant::now();
         waiting.retain(|(_, at)| now.duration_since(*at) < CA_TRUSTED_TTL);
         if waiting.len() < CA_TRUSTED_MAX {
-            waiting.push((Fingerprint::of(der), now));
+            waiting.push((PeerId::of(der), now));
         }
     }
 
@@ -414,7 +414,7 @@ impl PeerClientVerifier {
     fn take_ca_trusted(&self, der: &[u8]) -> bool {
         #[cfg(feature = "ca")]
         {
-            let fingerprint = Fingerprint::of(der);
+            let fingerprint = PeerId::of(der);
             let mut waiting = self
                 .ca_trusted
                 .lock()
