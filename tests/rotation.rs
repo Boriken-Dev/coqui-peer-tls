@@ -157,11 +157,14 @@ fn a_successor_waits_for_approval_when_the_store_requires_it() {
     store.accept_certificate(old.certificate_der()).unwrap();
     let key = coqui_peer_tls::certificate_key(new.certificate_der()).unwrap();
     store.announce_successor(&old.fingerprint(), &key).unwrap();
+    // Nobody proved it yet, so the operator cannot approve it.
+    assert!(store.promote_successor(&new.fingerprint()).is_err());
 
     let refused = handshake(&server, &store, &new).unwrap_err();
     assert_eq!(refused.refusal(), Some(Refusal::NotAccepted));
-    // Not queued as a stranger either: it is a pending successor.
+    // Not queued as a stranger either: it is a pending successor, now proven.
     assert!(store.waiting().unwrap().is_empty());
+    assert!(store.successors().unwrap()[0].proven.is_some());
 
     store.promote_successor(&new.fingerprint()).unwrap();
     assert!(handshake(&server, &store, &new).is_ok());
@@ -289,4 +292,38 @@ async fn an_async_announcement_is_recorded() {
     asynch::announce(&mut stream, &new).await.unwrap();
     assert_eq!(served.await.unwrap().unwrap(), new.fingerprint());
     assert_eq!(store.successors().unwrap()[0].new, new.fingerprint());
+}
+
+#[test]
+fn a_client_that_requires_approval_records_the_servers_proof_and_waits() {
+    let hand = Hand::new();
+    let (_directory, client_store) = store(&hand);
+    let client_store = client_store.with_rotation(RotationOptions {
+        require_approval: true,
+        ..RotationOptions::default()
+    });
+    let client = Identity::generate().unwrap();
+    let (old, new) = (Identity::generate().unwrap(), Identity::generate().unwrap());
+    client_store
+        .accept_certificate(old.certificate_der())
+        .unwrap();
+    let key = coqui_peer_tls::certificate_key(new.certificate_der()).unwrap();
+    client_store
+        .announce_successor(&old.fingerprint(), &key)
+        .unwrap();
+    let trusting = Trust::Pinned(Pins::store(client_store.clone()));
+    let dial_new = || {
+        let config = server_config(&new, &Trust::AnyWithKeyProof, &[APP]).unwrap();
+        let (address, served) = serve(config, |_, _| ());
+        let config = client_config(&client, &trusting, &[APP]).unwrap();
+        let dialled = dial(Arc::new(config), TcpStream::connect(address).unwrap()).map(|_| ());
+        let _ = served.join();
+        dialled
+    };
+    let refused = dial_new().unwrap_err();
+    assert_eq!(refused.refusal(), Some(Refusal::NotAccepted));
+    assert!(client_store.successors().unwrap()[0].proven.is_some());
+    assert!(!client_store.is_accepted(&new.fingerprint()));
+    client_store.promote_successor(&new.fingerprint()).unwrap();
+    assert!(dial_new().is_ok());
 }

@@ -373,7 +373,9 @@ an invitation, a pin of the inviter whatever `ResponderTrust` says; a PIN, `Resp
 PIN authenticates the responder, so `Unverified` is enough); the device flow, `Verified` trust
 (pins, a store, or roots with the host's `name`), and `Unverified` or `Trust::AnyWithKeyProof` is
 `PeerError::Pairing(PairingError::Unverified)` before connecting unless
-`Pairing::allow_unverified(true)`, at the cost stated in `coqui-peer`'s header.
+`Pairing::allow_unverified(true)`, at the cost stated in `coqui-peer`'s header. The channel
+handed to the exchange is `verified` exactly when the inviter was pinned or the trust was
+`Verified` with anything but `AnyWithKeyProof`.
 
 **Responder.** `pair_accept` handshakes, then runs the responder until done: redeeming an
 invitation, taking the shown PIN, or waiting for the operator through the desk. The blocking form
@@ -395,9 +397,11 @@ which records the successor (`TrustStore::announce_successor`; a peer that is no
 is retiring, is `PeerError::Pairing(PairingError::Local(coqui_peer::Error::NotAccepted))`). A
 store-backed `Pins` then admits the successor: the verifier lets it through presentation
 (after `check_pinned`'s chain and date checks), and once its handshake signature verifies,
-promotes it (`promote_successor`), so the predecessor retires after
-`RotationOptions::retire_after`. With `RotationOptions::require_approval` the successor is
-refused (`NotAccepted`) until the caller promotes it, and is not recorded as waiting. This
+records the proof (`prove_successor`) and promotes it (`promote_successor`), so the
+predecessor retires after `RotationOptions::retire_after`. With
+`RotationOptions::require_approval` the handshake is refused (`NotAccepted`) after the proof
+is recorded, and the caller promotes it when it approves (`promote_successor` refuses a
+successor nobody proved unless `allow_unproven`); it is not recorded as waiting. This
 works both ways: a server verifying clients by its store, and a client pinning its server by
 its store. `take_rotation_events` returns what happened. `Identity::renew_before(margin)` says
 when the certificate ends within `margin` (an unreadable one is due).
