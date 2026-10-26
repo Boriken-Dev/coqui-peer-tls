@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
+use rustls::client::Resumption;
 use rustls::crypto::CryptoProvider;
+use rustls::server::NoServerSessionStorage;
 use rustls::{ClientConfig, ServerConfig};
 
 use crate::error::PeerError;
@@ -27,7 +29,8 @@ pub struct Built<T> {
 /// A client configuration under the strict policy (TLS 1.3 only) that presents `identity`
 /// and verifies the server by `trust` (pinned, or any certificate with key proof).
 ///
-/// `alpn` lists the application protocols offered, most preferred first.
+/// `alpn` lists the application protocols offered, most preferred first. Session resumption
+/// is off: every connection verifies the server's certificate.
 ///
 /// # Errors
 ///
@@ -40,7 +43,8 @@ pub fn client_config(
     client_config_with(identity, trust, alpn, &Policy::default()).map(|built| built.config)
 }
 
-/// A client configuration under `policy`.
+/// A client configuration under `policy`. Session resumption is off unless
+/// [`Policy::allow_resumption`] is set, which then keeps rustls's default session cache.
 ///
 /// # Errors
 ///
@@ -63,6 +67,9 @@ pub fn client_config_with(
         .with_client_auth_cert(vec![identity.certificate()], identity.key())
         .map_err(|_| PeerError::Certificate)?;
     config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
+    if !policy.allow_resumption {
+        config.resumption = Resumption::disabled();
+    }
     Ok(Built {
         config,
         weakened: policy.weakened(),
@@ -70,7 +77,8 @@ pub fn client_config_with(
 }
 
 /// A server configuration under the strict policy that presents `identity` and requires a
-/// client certificate trusted by `trust`.
+/// client certificate trusted by `trust`. Session resumption is off: every connection
+/// verifies the client's certificate.
 ///
 /// # Errors
 ///
@@ -83,7 +91,9 @@ pub fn server_config(
     server_config_with(identity, trust, alpn, &Policy::default()).map(|built| built.config)
 }
 
-/// A server configuration under `policy`.
+/// A server configuration under `policy`. Session resumption is off unless
+/// [`Policy::allow_resumption`] is set, which then keeps rustls's default session cache and
+/// TLS 1.3 tickets.
 ///
 /// # Errors
 ///
@@ -104,6 +114,12 @@ pub fn server_config_with(
         .with_single_cert(vec![identity.certificate()], identity.key())
         .map_err(|_| PeerError::Certificate)?;
     config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
+    if !policy.allow_resumption {
+        // No session cache for TLS 1.2 session ids or TLS 1.3 stateful tickets, and no
+        // tickets sent; the builder's ticketer already produces none.
+        config.session_storage = Arc::new(NoServerSessionStorage {});
+        config.send_tls13_tickets = 0;
+    }
     Ok(Built {
         config,
         weakened: policy.weakened(),

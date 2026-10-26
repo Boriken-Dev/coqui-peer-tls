@@ -235,6 +235,7 @@ fn weakening_is_reported_as_plain_data() {
     let mut policy = Policy::legacy();
     policy.check_validity = false;
     policy.allow_chain_when_pinned = true;
+    policy.allow_resumption = true;
     policy.waiting_per_source = 64;
     let settings: Vec<String> = policy.weakened().into_iter().map(|w| w.setting).collect();
     assert_eq!(
@@ -244,6 +245,7 @@ fn weakening_is_reported_as_plain_data() {
             "pin_digests",
             "check_validity",
             "allow_chain_when_pinned",
+            "allow_resumption",
             "waiting_per_source"
         ]
     );
