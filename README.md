@@ -26,6 +26,13 @@ store and the sans-IO handshake trait; this crate adds X.509 and rustls on top. 
 - **Pairing** — a peer that proves its key and is not trusted is recorded as waiting in the
   `coqui-peer` `TrustStore` (certificates are kept under the method name `tls`); an operator
   accepts it by fingerprint.
+- **Pairing without reading fingerprints** — `pair_dial` / `pair_accept` run `coqui-peer`'s
+  invitation, PIN (SPAKE2, feature `pin`) or device-flow exchange on a connection of its own
+  under the pairing ALPN, bound to it by the TLS exporter, with your device's own `Policy`.
+  Codes to show and decisions to make come back as data; the `PairingDesk` holds them.
+- **Key rotation** — `announce` a successor certificate over an authenticated connection; the
+  store-backed verifiers promote it once proven and retire the old one after a window you
+  choose. `Identity::renew_before` says when to.
 - **Policy** — strict by default (TLS 1.3 only), with `compatible` and `legacy` presets and
   fields you can change; a policy is a plain value you can build, name and store.
 - **Verifiers as values** — hand the rustls verifiers to another TLS stack.
@@ -56,7 +63,8 @@ cargo add coqui-peer-tls --git https://github.com/Boriken-Dev/coqui-peer-tls
 | `tls12` | rustls `tls12` | the `compatible` and `legacy` presets |
 | `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` |
 | `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa` |
-| `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_from`, `accept_with`, `accept_with_from` |
+| `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_from`, `accept_with`, `accept_with_from`, and the pairing and rotation twins |
+| `pin` | `coqui-peer/pin` (`spake2`, `hkdf`, `hmac`) | PIN pairing |
 | `serde` | `serde`, `coqui-peer/serde` | reading and writing a `Policy` and `PeerId` as text, in the format you choose |
 | `acl` | `coqui-net-acl` | an access control list inside a `Policy` |
 | `platform-roots` | `rustls-platform-verifier` | `Roots::platform`: servers verified by the operating system's roots |
@@ -176,6 +184,8 @@ a document over your own base policy. Committed examples for every preset are in
 | `Policy`, `Weakening` | What is allowed, and what is looser than strict. |
 | `client_config(_with)`, `server_config(_with)`, `Built` | TLS configurations, ALPN as a parameter. |
 | `dial`, `dial_named`, `accept`, `asynch::*` | Encrypted streams plus the peer. |
+| `pair_dial`, `pair_accept`, `PairConfig`, `ResponderTrust`, `pair::*` | Pairing over TLS. |
+| `announce`, `receive_announcement`, `Identity::renew_before` | Key rotation. |
 
 ## Limits and future work
 
