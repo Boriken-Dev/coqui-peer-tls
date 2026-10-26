@@ -12,7 +12,7 @@ use rustls::crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signat
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 
-use crate::error::PeerError;
+use crate::error::{PeerError, Refusal};
 use crate::policy::Policy;
 use coqui_peer::{Digest, PeerId as Fingerprint, TrustStore, WaitingLimits};
 
@@ -82,6 +82,14 @@ impl Pins {
 
     fn records_waiting(&self) -> bool {
         matches!(self.0, PinsKind::Store(_))
+    }
+
+    /// Why a certificate these pins do not match is refused.
+    fn refusal(&self) -> Refusal {
+        match self.0 {
+            PinsKind::Fixed(_) => Refusal::NotPinned,
+            PinsKind::Store(_) => Refusal::NotAccepted,
+        }
     }
 
     fn record_waiting(&self, der: &[u8]) {
@@ -274,9 +282,8 @@ impl ServerCertVerifier for PeerServerVerifier {
             check_pinned(certificate, intermediates, now, self.checks)?;
             Ok(ServerCertVerified::assertion())
         } else {
-            Err(rustls::Error::General(
-                "peer certificate does not match a pinned identity".to_owned(),
-            ))
+            let refusal = self.pins.as_ref().map_or(Refusal::NotPinned, Pins::refusal);
+            Err(refusal.into_rustls())
         }
     }
 
@@ -347,6 +354,17 @@ impl PeerClientVerifier {
         self.pins.as_ref().is_some_and(|pins| pins.matches(der))
     }
 
+    /// Why a certificate that is neither pinned nor CA-trusted is refused.
+    fn refusal(&self) -> Refusal {
+        match &self.pins {
+            Some(pins) if pins.records_waiting() => Refusal::NotAccepted,
+            #[cfg(feature = "ca")]
+            _ if self.ca.is_some() => Refusal::NotTrusted,
+            Some(pins) => pins.refusal(),
+            None => Refusal::NotPinned,
+        }
+    }
+
     #[cfg(feature = "ca")]
     fn note_ca_trusted(&self, der: &[u8]) {
         let mut waiting = self
@@ -400,9 +418,7 @@ impl PeerClientVerifier {
         if let Some(pins) = &self.pins {
             pins.record_waiting(certificate.as_ref());
         }
-        Err(rustls::Error::General(
-            "peer certificate is not trusted".to_owned(),
-        ))
+        Err(self.refusal().into_rustls())
     }
 }
 
@@ -443,9 +459,7 @@ impl ClientCertVerifier for PeerClientVerifier {
             // Not recorded here: the client has not yet proved it holds the key.
             return Ok(ClientCertVerified::assertion());
         }
-        Err(rustls::Error::General(
-            "peer certificate is not trusted".to_owned(),
-        ))
+        Err(self.refusal().into_rustls())
     }
 
     fn verify_tls12_signature(
@@ -487,17 +501,13 @@ fn check_pinned(
     checks: PinnedChecks,
 ) -> Result<(), rustls::Error> {
     if !checks.chain_allowed && !intermediates.is_empty() {
-        return Err(rustls::Error::General(
-            "the peer presented a certificate chain: a pinned peer presents one certificate"
-                .to_owned(),
-        ));
+        return Err(Refusal::ChainWhenPinned.into_rustls());
     }
     if !checks.validity {
         return Ok(());
     }
-    let (not_before, not_after) = crate::x509::validity(certificate.as_ref()).map_err(|_| {
-        rustls::Error::General("the peer certificate validity period cannot be read".to_owned())
-    })?;
+    let (not_before, not_after) = crate::x509::validity(certificate.as_ref())
+        .map_err(|_| rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding))?;
     let now = i64::try_from(now.as_secs()).unwrap_or(i64::MAX);
     if now < not_before {
         return Err(rustls::Error::InvalidCertificate(

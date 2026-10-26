@@ -71,3 +71,76 @@ impl std::error::Error for PeerError {
         }
     }
 }
+
+impl PeerError {
+    /// The trust refusal behind this error, when a handshake failed because this side's
+    /// verifier refused the peer's certificate. The refused side sees only the TLS alert, so
+    /// its own error carries none.
+    pub fn refusal(&self) -> Option<Refusal> {
+        match self {
+            Self::Io(error) => error
+                .get_ref()
+                .and_then(|inner| inner.downcast_ref::<rustls::Error>())
+                .and_then(Refusal::from_rustls),
+            _ => None,
+        }
+    }
+}
+
+/// Why a verifier of this crate refused a peer's certificate.
+///
+/// A verifier returns it inside
+/// `rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(..)))`, so rustls
+/// sends the `certificate_unknown` alert; [`Refusal::from_rustls`] and
+/// [`PeerError::refusal`] take it back out. Expired and not-yet-valid certificates are
+/// rustls's own `CertificateError::Expired` and `NotValidYet`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Refusal {
+    /// The certificate matches no fixed pin.
+    NotPinned,
+    /// The certificate is not one the trust store accepted. A server with a store-backed pin
+    /// set records it as waiting, within the store's limits, once the peer proved its key.
+    NotAccepted,
+    /// The certificate matches no pin, and the CA policy does not trust its chain or names.
+    NotTrusted,
+    /// A pinned peer presented a certificate chain, which the policy does not allow
+    /// ([`Policy::allow_chain_when_pinned`](crate::Policy::allow_chain_when_pinned)).
+    ChainWhenPinned,
+}
+
+impl Refusal {
+    /// The refusal inside `error`, when one of this crate's verifiers produced it.
+    pub fn from_rustls(error: &rustls::Error) -> Option<Self> {
+        match error {
+            rustls::Error::InvalidCertificate(rustls::CertificateError::Other(other)) => {
+                other.0.downcast_ref::<Self>().copied()
+            }
+            _ => None,
+        }
+    }
+
+    /// The rustls error a verifier returns for this refusal.
+    pub(crate) fn into_rustls(self) -> rustls::Error {
+        rustls::Error::InvalidCertificate(rustls::CertificateError::Other(rustls::OtherError(
+            std::sync::Arc::new(self),
+        )))
+    }
+}
+
+impl fmt::Display for Refusal {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::NotPinned => "peer certificate matches no pinned fingerprint",
+            Self::NotAccepted => "peer certificate is not an accepted peer of the trust store",
+            Self::NotTrusted => {
+                "peer certificate matches no pin and is not trusted by the CA policy"
+            }
+            Self::ChainWhenPinned => {
+                "pinned peer presented a certificate chain, which the policy does not allow"
+            }
+        })
+    }
+}
+
+impl std::error::Error for Refusal {}

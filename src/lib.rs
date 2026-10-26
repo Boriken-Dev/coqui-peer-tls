@@ -14,6 +14,7 @@
 //! | [`TrustStore`] | The core crate's store of accepted and waiting peers; certificates stored under the method name `tls`. |
 //! | [`Trust`], [`Pins`] | Whom to trust: pinned, CA (`ca` feature), pinned or CA, any with key proof. |
 //! | [`PeerClientVerifier`], [`PeerServerVerifier`] | The rustls verifiers as values, for other TLS stacks. |
+//! | [`Refusal`] | Why a verifier refused a certificate, read back with [`PeerError::refusal`]. |
 //! | [`client_config`], [`server_config`] | TLS 1.3 configurations with ALPN as a parameter. |
 //! | [`Tls`], [`TlsHandshake`] | The method and handshake of [`coqui_peer`]. |
 //!
@@ -51,7 +52,7 @@ pub use config::{
 #[cfg(feature = "acl")]
 pub use coqui_net_acl as acl;
 pub use coqui_peer::{Digest, KeyMaterial, PeerId, TrustStore, WaitingEntry, WaitingLimits};
-pub use error::PeerError;
+pub use error::{PeerError, Refusal};
 pub use handshake::{Tls, TlsHandshake};
 pub use identity::{Identity, PeerIdentity};
 pub use policy::{POLICY_VERSION, Policy, TlsVersion, Weakening};
