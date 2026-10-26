@@ -10,7 +10,7 @@ use crate::certificate::certificate_key;
 use crate::error::PeerError;
 use crate::identity::PeerIdentity;
 use crate::source::with_source;
-use crate::stream::{SERVER_NAME, identity_of};
+use crate::stream::{default_name, identity_of};
 
 /// The TLS method: client and server configurations, each optional, that start handshakes.
 ///
@@ -80,13 +80,27 @@ pub struct TlsHandshake {
 }
 
 impl TlsHandshake {
-    /// A handshake as the dialing side.
+    /// A handshake as the dialing side, sending [`SERVER_NAME`](crate::SERVER_NAME) as the
+    /// server name.
     ///
     /// # Errors
     ///
     /// [`PeerError::Tls`] when the connection cannot be created.
     pub fn client(config: Arc<ClientConfig>) -> Result<Self, PeerError> {
-        let name = ServerName::try_from(SERVER_NAME).map_err(|_| PeerError::Tls)?;
+        Self::client_named(config, default_name()?)
+    }
+
+    /// A handshake as the dialing side, sending `name` as the server name: the host dialled,
+    /// for a server verified by [`Roots`](crate::Roots). [`Established::peer`] is the
+    /// server's leaf certificate's fingerprint, however it was verified.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Tls`] when the connection cannot be created.
+    pub fn client_named(
+        config: Arc<ClientConfig>,
+        name: ServerName<'static>,
+    ) -> Result<Self, PeerError> {
         let connection = ClientConnection::new(config, name).map_err(|_| PeerError::Tls)?;
         Ok(Self {
             connection: connection.into(),
