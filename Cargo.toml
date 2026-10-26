@@ -34,7 +34,7 @@ acl = ["dep:coqui-net-acl"]
 platform-roots = ["dep:rustls-platform-verifier"]
 
 [dependencies]
-coqui-peer = { git = "https://github.com/Boriken-Dev/coqui-peer", rev = "b9ccc570a2b337e8fb75d671fe886773810a9f7b" }
+coqui-peer = { git = "https://github.com/Boriken-Dev/coqui-peer", rev = "b3aa9bdb5a5534ede66d6fc2122604e72409d93f" }
 data-encoding = { version = "2", default-features = false, features = ["alloc"] }
 rustls = { version = "0.23.27", default-features = false, features = ["std", "ring"] }
 coqui-net-acl = { git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "ef48f2564ab3193d5204f52b8607f25bea1050c5", optional = true }
