@@ -67,6 +67,36 @@ impl Pins {
         }
     }
 
+    /// Whether the certificate is the pending successor of an accepted one in a store-backed
+    /// set, and may be promoted once the peer proves it (the store's rotation options do not
+    /// require approval).
+    fn successor_admitted(&self, der: &[u8]) -> bool {
+        match &self.0 {
+            PinsKind::Store(store) => {
+                !store.rotation().require_approval
+                    && store
+                        .successor_key(&PeerId::of(der))
+                        .is_some_and(|key| key.method == crate::METHOD)
+            }
+            PinsKind::Fixed(_) => false,
+        }
+    }
+
+    /// Whether the certificate is a pending successor in a store-backed set, approved or not.
+    fn pending_successor(&self, der: &[u8]) -> bool {
+        match &self.0 {
+            PinsKind::Store(store) => store.successor_key(&PeerId::of(der)).is_some(),
+            PinsKind::Fixed(_) => false,
+        }
+    }
+
+    /// Promotes a successor whose holder proved it in the handshake.
+    fn promote(&self, der: &[u8]) {
+        if let PinsKind::Store(store) = &self.0 {
+            let _ = store.promote_successor(&PeerId::of(der));
+        }
+    }
+
     fn check_digests(&self, policy: &Policy) -> Result<(), PeerError> {
         if let PinsKind::Fixed(pins) = &self.0 {
             pins.iter().try_for_each(|pin| policy.check_pin(pin))?;
@@ -290,6 +320,19 @@ pub struct PeerServerVerifier {
     provider: Arc<CryptoProvider>,
 }
 
+impl PeerServerVerifier {
+    /// After a valid signature: a pending successor the server just proved is promoted.
+    fn promote_proven(&self, certificate: &CertificateDer<'_>) {
+        if let Some(pins) = &self.pins
+            && !self.any
+            && !pins.matches(certificate.as_ref())
+            && pins.successor_admitted(certificate.as_ref())
+        {
+            pins.promote(certificate.as_ref());
+        }
+    }
+}
+
 impl ServerCertVerifier for PeerServerVerifier {
     fn verify_server_cert(
         &self,
@@ -309,6 +352,14 @@ impl ServerCertVerifier for PeerServerVerifier {
         {
             check_pinned(certificate, intermediates, now, self.checks)?;
             Ok(ServerCertVerified::assertion())
+        } else if self
+            .pins
+            .as_ref()
+            .is_some_and(|pins| pins.successor_admitted(certificate.as_ref()))
+        {
+            // Promoted only once the signature below proves the server holds its key.
+            check_pinned(certificate, intermediates, now, self.checks)?;
+            Ok(ServerCertVerified::assertion())
         } else if let Some(roots) = &self.roots {
             roots
                 .verify_server_cert(certificate, intermediates, name, ocsp_response, now)
@@ -326,7 +377,9 @@ impl ServerCertVerifier for PeerServerVerifier {
         signed: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         let algorithms = &self.provider.signature_verification_algorithms;
-        verify_tls12_signature(message, certificate, signed, algorithms)
+        let verified = verify_tls12_signature(message, certificate, signed, algorithms)?;
+        self.promote_proven(certificate);
+        Ok(verified)
     }
 
     fn verify_tls13_signature(
@@ -336,7 +389,9 @@ impl ServerCertVerifier for PeerServerVerifier {
         signed: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         let algorithms = &self.provider.signature_verification_algorithms;
-        verify_tls13_signature(message, certificate, signed, algorithms)
+        let verified = verify_tls13_signature(message, certificate, signed, algorithms)?;
+        self.promote_proven(certificate);
+        Ok(verified)
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
@@ -447,6 +502,20 @@ impl PeerClientVerifier {
         if trusted || self.pinned(certificate.as_ref()) {
             return Ok(verified);
         }
+        if let Some(pins) = &self.pins
+            && pins.successor_admitted(certificate.as_ref())
+        {
+            pins.promote(certificate.as_ref());
+            return Ok(verified);
+        }
+        if self
+            .pins
+            .as_ref()
+            .is_some_and(|pins| pins.pending_successor(certificate.as_ref()))
+        {
+            // Announced by an accepted peer and waiting for approval: not a stranger to queue.
+            return Err(self.refusal().into_rustls());
+        }
         if let Some(pins) = &self.pins {
             pins.record_waiting(certificate.as_ref());
         }
@@ -473,6 +542,15 @@ impl ClientCertVerifier for PeerClientVerifier {
             return Ok(ClientCertVerified::assertion());
         }
         if self.pinned(certificate.as_ref()) {
+            check_pinned(certificate, intermediates, now, self.checks)?;
+            return Ok(ClientCertVerified::assertion());
+        }
+        if self
+            .pins
+            .as_ref()
+            .is_some_and(|pins| pins.successor_admitted(certificate.as_ref()))
+        {
+            // Promoted in `settle`, once the signature proves the client holds its key.
             check_pinned(certificate, intermediates, now, self.checks)?;
             return Ok(ClientCertVerified::assertion());
         }

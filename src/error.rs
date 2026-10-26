@@ -1,6 +1,8 @@
 use std::fmt;
 use std::io;
 
+use coqui_peer::pair::{PairRefusal, PairingError};
+
 /// Sanitized failures while loading, storing or using a peer identity. No message holds
 /// key material or a path.
 #[derive(Debug)]
@@ -27,13 +29,21 @@ pub enum PeerError {
     Path,
     /// The trust policy cannot be used in this role.
     Unsupported,
+    /// A pairing exchange, or a key rotation, failed: refused by either side, a malformed
+    /// message, an unverified responder, or the store (a rotation announced by a peer that is
+    /// not accepted is [`PairingError::Local`] with `coqui_peer::Error::NotAccepted`).
+    Pairing(PairingError),
     /// A filesystem or stream operation failed.
     Io(io::Error),
 }
 
 impl fmt::Display for PeerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Self::Pairing(error) = self {
+            return write!(formatter, "{error}");
+        }
         formatter.write_str(match self {
+            Self::Pairing(_) => "pairing failed",
             Self::InvalidId => "peer id is invalid",
             Self::Certificate => "certificate or private key is invalid",
             Self::Tls => "TLS configuration or handshake failed",
@@ -49,6 +59,12 @@ impl fmt::Display for PeerError {
     }
 }
 
+impl From<PairingError> for PeerError {
+    fn from(error: PairingError) -> Self {
+        Self::Pairing(error)
+    }
+}
+
 impl From<coqui_peer::Error> for PeerError {
     fn from(error: coqui_peer::Error) -> Self {
         match error {
@@ -58,7 +74,8 @@ impl From<coqui_peer::Error> for PeerError {
             coqui_peer::Error::NotWaiting => Self::NotWaiting,
             coqui_peer::Error::AlreadyAccepted => Self::AlreadyAccepted,
             coqui_peer::Error::Io(error) => Self::Io(error),
-            _ => Self::Certificate,
+            coqui_peer::Error::Material => Self::Certificate,
+            other => Self::Pairing(PairingError::Local(other)),
         }
     }
 }
@@ -67,12 +84,21 @@ impl std::error::Error for PeerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
+            Self::Pairing(error) => Some(error),
             _ => None,
         }
     }
 }
 
 impl PeerError {
+    /// Why a pairing was refused, by this side or the other, when that is the failure.
+    pub fn pair_refusal(&self) -> Option<PairRefusal> {
+        match self {
+            Self::Pairing(PairingError::Refused(refusal)) => Some(*refusal),
+            _ => None,
+        }
+    }
+
     /// The trust refusal behind this error, when a handshake failed because this side's
     /// verifier refused the peer's certificate. The refused side sees only the TLS alert, so
     /// its own error carries none.
