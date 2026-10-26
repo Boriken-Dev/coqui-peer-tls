@@ -14,6 +14,7 @@ use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 
 use crate::error::{PeerError, Refusal};
 use crate::policy::Policy;
+use crate::roots::Roots;
 use coqui_peer::{Digest, PeerId as Fingerprint, TrustStore, WaitingLimits};
 
 /// A set of pinned certificate fingerprints: fixed, or the accepted peers of a
@@ -142,6 +143,18 @@ pub enum Trust {
     /// Any certificate whose key the peer proves; the caller decides from the returned
     /// [`PeerIdentity`](crate::PeerIdentity) afterwards.
     AnyWithKeyProof,
+    /// A server certificate that chains to these roots and is valid for the name dialled:
+    /// the web PKI, as a browser trusts a server. Client role only.
+    Roots(Roots),
+    /// A pinned server certificate, or one the roots trust for the name dialled. A pinned
+    /// certificate is taken as [`Pinned`](Trust::Pinned) takes it, whatever its name. Client
+    /// role only.
+    PinnedOrRoots {
+        /// The pinned certificates.
+        pins: Pins,
+        /// The roots.
+        roots: Roots,
+    },
 }
 
 /// What the pinned path additionally requires, from the [`Policy`].
@@ -174,6 +187,8 @@ impl Trust {
     ///
     /// # Errors
     ///
+    /// [`PeerError::Unsupported`] for [`Roots`](Trust::Roots) and
+    /// [`PinnedOrRoots`](Trust::PinnedOrRoots), which only clients apply;
     /// [`PeerError::Certificate`] / [`PeerError::TrustPattern`] when the CA file or globs
     /// are unusable; [`PeerError::Policy`] when a pin uses a digest the policy refuses or
     /// the policy cannot build a crypto provider.
@@ -193,6 +208,7 @@ impl Trust {
                 false,
             ),
             Self::AnyWithKeyProof => (None, None, true),
+            Self::Roots(_) | Self::PinnedOrRoots { .. } => return Err(PeerError::Unsupported),
         };
         if let Some(pins) = &pins {
             pins.check_digests(policy)?;
@@ -226,37 +242,49 @@ impl Trust {
     /// # Errors
     ///
     /// [`PeerError::Unsupported`] for CA policies, which only servers apply;
-    /// [`PeerError::Policy`] when a pin uses a digest the policy refuses.
+    /// [`PeerError::Policy`] when a pin uses a digest the policy refuses;
+    /// [`PeerError::Io`] when a roots bundle file cannot be read, [`PeerError::Certificate`]
+    /// when it holds no certificate or one that cannot be a root, or the platform verifier
+    /// cannot start.
     pub fn server_cert_verifier_with(
         &self,
         policy: &Policy,
     ) -> Result<Arc<PeerServerVerifier>, PeerError> {
-        let (pins, any) = match self {
-            Self::Pinned(pins) => (Some(pins.clone()), false),
-            Self::AnyWithKeyProof => (None, true),
+        let provider = policy.crypto_provider()?;
+        let (pins, roots, any) = match self {
+            Self::Pinned(pins) => (Some(pins.clone()), None, false),
+            Self::AnyWithKeyProof => (None, None, true),
+            Self::Roots(roots) => (None, Some(roots.verifier(&provider)?), false),
+            Self::PinnedOrRoots { pins, roots } => {
+                (Some(pins.clone()), Some(roots.verifier(&provider)?), false)
+            }
             #[cfg(feature = "ca")]
-            _ => return Err(PeerError::Unsupported),
+            Self::Ca(_) | Self::PinnedOrCa { .. } => return Err(PeerError::Unsupported),
         };
         if let Some(pins) = &pins {
             pins.check_digests(policy)?;
         }
         Ok(Arc::new(PeerServerVerifier {
             pins,
+            roots,
             any,
             checks: PinnedChecks::of(policy),
-            provider: policy.crypto_provider()?,
+            provider,
         }))
     }
 }
 
 /// Verifies the certificate a server presents to a dialing client.
 ///
-/// Names are not checked: a certificate is taken because it is pinned, and because the
-/// server proves in the handshake that it holds the key. Validity dates and the absence of
-/// a chain are checked as the [`Policy`] says, after the pin matched.
+/// A pinned certificate is taken because it is pinned, and because the server proves in the
+/// handshake that it holds the key; its name is not checked. Validity dates and the absence
+/// of a chain are checked as the [`Policy`] says, after the pin matched. With
+/// [`Roots`](Trust::Roots), a certificate no pin matches is taken when its chain, dates and
+/// name verify against the roots for the server name dialled.
 #[derive(Debug)]
 pub struct PeerServerVerifier {
     pins: Option<Pins>,
+    roots: Option<Arc<dyn ServerCertVerifier>>,
     any: bool,
     checks: PinnedChecks,
     provider: Arc<CryptoProvider>,
@@ -267,8 +295,8 @@ impl ServerCertVerifier for PeerServerVerifier {
         &self,
         certificate: &CertificateDer<'_>,
         intermediates: &[CertificateDer<'_>],
-        _: &ServerName<'_>,
-        _: &[u8],
+        name: &ServerName<'_>,
+        ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
         if self.any {
@@ -281,6 +309,10 @@ impl ServerCertVerifier for PeerServerVerifier {
         {
             check_pinned(certificate, intermediates, now, self.checks)?;
             Ok(ServerCertVerified::assertion())
+        } else if let Some(roots) = &self.roots {
+            roots
+                .verify_server_cert(certificate, intermediates, name, ocsp_response, now)
+                .map_err(crate::roots::refusal_of)
         } else {
             let refusal = self.pins.as_ref().map_or(Refusal::NotPinned, Pins::refusal);
             Err(refusal.into_rustls())

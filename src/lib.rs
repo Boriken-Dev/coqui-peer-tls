@@ -16,7 +16,7 @@
 //! | [`Fingerprint`] | The core crate's `PeerId`: `sha256:HEX` and grouped base32 spellings. |
 //! | [`Identity`] | Certificate and key as one PEM file; `generate` and `open_or_create` with the `generate` feature. |
 //! | [`TrustStore`] | The core crate's store of accepted and waiting peers; certificates stored under the method name `tls`. |
-//! | [`Trust`], [`Pins`] | Whom to trust: pinned, CA (`ca` feature), pinned or CA, any with key proof. |
+//! | [`Trust`], [`Pins`], [`Roots`] | Whom to trust: pinned, CA (`ca` feature), pinned or CA, any with key proof; a server by the web PKI (roots). |
 //! | [`PeerClientVerifier`], [`PeerServerVerifier`] | The rustls verifiers as values, for other TLS stacks. |
 //! | [`Refusal`] | Why a verifier refused a certificate, read back with [`PeerError::refusal`]. |
 //! | [`client_config`], [`server_config`] | TLS 1.3 configurations with ALPN as a parameter. |
@@ -29,7 +29,8 @@
 //! # Features
 //!
 //! `default = []`. `tls12` adds TLS 1.2, `generate` adds rcgen, `ca` adds x509-parser and
-//! globset, `tokio` adds tokio-rustls, `serde` the text form of [`Policy`].
+//! globset, `tokio` adds tokio-rustls, `serde` the text form of [`Policy`], `platform-roots`
+//! adds rustls-platform-verifier for `Roots::platform`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
@@ -45,6 +46,7 @@ mod error;
 mod handshake;
 mod identity;
 mod policy;
+mod roots;
 mod source;
 mod stream;
 mod trust;
@@ -63,8 +65,9 @@ pub use error::{PeerError, Refusal};
 pub use handshake::{Tls, TlsHandshake};
 pub use identity::{Identity, PeerIdentity};
 pub use policy::{POLICY_VERSION, Policy, TlsVersion, Weakening};
+pub use roots::Roots;
 pub use source::with_source;
-pub use stream::{PeerAddr, SERVER_NAME, accept, accept_from, dial};
+pub use stream::{PeerAddr, SERVER_NAME, accept, accept_from, dial, dial_named};
 #[cfg(feature = "ca")]
 pub use trust::CaPolicy;
 pub use trust::{PeerClientVerifier, PeerServerVerifier, Pins, Trust};

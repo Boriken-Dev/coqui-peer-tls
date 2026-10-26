@@ -28,11 +28,13 @@ tokio = ["dep:tokio", "dep:tokio-rustls", "coqui-peer/tokio"]
 serde = ["dep:serde", "coqui-peer/serde", "coqui-net-acl?/serde"]
 # An access control list inside `Policy` (the `coqui-net-acl` crate).
 acl = ["dep:coqui-net-acl"]
+# Verify servers against the operating system's roots and verifier (`Roots::platform`).
+platform-roots = ["dep:rustls-platform-verifier"]
 
 [dependencies]
 coqui-peer = { git = "https://github.com/Boriken-Dev/coqui-peer", rev = "03a7fefac9bbf806d94250f00f282d6f231dc612" }
 data-encoding = { version = "2", default-features = false, features = ["alloc"] }
-rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+rustls = { version = "0.23.27", default-features = false, features = ["std", "ring"] }
 coqui-net-acl = { git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "ef48f2564ab3193d5204f52b8607f25bea1050c5", optional = true }
 serde = { version = "1", default-features = false, features = ["derive", "std"], optional = true }
 rcgen = { version = "0.14", optional = true }
@@ -41,6 +43,7 @@ x509-parser = { version = "0.18", optional = true }
 globset = { version = "0.4", optional = true }
 tokio = { version = "1", default-features = false, features = ["net"], optional = true }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
+rustls-platform-verifier = { version = "0.7.1", default-features = false, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

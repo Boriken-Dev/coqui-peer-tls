@@ -102,11 +102,16 @@ pub enum Refusal {
     /// The certificate is not one the trust store accepted. A server with a store-backed pin
     /// set records it as waiting, within the store's limits, once the peer proved its key.
     NotAccepted,
-    /// The certificate matches no pin, and the CA policy does not trust its chain or names.
+    /// The certificate matches no pin, and the CA policy does not trust its chain or names,
+    /// or the [`Roots`](crate::Roots) do not trust its chain (an unknown issuer, a bad
+    /// signature, a certificate not for server authentication).
     NotTrusted,
     /// A pinned peer presented a certificate chain, which the policy does not allow
     /// ([`Policy::allow_chain_when_pinned`](crate::Policy::allow_chain_when_pinned)).
     ChainWhenPinned,
+    /// The server's chain is trusted by the [`Roots`](crate::Roots), but the certificate is
+    /// not for the server name the client dialled.
+    NameMismatch,
 }
 
 impl Refusal {
@@ -134,11 +139,12 @@ impl fmt::Display for Refusal {
             Self::NotPinned => "peer certificate matches no pinned fingerprint",
             Self::NotAccepted => "peer certificate is not an accepted peer of the trust store",
             Self::NotTrusted => {
-                "peer certificate matches no pin and is not trusted by the CA policy"
+                "peer certificate matches no pin and is not trusted by the CA policy or roots"
             }
             Self::ChainWhenPinned => {
                 "pinned peer presented a certificate chain, which the policy does not allow"
             }
+            Self::NameMismatch => "server certificate is not valid for the name dialled",
         })
     }
 }

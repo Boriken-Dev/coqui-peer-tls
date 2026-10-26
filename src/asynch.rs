@@ -12,9 +12,10 @@ use tokio_rustls::{TlsConnector, client, server};
 use crate::error::PeerError;
 use crate::identity::PeerIdentity;
 use crate::source::with_source;
-use crate::stream::{PeerAddr, SERVER_NAME, identity_of};
+use crate::stream::{PeerAddr, default_name, identity_of};
 
-/// Dials a peer over `io`, completing the handshake before returning.
+/// Dials a peer over `io`, completing the handshake before returning. The server name sent
+/// is [`SERVER_NAME`](crate::SERVER_NAME); [`dial_named`] sends another.
 ///
 /// # Errors
 ///
@@ -27,7 +28,23 @@ pub async fn dial<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let name = ServerName::try_from(SERVER_NAME).map_err(|_| PeerError::Tls)?;
+    dial_named(config, default_name()?, io).await
+}
+
+/// [`dial`] sending `name` as the server name, as [`crate::dial_named`] does.
+///
+/// # Errors
+///
+/// [`PeerError::Io`] when the handshake fails, including a refused server certificate;
+/// [`PeerError::refusal`] says why this side refused one.
+pub async fn dial_named<S>(
+    config: Arc<ClientConfig>,
+    name: ServerName<'static>,
+    io: S,
+) -> Result<(client::TlsStream<S>, PeerIdentity), PeerError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let stream = TlsConnector::from(config)
         .connect(name, io)
         .await

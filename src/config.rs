@@ -30,7 +30,9 @@ pub struct Built<T> {
 }
 
 /// A client configuration under the strict policy (TLS 1.3 only) that presents `identity`
-/// and verifies the server by `trust` (pinned, or any certificate with key proof).
+/// and verifies the server by `trust`: pinned, by [`Roots`](crate::Roots) for the name
+/// dialled ([`dial_named`](crate::dial_named)), pinned or roots, or any certificate with key
+/// proof.
 ///
 /// `alpn` lists the application protocols offered, most preferred first. Session resumption
 /// is off: every connection verifies the server's certificate.
@@ -52,7 +54,8 @@ pub fn client_config(
 /// # Errors
 ///
 /// [`PeerError::Unsupported`] for CA trust; [`PeerError::Policy`] when the policy asks for
-/// something the ring provider or this build cannot do; [`PeerError::Certificate`] or
+/// something the ring provider or this build cannot do; [`PeerError::Io`] or
+/// [`PeerError::Certificate`] when the roots cannot be loaded; [`PeerError::Certificate`] or
 /// [`PeerError::Tls`] when the configuration cannot be built.
 pub fn client_config_with(
     identity: &Identity,
@@ -84,7 +87,8 @@ pub fn client_config_without_identity(
 /// # Errors
 ///
 /// [`PeerError::Unsupported`] for CA trust; [`PeerError::Policy`] when the policy asks for
-/// something the ring provider or this build cannot do; [`PeerError::Tls`] when the
+/// something the ring provider or this build cannot do; [`PeerError::Io`] or
+/// [`PeerError::Certificate`] when the roots cannot be loaded; [`PeerError::Tls`] when the
 /// configuration cannot be built.
 pub fn client_config_without_identity_with(
     trust: &Trust,

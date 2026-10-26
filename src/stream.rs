@@ -10,9 +10,15 @@ use crate::identity::PeerIdentity;
 use crate::source::with_source;
 use coqui_peer::PeerId as Fingerprint;
 
-/// The server name sent in the handshake. Trust is by fingerprint, so the name carries no
-/// meaning; it only has to be a valid DNS name.
+/// The server name [`dial`] and [`TlsHandshake::client`](crate::TlsHandshake::client) send,
+/// and the subjectAltName of generated identities. Pinned trust is by fingerprint, so the name
+/// carries no meaning there; [`Roots`](crate::Roots) check the name, so dial a server they
+/// verify with [`dial_named`].
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
+
+pub(crate) fn default_name() -> Result<ServerName<'static>, PeerError> {
+    ServerName::try_from(SERVER_NAME).map_err(|_| PeerError::Tls)
+}
 
 pub(crate) fn identity_of(
     certificates: Option<&[CertificateDer<'static>]>,
@@ -28,7 +34,8 @@ pub(crate) fn identity_of(
 
 /// Dials a peer over `io`, completing the handshake before returning.
 ///
-/// Returns the encrypted stream and the verified peer. `io` is any blocking byte stream.
+/// Returns the encrypted stream and the verified peer. `io` is any blocking byte stream. The
+/// server name sent is [`SERVER_NAME`]; [`dial_named`] sends another.
 ///
 /// # Errors
 ///
@@ -36,9 +43,27 @@ pub(crate) fn identity_of(
 /// [`PeerError::refusal`] says why this side refused one.
 pub fn dial<S: Read + Write>(
     config: Arc<ClientConfig>,
+    io: S,
+) -> Result<(StreamOwned<ClientConnection, S>, PeerIdentity), PeerError> {
+    dial_named(config, default_name()?, io)
+}
+
+/// [`dial`] sending `name` as the server name: the host the client dialled, for a server
+/// verified by [`Roots`](crate::Roots), which check that its certificate is for that name
+/// (a DNS name, or an IP address the certificate names). Pinned trust ignores the name.
+///
+/// The returned peer's fingerprint is the server's leaf certificate's, however it was
+/// verified.
+///
+/// # Errors
+///
+/// [`PeerError::Io`] when the handshake fails, including a refused server certificate;
+/// [`PeerError::refusal`] says why this side refused one.
+pub fn dial_named<S: Read + Write>(
+    config: Arc<ClientConfig>,
+    name: ServerName<'static>,
     mut io: S,
 ) -> Result<(StreamOwned<ClientConnection, S>, PeerIdentity), PeerError> {
-    let name = ServerName::try_from(SERVER_NAME).map_err(|_| PeerError::Tls)?;
     let mut connection = ClientConnection::new(config, name).map_err(|_| PeerError::Tls)?;
     while connection.is_handshaking() {
         connection.complete_io(&mut io).map_err(PeerError::Io)?;
