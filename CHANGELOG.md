@@ -51,6 +51,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   admit a pending successor and promote it once its handshake signature verifies (or refuse it
   until approved under `RotationOptions::require_approval`); `Identity::renew_before`.
 - `PeerError::Pairing` and `PeerError::pair_refusal`.
+- A pairing channel is `verified` only when the joiner pinned the inviter or verified the
+  responder by `Verified` trust; store-backed pins record a successor's proof once its
+  handshake signature verifies, and under `require_approval` refuse it until the caller
+  promotes it.
 
 Depend on this repository by revision:
 `coqui-peer-tls = { git = "https://github.com/Boriken-Dev/coqui-peer-tls", rev = "<commit>" }`.

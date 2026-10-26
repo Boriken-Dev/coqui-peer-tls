@@ -67,34 +67,28 @@ impl Pins {
         }
     }
 
-    /// Whether the certificate is the pending successor of an accepted one in a store-backed
-    /// set, and may be promoted once the peer proves it (the store's rotation options do not
-    /// require approval).
-    fn successor_admitted(&self, der: &[u8]) -> bool {
-        match &self.0 {
-            PinsKind::Store(store) => {
-                !store.rotation().require_approval
-                    && store
-                        .successor_key(&PeerId::of(der))
-                        .is_some_and(|key| key.method == crate::METHOD)
-            }
-            PinsKind::Fixed(_) => false,
-        }
-    }
-
-    /// Whether the certificate is a pending successor in a store-backed set, approved or not.
+    /// Whether the certificate is the pending successor of an accepted certificate in a
+    /// store-backed set.
     fn pending_successor(&self, der: &[u8]) -> bool {
         match &self.0 {
-            PinsKind::Store(store) => store.successor_key(&PeerId::of(der)).is_some(),
+            PinsKind::Store(store) => store
+                .successor_key(&PeerId::of(der))
+                .is_some_and(|key| key.method == crate::METHOD),
             PinsKind::Fixed(_) => false,
         }
     }
 
-    /// Promotes a successor whose holder proved it in the handshake.
-    fn promote(&self, der: &[u8]) {
-        if let PinsKind::Store(store) = &self.0 {
-            let _ = store.promote_successor(&PeerId::of(der));
+    /// Records that the holder of a pending successor proved it in the handshake, then promotes
+    /// it unless the store's rotation options require approval. Whether it is now accepted.
+    fn prove(&self, der: &[u8]) -> bool {
+        let PinsKind::Store(store) = &self.0 else {
+            return false;
+        };
+        let id = PeerId::of(der);
+        if store.prove_successor(&id).is_err() {
+            return false;
         }
+        !store.rotation().require_approval && store.promote_successor(&id).is_ok()
     }
 
     fn check_digests(&self, policy: &Policy) -> Result<(), PeerError> {
@@ -321,15 +315,18 @@ pub struct PeerServerVerifier {
 }
 
 impl PeerServerVerifier {
-    /// After a valid signature: a pending successor the server just proved is promoted.
-    fn promote_proven(&self, certificate: &CertificateDer<'_>) {
+    /// After a valid signature: a pending successor the server just proved is recorded as
+    /// proven, and promoted unless the store waits for approval, when it is refused.
+    fn settle_successor(&self, certificate: &CertificateDer<'_>) -> Result<(), rustls::Error> {
         if let Some(pins) = &self.pins
             && !self.any
             && !pins.matches(certificate.as_ref())
-            && pins.successor_admitted(certificate.as_ref())
+            && pins.pending_successor(certificate.as_ref())
+            && !pins.prove(certificate.as_ref())
         {
-            pins.promote(certificate.as_ref());
+            return Err(pins.refusal().into_rustls());
         }
+        Ok(())
     }
 }
 
@@ -355,9 +352,9 @@ impl ServerCertVerifier for PeerServerVerifier {
         } else if self
             .pins
             .as_ref()
-            .is_some_and(|pins| pins.successor_admitted(certificate.as_ref()))
+            .is_some_and(|pins| pins.pending_successor(certificate.as_ref()))
         {
-            // Promoted only once the signature below proves the server holds its key.
+            // Settled only once the signature below proves the server holds its key.
             check_pinned(certificate, intermediates, now, self.checks)?;
             Ok(ServerCertVerified::assertion())
         } else if let Some(roots) = &self.roots {
@@ -378,7 +375,7 @@ impl ServerCertVerifier for PeerServerVerifier {
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         let algorithms = &self.provider.signature_verification_algorithms;
         let verified = verify_tls12_signature(message, certificate, signed, algorithms)?;
-        self.promote_proven(certificate);
+        self.settle_successor(certificate)?;
         Ok(verified)
     }
 
@@ -390,7 +387,7 @@ impl ServerCertVerifier for PeerServerVerifier {
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         let algorithms = &self.provider.signature_verification_algorithms;
         let verified = verify_tls13_signature(message, certificate, signed, algorithms)?;
-        self.promote_proven(certificate);
+        self.settle_successor(certificate)?;
         Ok(verified)
     }
 
@@ -503,18 +500,14 @@ impl PeerClientVerifier {
             return Ok(verified);
         }
         if let Some(pins) = &self.pins
-            && pins.successor_admitted(certificate.as_ref())
+            && pins.pending_successor(certificate.as_ref())
         {
-            pins.promote(certificate.as_ref());
-            return Ok(verified);
-        }
-        if self
-            .pins
-            .as_ref()
-            .is_some_and(|pins| pins.pending_successor(certificate.as_ref()))
-        {
-            // Announced by an accepted peer and waiting for approval: not a stranger to queue.
-            return Err(self.refusal().into_rustls());
+            // Announced by an accepted peer, and now proven: promoted, or recorded as proven
+            // for the caller to approve. Not a stranger to queue either way.
+            return pins
+                .prove(certificate.as_ref())
+                .then_some(verified)
+                .ok_or_else(|| self.refusal().into_rustls());
         }
         if let Some(pins) = &self.pins {
             pins.record_waiting(certificate.as_ref());
@@ -548,9 +541,9 @@ impl ClientCertVerifier for PeerClientVerifier {
         if self
             .pins
             .as_ref()
-            .is_some_and(|pins| pins.successor_admitted(certificate.as_ref()))
+            .is_some_and(|pins| pins.pending_successor(certificate.as_ref()))
         {
-            // Promoted in `settle`, once the signature proves the client holds its key.
+            // Settled in `settle`, once the signature proves the client holds its key.
             check_pinned(certificate, intermediates, now, self.checks)?;
             return Ok(ClientCertVerified::assertion());
         }

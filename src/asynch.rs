@@ -272,12 +272,20 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let (client, name) = crate::pair_client_config(identity, &pairing, responder, config)?;
+    let verified = crate::pairing::responder_verified(&pairing, responder);
     let (tls, peer) = dial_named(Arc::new(client), name, stream).await?;
     let connection = tls.get_ref().1;
     let exporter = connection
         .export_keying_material([0u8; 32], crate::EXPORTER_LABEL, Some(&[]))
         .map_err(|_| PeerError::Tls)?;
-    let channel = crate::pairing::channel(connection, exporter, identity, &peer, &config.alpn)?;
+    let channel = crate::pairing::channel(
+        connection,
+        exporter,
+        identity,
+        &peer,
+        verified,
+        &config.alpn,
+    )?;
     let mut dial = PairDial {
         tls,
         joiner: pairing.join(channel)?,
@@ -368,7 +376,8 @@ where
     let exporter = connection
         .export_keying_material([0u8; 32], crate::EXPORTER_LABEL, Some(&[]))
         .map_err(|_| PeerError::Tls)?;
-    let channel = crate::pairing::channel(connection, exporter, identity, &peer, &config.alpn)?;
+    let channel =
+        crate::pairing::channel(connection, exporter, identity, &peer, false, &config.alpn)?;
     let mut responder = PairingResponder::new(channel, store, desk, source);
     let result = respond(&mut tls, &mut responder, desk).await;
     let _ = tokio::io::AsyncWriteExt::shutdown(&mut tls).await;

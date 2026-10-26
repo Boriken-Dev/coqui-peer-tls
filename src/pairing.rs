@@ -147,13 +147,20 @@ pub fn pair_client_config(
     Ok((built.config, name))
 }
 
+/// Whether the joiner's check of the responder verifies who it is, not only that it holds its
+/// key: an invitation pins the inviter, and `Verified` trust other than `AnyWithKeyProof`.
+pub(crate) fn responder_verified(pairing: &Pairing, responder: &ResponderTrust) -> bool {
+    pairing.inviter().is_some() || responder.verifies()
+}
+
 /// The channel a finished pairing connection gives the exchange: both certificates (proven by
-/// the handshake) and the exporter.
+/// the handshake), whether the remote one was also verified, and the exporter.
 pub(crate) fn channel(
     connection: &rustls::CommonState,
     exporter: [u8; 32],
     local: &Identity,
     peer: &PeerIdentity,
+    verified: bool,
     alpn: &[u8],
 ) -> Result<Channel, PeerError> {
     if connection.alpn_protocol() != Some(alpn) {
@@ -162,6 +169,7 @@ pub(crate) fn channel(
     Ok(Channel {
         local: certificate_key(local.certificate_der())?,
         remote: Some(certificate_key(&peer.certificate)?),
+        verified,
         binding: Some(exporter.to_vec()),
     })
 }
@@ -266,12 +274,13 @@ pub fn pair_dial<S: Read + Write>(
     config: &PairConfig,
 ) -> Result<PairDial<S>, PeerError> {
     let (client, name) = pair_client_config(identity, &pairing, responder, config)?;
+    let verified = responder_verified(&pairing, responder);
     let (tls, peer) = dial_named(Arc::new(client), name, stream)?;
     let exporter = tls
         .conn
         .export_keying_material([0u8; 32], EXPORTER_LABEL, Some(&[]))
         .map_err(|_| PeerError::Tls)?;
-    let channel = channel(&tls.conn, exporter, identity, &peer, &config.alpn)?;
+    let channel = channel(&tls.conn, exporter, identity, &peer, verified, &config.alpn)?;
     let mut dial = PairDial {
         tls,
         joiner: pairing.join(channel)?,
@@ -332,7 +341,7 @@ fn pair_accept_as<S: Read + Write>(
         .conn
         .export_keying_material([0u8; 32], EXPORTER_LABEL, Some(&[]))
         .map_err(|_| PeerError::Tls)?;
-    let channel = channel(&tls.conn, exporter, identity, &peer, &config.alpn)?;
+    let channel = channel(&tls.conn, exporter, identity, &peer, false, &config.alpn)?;
     let mut responder = PairingResponder::new(channel, store, desk, source);
     let result = respond(&mut tls, &mut responder, desk);
     tls.conn.send_close_notify();
