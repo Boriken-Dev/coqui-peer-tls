@@ -328,9 +328,9 @@ completion it is `PeerError::Tls`.
 ## Pairing and rotation over TLS
 
 The `coqui-peer` pairing exchange (re-exported as `coqui_peer_tls::pair`; its API header has the
-modes, options, desk, throttles and their costs) on a connection of its own, and key rotation
-over an authenticated one. TLS settings are the device's own `Policy`; nothing here sets a
-version or suite.
+modes, options, desk, throttles, their costs and the security model) on a connection of its
+own, and key rotation over an authenticated one. TLS settings are the device's own `Policy`;
+nothing here sets a version or suite.
 
 ```rust
 pub use coqui_peer::pair;                    // Pairing, PairingDesk, PairingOptions, DeskLimits, Pin, ...
