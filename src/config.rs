@@ -118,6 +118,11 @@ fn build_client(
         None => builder.with_no_client_auth(),
     };
     config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
+    // rustls has the setting only where it can offer TLS 1.2.
+    #[cfg(feature = "tls12")]
+    {
+        config.require_ems = policy.require_ems;
+    }
     if !policy.allow_resumption {
         config.resumption = Resumption::disabled();
     }
@@ -221,6 +226,11 @@ fn build_server(
         .with_single_cert(identity.certificate_chain(), identity.key())
         .map_err(|_| PeerError::Certificate)?;
     config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
+    // rustls has the setting only where it can offer TLS 1.2.
+    #[cfg(feature = "tls12")]
+    {
+        config.require_ems = policy.require_ems;
+    }
     if !policy.allow_resumption {
         // No session cache for TLS 1.2 session ids or TLS 1.3 stateful tickets, and no
         // tickets sent; the builder's ticketer already produces none.

@@ -182,6 +182,7 @@ pub struct Policy {
     pub check_validity: bool,
     pub allow_chain_when_pinned: bool,
     pub allow_resumption: bool,                // a resumed session skips the verifiers
+    pub require_ems: bool,                     // TLS 1.2: the extended master secret (RFC 7627)
     pub waiting_per_source: usize, pub waiting_total: usize, pub waiting_rerecord_secs: u64,
     pub acl: Option<coqui_net_acl::Acl>,       // feature acl
 }
@@ -209,6 +210,7 @@ pub const POLICY_VERSION: u32 = 1;
 | `check_validity` | true | true | true |
 | `allow_chain_when_pinned` | false | false | false |
 | `allow_resumption` | false | false | false |
+| `require_ems` | true | true | true |
 | `waiting_per_source`, `waiting_total`, `waiting_rerecord_secs` | 16, 1000, 60 | same | same |
 | `cipher_suites`, `kx_groups`, `acl` | none | none | none |
 
@@ -216,7 +218,8 @@ pub const POLICY_VERSION: u32 = 1;
 unknown name, or a version left with no suite, is `PeerError::Policy` whose message lists the
 supported names. `weakened` reports `tls_versions` including 1.2, `pin_digests` beyond
 sha256/384/512, `check_validity` false, `allow_chain_when_pinned` true, `allow_resumption`
-true, larger waiting caps or a shorter rerecord time, and an ACL with a `permit` default.
+true, `require_ems` false, larger waiting caps or a shorter rerecord time, and an ACL with a
+`permit` default.
 
 `allow_resumption` false (every preset) builds configurations with resumption off at both ends:
 the server keeps no session cache and sends no TLS 1.3 tickets, the client keeps no sessions, so
@@ -233,7 +236,8 @@ TOML or JSON object. Keys: `policy_version` (must be 1 when present), `profile` 
 preset name to start from; unknown names are errors; free text when read with
 `deserialize_over`), `tls_versions` (`"1.2"`, `"1.3"`), `cipher_suites`, `kx_groups`,
 `pin_digests` (`"sha256"`, `"sha384"`, `"sha512"`, `"sha1"`), `check_validity`,
-`allow_chain_when_pinned`, `allow_resumption`, `waiting_per_source`, `waiting_total`, `waiting_rerecord_secs`, and
+`allow_chain_when_pinned`, `allow_resumption`, `require_ems`, `waiting_per_source`,
+`waiting_total`, `waiting_rerecord_secs`, and
 `acl` (see `coqui-net-acl`). Unknown keys are errors; absent keys keep the preset. Writing
 always names every field. `tests/vectors/policy/{strict,compatible,legacy,acl}.{toml,json}`
 are byte-exact.
@@ -400,9 +404,10 @@ most `coqui_peer::MAX_MESSAGE`) costs nothing until it is sent.
 **What each TLS version gives.** TLS 1.3 (the strict policy): the exporter is unique to the
 connection, so a relay between two connections fails the PIN confirmation. TLS 1.2 (a policy
 that allows it, feature `tls12`): the exporter is unique only with the extended master secret,
-which rustls negotiates when the peer offers it and insists on only with `require_ems` on the
-configuration; without it, the confirmation still covers both certificates, which a relay
-cannot replace with its own without failing it.
+which every preset requires (`Policy::require_ems`, applied to every configuration built here,
+pairing's included); a policy that turns it off is reported by `weakened()`, and then the
+confirmation still covers both certificates, which a relay cannot replace with its own without
+failing it.
 
 **Rotation.** A peer sends `announce(stream, &successor)` over a connection its current
 certificate authenticated; the other side calls `receive_announcement(stream, store, &peer)`,

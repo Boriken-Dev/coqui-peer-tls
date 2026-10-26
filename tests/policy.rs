@@ -287,3 +287,32 @@ async fn validity_checking_can_be_switched_off_by_policy() {
     lax.check_validity = false;
     assert!(run(lax).await);
 }
+
+#[test]
+fn the_extended_master_secret_is_required_unless_the_policy_says_otherwise() {
+    for preset in [Policy::strict(), Policy::compatible(), Policy::legacy()] {
+        assert!(preset.require_ems, "{}", preset.name);
+        assert!(
+            !preset
+                .weakened()
+                .iter()
+                .any(|weakening| weakening.setting == "require_ems")
+        );
+    }
+    let mut loose = Policy::compatible();
+    loose.require_ems = false;
+    assert!(
+        loose
+            .weakened()
+            .iter()
+            .any(|weakening| weakening.setting == "require_ems" && weakening.value == "false")
+    );
+    let identity = Identity::generate().unwrap();
+    let trust = pinned(&identity);
+    for policy in [Policy::compatible(), loose] {
+        let client = client_config_with(&identity, &trust, &[b"x"], &policy).unwrap();
+        let server = server_config_with(&identity, &trust, &[b"x"], &policy).unwrap();
+        assert_eq!(client.config.require_ems, policy.require_ems);
+        assert_eq!(server.config.require_ems, policy.require_ems);
+    }
+}

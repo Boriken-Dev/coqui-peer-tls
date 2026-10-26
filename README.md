@@ -119,6 +119,7 @@ and change any public field. `weakened()` lists, as data, every setting looser t
 | `check_validity` | true | true | true |
 | `allow_chain_when_pinned` | false | false | false |
 | `allow_resumption` | false | false | false |
+| `require_ems` | true | true | true |
 | `waiting_per_source` / `waiting_total` / `waiting_rerecord_secs` | 16 / 1000 / 60 | same | same |
 | `acl` | none | none | none |
 
@@ -154,6 +155,7 @@ pin_digests = ["sha256", "sha384", "sha512"]
 check_validity = true
 allow_chain_when_pinned = false
 allow_resumption = false
+require_ems = true
 waiting_per_source = 16
 waiting_total = 1000
 waiting_rerecord_secs = 60
