@@ -2,7 +2,8 @@
 
 Mutual-TLS identity between peers, with no RPC layer. Each side has a self-issued certificate
 and tells the other only its fingerprint. You get back an authenticated, encrypted byte stream
-and the verified peer identity, with pinned, CA and key-proof trust, a trust store with a
+and the verified peer identity, with pinned, CA and key-proof trust (and, for a client,
+servers verified by the web PKI), a trust store with a
 waiting queue for pairing, and policy presets (`strict`, `compatible`, `legacy`).
 
 The crate is not published to crates.io; depend on it by git revision:
