@@ -100,6 +100,11 @@ pub struct Policy {
     /// verifiers, so a peer removed from the trust store or no longer pinned can reconnect
     /// on a session it already holds. Every preset leaves it off.
     pub allow_resumption: bool,
+    /// Whether a TLS 1.2 connection must use the extended master secret (RFC 7627). Without it
+    /// a TLS 1.2 session's keys and exporter are not bound to its handshake, which an attacker
+    /// can use to synchronise two sessions (the triple handshake). Every preset sets it; TLS 1.3
+    /// needs nothing like it.
+    pub require_ems: bool,
     /// Waiting entries one source address may hold.
     pub waiting_per_source: usize,
     /// Waiting entries the store may hold.
@@ -132,6 +137,7 @@ impl Policy {
             check_validity: true,
             allow_chain_when_pinned: false,
             allow_resumption: false,
+            require_ems: true,
             waiting_per_source: 16,
             waiting_total: 1_000,
             waiting_rerecord_secs: 60,
@@ -230,6 +236,9 @@ impl Policy {
         }
         if self.allow_resumption && !strict.allow_resumption {
             note("allow_resumption", "true".to_owned(), "false".to_owned());
+        }
+        if !self.require_ems && strict.require_ems {
+            note("require_ems", "false".to_owned(), "true".to_owned());
         }
         if self.waiting_per_source > strict.waiting_per_source {
             note(
@@ -470,6 +479,8 @@ mod text {
         #[serde(default)]
         allow_resumption: Option<bool>,
         #[serde(default)]
+        require_ems: Option<bool>,
+        #[serde(default)]
         waiting_per_source: Option<usize>,
         #[serde(default)]
         waiting_total: Option<usize>,
@@ -496,6 +507,7 @@ mod text {
                 check_validity: Some(self.check_validity),
                 allow_chain_when_pinned: Some(self.allow_chain_when_pinned),
                 allow_resumption: Some(self.allow_resumption),
+                require_ems: Some(self.require_ems),
                 waiting_per_source: Some(self.waiting_per_source),
                 waiting_total: Some(self.waiting_total),
                 waiting_rerecord_secs: Some(self.waiting_rerecord_secs),
@@ -539,6 +551,9 @@ mod text {
             }
             if let Some(value) = self.allow_resumption {
                 policy.allow_resumption = value;
+            }
+            if let Some(value) = self.require_ems {
+                policy.require_ems = value;
             }
             if let Some(value) = self.waiting_per_source {
                 policy.waiting_per_source = value;

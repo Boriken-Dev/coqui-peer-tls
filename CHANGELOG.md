@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   admit a pending successor and promote it once its handshake signature verifies (or refuse it
   until approved under `RotationOptions::require_approval`); `Identity::renew_before`.
 - `PeerError::Pairing` and `PeerError::pair_refusal`.
+- `Policy::require_ems` (true in every preset, in the text form, reported by `weakened()` when
+  false): TLS 1.2 connections, pairing's included, require the extended master secret.
 - `PairConfig::timeout` (default 15 minutes) bounds each side's whole pairing exchange; the
   responder's reads also stop at its deadline and tell the joiner `Expired`. Blocking pairing
   takes a `ReadTimeout` stream (implemented for `TcpStream`). Frames grow as they arrive.
