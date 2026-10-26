@@ -8,8 +8,10 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 
-use coqui_peer::{MessageTransport, Method, drive_messages, drive_stream};
-use coqui_peer_tls::{Identity, Pins, Tls, Trust, TrustStore, client_config, server_config};
+use coqui_peer::{DriveError, MessageTransport, Method, drive_messages, drive_stream};
+use coqui_peer_tls::{
+    Identity, Pins, Refusal, Tls, Trust, TrustStore, client_config, server_config,
+};
 
 fn pinned(identity: &Identity) -> Trust {
     Trust::Pinned(Pins::fixed([identity.fingerprint()]))
@@ -104,14 +106,17 @@ fn an_unpinned_peer_is_refused_and_a_proven_one_waits_under_its_source() {
             out: to_client,
             inbox: server_inbox,
         };
-        drive_messages(accepting.respond(Some(source)).unwrap(), &mut pipe).is_err()
+        match drive_messages(accepting.respond(Some(source)).unwrap(), &mut pipe) {
+            Err(DriveError::Handshake(error)) => error.refusal(),
+            _ => None,
+        }
     });
     let mut pipe = Pipe {
         out: to_server,
         inbox: client_inbox,
     };
     let dialed = drive_messages(tls.initiate().unwrap(), &mut pipe);
-    assert!(served.join().unwrap(), "the server refuses the client");
+    assert_eq!(served.join().unwrap(), Some(Refusal::NotAccepted));
     // TLS 1.3 lets the client finish first, so it may or may not see the refusal.
     let _ = dialed;
 
