@@ -94,6 +94,10 @@ pub struct Policy {
     pub check_validity: bool,
     /// Whether a pinned peer may present a chain; strict refuses one.
     pub allow_chain_when_pinned: bool,
+    /// Whether TLS sessions may be resumed. A resumed handshake skips the certificate
+    /// verifiers, so a peer removed from the trust store or no longer pinned can reconnect
+    /// on a session it already holds. Every preset leaves it off.
+    pub allow_resumption: bool,
     /// Waiting entries one source address may hold.
     pub waiting_per_source: usize,
     /// Waiting entries the store may hold.
@@ -114,7 +118,8 @@ impl Default for Policy {
 
 impl Policy {
     /// The strict preset: TLS 1.3 only; pins SHA-256, SHA-384 or SHA-512; validity dates
-    /// checked; no chain on a pinned path; waiting queues capped. The default.
+    /// checked; no chain on a pinned path; no session resumption; waiting queues capped. The
+    /// default.
     pub fn strict() -> Self {
         Self {
             name: "strict".to_owned(),
@@ -124,6 +129,7 @@ impl Policy {
             pin_digests: vec![Digest::Sha256, Digest::Sha384, Digest::Sha512],
             check_validity: true,
             allow_chain_when_pinned: false,
+            allow_resumption: false,
             waiting_per_source: 16,
             waiting_total: 1_000,
             waiting_rerecord_secs: 60,
@@ -219,6 +225,9 @@ impl Policy {
                 "true".to_owned(),
                 "false".to_owned(),
             );
+        }
+        if self.allow_resumption && !strict.allow_resumption {
+            note("allow_resumption", "true".to_owned(), "false".to_owned());
         }
         if self.waiting_per_source > strict.waiting_per_source {
             note(
@@ -457,6 +466,8 @@ mod text {
         #[serde(default)]
         allow_chain_when_pinned: Option<bool>,
         #[serde(default)]
+        allow_resumption: Option<bool>,
+        #[serde(default)]
         waiting_per_source: Option<usize>,
         #[serde(default)]
         waiting_total: Option<usize>,
@@ -482,6 +493,7 @@ mod text {
                 pin_digests: Some(self.pin_digests.clone()),
                 check_validity: Some(self.check_validity),
                 allow_chain_when_pinned: Some(self.allow_chain_when_pinned),
+                allow_resumption: Some(self.allow_resumption),
                 waiting_per_source: Some(self.waiting_per_source),
                 waiting_total: Some(self.waiting_total),
                 waiting_rerecord_secs: Some(self.waiting_rerecord_secs),
@@ -522,6 +534,9 @@ mod text {
             }
             if let Some(value) = self.allow_chain_when_pinned {
                 policy.allow_chain_when_pinned = value;
+            }
+            if let Some(value) = self.allow_resumption {
+                policy.allow_resumption = value;
             }
             if let Some(value) = self.waiting_per_source {
                 policy.waiting_per_source = value;

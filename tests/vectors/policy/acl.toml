@@ -6,6 +6,7 @@ kx_groups = ["X25519"]
 pin_digests = ["sha256", "sha384", "sha512"]
 check_validity = true
 allow_chain_when_pinned = false
+allow_resumption = false
 waiting_per_source = 8
 waiting_total = 1000
 waiting_rerecord_secs = 60

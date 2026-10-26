@@ -83,11 +83,13 @@ fn each_vector_reads_back_to_its_policy_in_both_encodings_byte_for_byte() {
 #[test]
 fn a_document_may_name_a_profile_and_override_fields_and_nothing_else() {
     let policy: Policy = toml::from_str(
-        "profile = \"compatible\"\ncheck_validity = false\npin_digests = [\"sha256\"]\n",
+        "profile = \"compatible\"\ncheck_validity = false\npin_digests = [\"sha256\"]\n\
+         allow_resumption = true\n",
     )
     .unwrap();
     assert_eq!(policy.name, "compatible");
     assert!(!policy.check_validity);
+    assert!(policy.allow_resumption);
     assert_eq!(policy.tls_versions.len(), 2);
     assert_eq!(policy.pin_digests.len(), 1);
     assert_eq!(toml::from_str::<Policy>("").unwrap(), Policy::default());
