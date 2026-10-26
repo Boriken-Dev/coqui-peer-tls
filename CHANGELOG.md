@@ -30,9 +30,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `Identity::generate_valid_for(Duration)` and `Identity::generate_with(not_before, not_after)`
   (feature `generate`, which now also takes `time`): short-lived self-signed identities, for
   example for WebTransport's `serverCertificateHashes` (at most 14 days).
+- A client can verify a server by the web PKI: `Trust::Roots(Roots)` and
+  `Trust::PinnedOrRoots { pins, roots }`, with `Roots::bundle_pem`, `Roots::bundle_file` and,
+  with the new default-off `platform-roots` feature (rustls-platform-verifier),
+  `Roots::platform`. The chain, the dates and the server name are always checked. A wrong
+  name is the new `Refusal::NameMismatch`; any other chain failure `Refusal::NotTrusted`.
+  Roots are client-side only: `client_cert_verifier*` and `server_config*` answer
+  `PeerError::Unsupported` for them.
+- `dial_named`, `asynch::dial_named` and `TlsHandshake::client_named` send a chosen server
+  name, the host dialled, which roots check. `dial` and `TlsHandshake::client` still send
+  `SERVER_NAME`. The peer is still the leaf certificate's fingerprint.
 
 ### Fixed
 
+- `Identity::generate`, `generate_valid_for` and `generate_with` made certificates with no
+  X.509 extensions, which Chrome's WebTransport `serverCertificateHashes` verifier refuses.
+  They now carry a DNS subjectAltName `SERVER_NAME` (`coqui-peer.invalid`), a
+  subjectKeyIdentifier and basicConstraints `CA:FALSE`. Pinning is unaffected; identities
+  already generated keep their certificates.
 - TLS session resumption is off at both ends of every configuration `client_config*` and
   `server_config*` build: rustls did not call the certificate verifiers on a resumed session,
   so a peer removed from the trust store or no longer pinned could reconnect on a session it
@@ -48,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   certificate whose validity dates cannot be read is `CertificateError::BadEncoding`.
 - The policy text form always writes `allow_resumption`; a reader without the key refuses such
   a document as an unknown key.
+- `rustls` 0.23.27 or later is required.
 - The method-independent parts moved to
   [Boriken-Dev/coqui-peer](https://github.com/Boriken-Dev/coqui-peer), which this crate now
   depends on by revision: `Fingerprint` is `coqui_peer::PeerId` (a type alias here, so pins

@@ -20,7 +20,9 @@ store and the sans-IO handshake trait; this crate adds X.509 and rustls on top. 
   certificate, written `sha256:<hex>`; grouped base32 for screens; SHA-384, SHA-512 and
   (legacy) SHA-1 pins can be read.
 - **Trust you choose** — pinned fingerprints, a CA with subject and SAN globs, both, or any
-  certificate whose key the peer proves.
+  certificate whose key the peer proves. A client can also verify a server by the web PKI,
+  as a browser does: `Trust::Roots` with a CA bundle or the operating system's verifier,
+  alone or beside pins (`Trust::PinnedOrRoots`).
 - **Pairing** — a peer that proves its key and is not trusted is recorded as waiting in the
   `coqui-peer` `TrustStore` (certificates are kept under the method name `tls`); an operator
   accepts it by fingerprint.
@@ -40,7 +42,8 @@ store and the sans-IO handshake trait; this crate adds X.509 and rustls on top. 
   `TlsHandshake::finish_unauthenticated` finishes its handshake with no peer certificate.
 - **Web PKI and WebTransport identities** — `Identity::from_pem_chain` presents a CA-issued
   leaf with its intermediates; `Identity::generate_valid_for` makes a short-lived
-  certificate for WebTransport's `serverCertificateHashes` (at most 14 days there).
+  certificate for WebTransport's `serverCertificateHashes` (at most 14 days there), with the
+  subjectAltName and subjectKeyIdentifier browsers expect.
 
 ## Installation
 
@@ -56,6 +59,7 @@ cargo add coqui-peer-tls --git https://github.com/Boriken-Dev/coqui-peer-tls
 | `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_from`, `accept_with`, `accept_with_from` |
 | `serde` | `serde`, `coqui-peer/serde` | reading and writing a `Policy` and `Fingerprint` as text, in the format you choose |
 | `acl` | `coqui-net-acl` | an access control list inside a `Policy` |
+| `platform-roots` | `rustls-platform-verifier` | `Roots::platform`: servers verified by the operating system's roots |
 
 ## Quick start
 
@@ -68,6 +72,26 @@ let trust = Trust::Pinned(Pins::fixed(["sha256:3f15...".parse()?]));
 let config = client_config(&me, &trust, &[b"my-protocol/1"])?;   // strict: TLS 1.3 only
 let (stream, peer) = dial(Arc::new(config), tcp_stream)?;        // peer.fingerprint
 ```
+
+### A server with a CA-issued certificate
+
+```rust,ignore
+use rustls::pki_types::ServerName;
+use coqui_peer_tls::{Roots, Trust, client_config_without_identity, dial_named};
+
+let trust = Trust::Roots(Roots::bundle_file("/etc/ssl/certs/ca-certificates.crt"));
+// or Roots::platform() with the `platform-roots` feature
+let config = client_config_without_identity(&trust, &[b"my-protocol/1"])?;
+let name = ServerName::try_from("example.com")?.to_owned();
+let (stream, server) = dial_named(Arc::new(config), name, tcp_stream)?;   // server.fingerprint: the leaf's
+```
+
+Roots are a different trust model from pins, not a looser setting: any server one of the
+roots issued a certificate for the dialled name is trusted. The chain, the dates and the name
+are always checked; no option skips the name. `dial` sends `SERVER_NAME`, which no CA
+issues, so a server verified by roots is dialled with `dial_named` (or
+`TlsHandshake::client_named`, `asynch::dial_named`). A wrong name is `Refusal::NameMismatch`,
+an unknown issuer `Refusal::NotTrusted`.
 
 ## Profiles and policy
 
@@ -145,13 +169,13 @@ a document over your own base policy. Committed examples for every preset are in
 | --- | --- |
 | `Identity`, `PeerIdentity` | This side's certificate and key; the verified other side. |
 | `Fingerprint`, `Digest` | Certificate hashes and their text forms. |
-| `Trust`, `Pins`, `CaPolicy` | Whom to trust. |
+| `Trust`, `Pins`, `CaPolicy`, `Roots` | Whom to trust. |
 | `PeerClientVerifier`, `PeerServerVerifier` | The rustls verifiers as values. |
 | `Refusal`, `PeerError::refusal` | Why this side refused a peer's certificate, as a value. |
 | `TrustStore`, `WaitingLimits` | Accepted and waiting peers as files. |
 | `Policy`, `Weakening` | What is allowed, and what is looser than strict. |
 | `client_config(_with)`, `server_config(_with)`, `Built` | TLS configurations, ALPN as a parameter. |
-| `dial`, `accept`, `asynch::*` | Encrypted streams plus the peer. |
+| `dial`, `dial_named`, `accept`, `asynch::*` | Encrypted streams plus the peer. |
 
 ## Limits and future work
 

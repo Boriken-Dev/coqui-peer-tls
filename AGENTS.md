@@ -13,10 +13,11 @@ package and is self-contained. Development documentation lives with the source a
 | `tokio` | `tokio`, `tokio-rustls`: module `asynch` | off |
 | `serde` | `serde`, `coqui-peer/serde`: text form of `Policy`, `Fingerprint` as text; the consumer picks the format | off |
 | `acl` | `coqui-net-acl`: `Policy::acl`, re-exported as `coqui_peer_tls::acl` | off |
+| `platform-roots` | `rustls-platform-verifier`: `Roots::platform` | off |
 
 This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sans-IO
 `Handshake`); its API header is in that crate. MSRV Rust 1.89. A default build depends on
-`coqui-peer`, `rustls` (ring provider) and `data-encoding`. No `unsafe` code. Nothing installs a process-wide crypto provider, and
+`coqui-peer`, `rustls` (0.23.27 or later, ring provider) and `data-encoding`. No `unsafe` code. Nothing installs a process-wide crypto provider, and
 nothing reads a file or an environment variable unless the caller passes a path. TLS 1.3 is
 the default; TLS 1.2 only when a policy allows it.
 
@@ -46,7 +47,8 @@ impl Identity {
     pub fn certificate_der(&self) -> &[u8];                           // the leaf
     pub fn intermediates_der(&self) -> impl ExactSizeIterator<Item = &[u8]>;   // empty unless from_pem_chain
     pub fn peer_identity(&self) -> PeerIdentity;
-    // feature generate: self-signed ECDSA P-256, CN "coqui-peer", no SAN
+    // feature generate: self-signed ECDSA P-256, CN "coqui-peer", DNS SAN SERVER_NAME,
+    // subjectKeyIdentifier, basicConstraints CA:FALSE
     pub fn generate() -> Result<Identity, PeerError>;                 // rcgen's default validity (decades)
     pub fn generate_valid_for(validity: Duration) -> Result<Identity, PeerError>;           // from now
     pub fn generate_with(not_before: SystemTime, not_after: SystemTime) -> Result<Identity, PeerError>;
@@ -69,14 +71,26 @@ pub struct PeerIdentity { pub fingerprint: Fingerprint, pub certificate: Vec<u8>
   certificate whose whole validity period is at most 14 days: pass at most
   `Duration::from_secs(14 * 86_400)` and replace it before it expires; a peer whose clock runs
   behind sees it as not yet valid until its start.
+- **Extensions.** Every generated certificate carries a subjectAltName (`SERVER_NAME`), a
+  subjectKeyIdentifier and basicConstraints `CA:FALSE`. Chrome's `serverCertificateHashes`
+  verifier refuses a certificate with no extensions. Pins name the certificate as made, so
+  pinning is unaffected.
 
-## Trust (`Trust`, `Pins`, `CaPolicy`)
+## Trust (`Trust`, `Pins`, `CaPolicy`, `Roots`)
 
 ```rust
-pub enum Trust { Pinned(Pins), Ca(CaPolicy), PinnedOrCa { pins: Pins, ca: CaPolicy }, AnyWithKeyProof }
+#[non_exhaustive]
+pub enum Trust { Pinned(Pins), Ca(CaPolicy), PinnedOrCa { pins: Pins, ca: CaPolicy }, AnyWithKeyProof,
+                 Roots(Roots), PinnedOrRoots { pins: Pins, roots: Roots } }
 impl Pins { pub fn fixed(impl IntoIterator<Item = Fingerprint>) -> Pins; pub fn store(TrustStore) -> Pins;
             pub fn matches(&self, der: &[u8]) -> bool; }
 pub struct CaPolicy { pub ca_file: PathBuf, pub subject: Vec<String>, pub san: Vec<String> }  // feature ca
+pub struct Roots;    // Clone, Debug (a PEM bundle shows only its length)
+impl Roots {
+    pub fn bundle_pem(text: impl Into<String>) -> Roots;     // every CERTIFICATE block is a root
+    pub fn bundle_file(path: impl Into<PathBuf>) -> Roots;   // read when the verifier is built
+    pub fn platform() -> Roots;                              // feature platform-roots
+}
 impl Trust {
     pub fn client_cert_verifier(&self) -> Result<Arc<PeerClientVerifier>, PeerError>;           // strict policy
     pub fn client_cert_verifier_with(&self, &Policy) -> Result<Arc<PeerClientVerifier>, PeerError>;
@@ -87,7 +101,7 @@ impl Trust {
 
 `PeerClientVerifier` implements rustls `ClientCertVerifier`, `PeerServerVerifier` implements
 `ServerCertVerifier`; hand them to any rustls-based stack. Every policy requires the peer to
-prove its key. Names are not checked on the pinned path.
+prove its key. Names are not checked on the pinned path; roots always check them.
 
 - A fixed pin matches by hashing the certificate with the pin's digest; every pin is compared
   in constant time. A store holds SHA-256 pins.
@@ -96,6 +110,25 @@ prove its key. Names are not checked on the pinned path.
   after.
 - `Ca` and `PinnedOrCa` apply to servers (client certificates); `server_cert_verifier*`
   returns `PeerError::Unsupported` for them. CA trust checks the chain and the globs.
+- `Roots` and `PinnedOrRoots` apply to clients (the server's certificate);
+  `client_cert_verifier*` returns `PeerError::Unsupported` for them. This is the web PKI, a
+  different trust model from pinning: any server a root issued a certificate for the dialled
+  name is trusted. The chain, every certificate's dates (always, whatever `check_validity`
+  says) and the server name are checked, by rustls's `WebPkiServerVerifier` over the bundle,
+  or by the operating system's verifier with `platform()` (which may also check revocation).
+  Nothing skips the name check. Dial with the host's name: `dial_named`,
+  `asynch::dial_named`, `TlsHandshake::client_named`, or rustls / quinn with a `ServerName`;
+  `dial` names `SERVER_NAME`, which no root issues, so it is refused (`NameMismatch`).
+- `PinnedOrRoots` takes a pinned certificate as `Pinned` does, whatever its name; any other
+  certificate must pass the roots. A wrong name is `Refusal::NameMismatch`; an expired or
+  not-yet-valid one rustls's `Expired*` / `NotValidYet*`, and `Revoked` and `BadEncoding` stay
+  rustls's own too; any other chain failure (unknown issuer, bad signature, a leaf not for
+  server authentication, a platform's own reason) is `Refusal::NotTrusted`.
+- A bundle is read when the verifier is built (`server_cert_verifier*`, `client_config*`): an
+  unreadable file is `PeerError::Io`; no certificate, or one that cannot be a root, is
+  `PeerError::Certificate`. `platform()` failing to start (no system roots on Linux) is
+  `PeerError::Certificate`. On Android the host initializes rustls-platform-verifier from its
+  JVM first (`rustls_platform_verifier::android::init_*`), or a handshake panics.
 - `AnyWithKeyProof` takes any certificate whose key is proven; the caller decides from
   `PeerIdentity` afterwards.
 - With a store-backed pin set, alone or beside a CA policy, an untrusted client is recorded
@@ -221,12 +254,14 @@ pub const CLIENT_AUTH_SETTING: &str = "client_auth";
 pub fn crypto_provider() -> Arc<CryptoProvider>;       // default ring provider
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
 pub fn dial<S: Read + Write>(Arc<ClientConfig>, S) -> Result<(StreamOwned<ClientConnection, S>, PeerIdentity), PeerError>;
+pub fn dial_named<S: Read + Write>(Arc<ClientConfig>, ServerName<'static>, S) -> Result<(StreamOwned<ClientConnection, S>, PeerIdentity), PeerError>;
 pub fn accept<S: Read + Write + PeerAddr>(Arc<ServerConfig>, S) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;
 pub fn accept_from<S: Read + Write>(Arc<ServerConfig>, S, source: SocketAddr) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;
 pub trait PeerAddr { fn peer_addr(&self) -> Option<SocketAddr>; }   // std and tokio TcpStream
 pub fn with_source<R>(Option<SocketAddr>, impl FnOnce() -> R) -> R;
 // feature tokio, module asynch:
 pub async fn dial<S>(Arc<ClientConfig>, S) -> Result<(client::TlsStream<S>, PeerIdentity), PeerError>;
+pub async fn dial_named<S>(Arc<ClientConfig>, ServerName<'static>, S) -> Result<(client::TlsStream<S>, PeerIdentity), PeerError>;
 pub async fn accept<S: PeerAddr>(Arc<ServerConfig>, S) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
 pub async fn accept_from<S>(Arc<ServerConfig>, S, SocketAddr) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
 pub async fn accept_with_from<S>(S, SocketAddr, select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
@@ -234,9 +269,11 @@ pub async fn accept_with<S: PeerAddr>(S, select: impl FnOnce(&ClientHello<'_>) -
 ```
 
 Both complete the handshake before returning, so a refused certificate is an error and the
-returned `PeerIdentity` is verified. The server name sent is `SERVER_NAME`; trust is by
-fingerprint, never by name. `accept_with` chooses the server configuration from the
-ClientHello, for example by ALPN, so one port serves peers and other clients.
+returned `PeerIdentity` is verified. `dial` sends `SERVER_NAME`, which pinned trust ignores
+(trust by fingerprint); `dial_named` sends the name given, which `Roots` check. The returned
+peer's fingerprint is the leaf certificate's however the server was verified. `accept_with`
+chooses the server configuration from the ClientHello, for example by ALPN, so one port serves
+peers and other clients.
 
 ### Server TLS
 
@@ -250,8 +287,8 @@ certificate, and hosts without an identity of their own.
   certificate. `Built::weakened` always ends with `Weakening { setting: "client_auth" (=
   CLIENT_AUTH_SETTING), value: "none", strict: "certificate" }`, after the policy's own.
 - `client_config_without_identity*` verify the server by `Trust` exactly as `client_config*`
-  (pins or a store; `AnyWithKeyProof`; CA is `Unsupported`) and present no certificate. A
-  mutual-TLS server refuses such a client. Its `weakened` is the policy's only.
+  (pins or a store; roots; `AnyWithKeyProof`; CA is `Unsupported`) and present no
+  certificate. A mutual-TLS server refuses such a client. Its `weakened` is the policy's only.
 - The server finishes with `TlsHandshake::finish_unauthenticated` (below), or any rustls /
   tokio-rustls acceptor: there is no client verifier, so `with_source` has nothing to scope.
   `accept`, `accept_from` and the `asynch` accepts return a verified client, so with this
@@ -266,6 +303,7 @@ impl Tls { pub fn new() -> Tls; pub fn with_client(self, Arc<ClientConfig>) -> T
 impl coqui_peer::Method for Tls { /* name() = "tls"; initiate(); respond(source: Option<SocketAddr>) */ }
 pub struct TlsHandshake;   // client(Arc<ClientConfig>), server(Arc<ServerConfig>, Option<SocketAddr>)
 impl TlsHandshake {
+    pub fn client_named(Arc<ClientConfig>, ServerName<'static>) -> Result<TlsHandshake, PeerError>;   // client() sends SERVER_NAME
     pub fn finish_unauthenticated(self) -> Result<(rustls::Connection, Option<PeerIdentity>), PeerError>;
 }
 impl coqui_peer::Handshake for TlsHandshake { /* Output = rustls::Connection, Framing::Stream */ }
@@ -295,8 +333,9 @@ impl PeerError { pub fn refusal(&self) -> Option<Refusal>; }
 #[non_exhaustive] pub enum Refusal {      // Copy, Eq, Hash, Display, std::error::Error
     NotPinned,         // matches no fixed pin
     NotAccepted,       // not accepted in the trust store (a store-backed server records it as waiting)
-    NotTrusted,        // no pin, and the CA policy does not trust it
+    NotTrusted,        // no pin, and the CA policy or the roots do not trust its chain
     ChainWhenPinned,   // a pinned peer sent a chain and allow_chain_when_pinned is false
+    NameMismatch,      // the roots trust the server's chain, but not for the name dialled
 }
 impl Refusal { pub fn from_rustls(error: &rustls::Error) -> Option<Refusal>; }
 ```
@@ -334,7 +373,10 @@ of `Policy` is still version 1).
 ## Gotchas
 
 - TLS 1.0 and 1.1 and non-AEAD suites cannot be offered; asking is `PeerError::Policy`.
-- A CA policy applies to servers only. Pairing (waiting entries) is a server-side feature.
+- A CA policy applies to servers only, `Roots` to clients only. Pairing (waiting entries) is
+  a server-side feature.
+- `Roots` with `dial` (or `TlsHandshake::client`) is always refused: they send
+  `SERVER_NAME`. Use the `_named` entries.
 - A server-TLS server has no client verifier: no pins, no CA, no waiting entries. A client
   pinning its server works the same in both modes.
 - `Fingerprint` equality is constant time; compare through it, not through `to_string()`.
