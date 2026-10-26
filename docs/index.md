@@ -6,6 +6,13 @@ and the verified peer identity, with pinned, CA and key-proof trust (and, for a 
 servers verified by the web PKI), a trust store with a
 waiting queue for pairing, and policy presets (`strict`, `compatible`, `legacy`).
 
+Two devices that have never met can pair without reading fingerprints: `pair_dial` and
+`pair_accept` run [coqui-peer's pairing](https://boriken-dev.github.io/coqui-peer/pairing/)
+(an invitation, a PIN checked by SPAKE2, or a device flow) on a TLS connection of its own,
+under your device's policy and bound to that connection. A paired peer can later rotate its
+certificate: it announces the successor, which is accepted once proven while the old one
+retires.
+
 The crate is not published to crates.io; depend on it by git revision:
 
 ```toml
