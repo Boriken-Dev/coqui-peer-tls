@@ -58,7 +58,9 @@ impl FromStr for TlsVersion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Weakening {
-    /// The setting's field name.
+    /// The setting's name: a [`Policy`] field, or
+    /// [`CLIENT_AUTH_SETTING`](crate::CLIENT_AUTH_SETTING) for a server that does not
+    /// authenticate its clients at the TLS layer.
     pub setting: String,
     /// Its current value as text.
     pub value: String,

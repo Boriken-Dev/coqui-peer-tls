@@ -7,6 +7,10 @@
 //! method as a sans-IO [`coqui_peer::Method`], for message transports and the drivers of the
 //! core crate.
 //!
+//! Server TLS is the other mode: the server proves itself by certificate and the client
+//! presents none ([`server_config_without_client_auth`], [`client_config_without_identity`]),
+//! so the application authenticates the client inside the channel.
+//!
 //! | Item | Purpose |
 //! | --- | --- |
 //! | [`Fingerprint`] | The core crate's `PeerId`: `sha256:HEX` and grouped base32 spellings. |
@@ -16,6 +20,7 @@
 //! | [`PeerClientVerifier`], [`PeerServerVerifier`] | The rustls verifiers as values, for other TLS stacks. |
 //! | [`Refusal`] | Why a verifier refused a certificate, read back with [`PeerError::refusal`]. |
 //! | [`client_config`], [`server_config`] | TLS 1.3 configurations with ALPN as a parameter. |
+//! | [`server_config_without_client_auth`], [`client_config_without_identity`] | Server TLS: the server proves itself by certificate, the client inside the channel. |
 //! | [`Tls`], [`TlsHandshake`] | The method and handshake of [`coqui_peer`]. |
 //!
 //! Nothing here installs a process-wide crypto provider: every configuration receives the
@@ -47,7 +52,9 @@ mod x509;
 
 pub use certificate::{METHOD, TrustStoreExt, certificate_key};
 pub use config::{
-    Built, client_config, client_config_with, crypto_provider, server_config, server_config_with,
+    Built, CLIENT_AUTH_SETTING, client_config, client_config_with, client_config_without_identity,
+    client_config_without_identity_with, crypto_provider, server_config, server_config_with,
+    server_config_without_client_auth, server_config_without_client_auth_with,
 };
 #[cfg(feature = "acl")]
 pub use coqui_net_acl as acl;

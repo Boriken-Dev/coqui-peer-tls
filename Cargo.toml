@@ -18,8 +18,8 @@ all-features = true
 # code to rustls; without it a policy that asks for TLS 1.2 is a clear error.
 default = []
 tls12 = ["rustls/tls12", "tokio-rustls?/tls12"]
-# Generate self-signed identities (rcgen).
-generate = ["dep:rcgen"]
+# Generate self-signed identities (rcgen; `time`, which rcgen already uses, for validity dates).
+generate = ["dep:rcgen", "dep:time"]
 # Trust certificates signed by a CA file and matching subject and SAN globs.
 ca = ["dep:x509-parser", "dep:globset"]
 # Async dial and accept over tokio-rustls.
@@ -36,6 +36,7 @@ rustls = { version = "0.23", default-features = false, features = ["std", "ring"
 coqui-net-acl = { git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "ef48f2564ab3193d5204f52b8607f25bea1050c5", optional = true }
 serde = { version = "1", default-features = false, features = ["derive", "std"], optional = true }
 rcgen = { version = "0.14", optional = true }
+time = { version = "0.3.6", default-features = false, optional = true }
 x509-parser = { version = "0.18", optional = true }
 globset = { version = "0.4", optional = true }
 tokio = { version = "1", default-features = false, features = ["net"], optional = true }
