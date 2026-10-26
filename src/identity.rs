@@ -224,7 +224,12 @@ impl Identity {
 
 #[cfg(feature = "generate")]
 impl Identity {
-    /// Creates a self-signed ECDSA P-256 identity without writing it.
+    /// Creates a self-signed ECDSA P-256 identity without writing it, valid for rcgen's
+    /// default period (decades).
+    ///
+    /// Every generated certificate has the common name `coqui-peer`, a DNS subjectAltName
+    /// [`SERVER_NAME`](crate::SERVER_NAME), a subjectKeyIdentifier and basicConstraints
+    /// `CA:FALSE`. Peers pin it by fingerprint, so the name is not checked.
     ///
     /// # Errors
     ///
@@ -280,12 +285,16 @@ impl Identity {
         Self::generate_from(parameters)
     }
 
+    /// rcgen writes the subjectKeyIdentifier only beside basicConstraints, hence
+    /// `ExplicitNoCa`. Chrome's `serverCertificateHashes` verifier refuses a certificate
+    /// with no extensions.
     fn parameters() -> Result<rcgen::CertificateParams, PeerError> {
-        let mut parameters = rcgen::CertificateParams::new(Vec::<String>::new())
+        let mut parameters = rcgen::CertificateParams::new(vec![crate::SERVER_NAME.to_owned()])
             .map_err(|_| PeerError::Certificate)?;
         parameters
             .distinguished_name
             .push(rcgen::DnType::CommonName, "coqui-peer");
+        parameters.is_ca = rcgen::IsCa::ExplicitNoCa;
         Ok(parameters)
     }
 
@@ -376,6 +385,46 @@ mod tests {
             window(&identity),
             (1_800_000_000, 1_800_000_000 + 3 * 86_400)
         );
+    }
+
+    /// Chrome's `serverCertificateHashes` verifier refuses a certificate with no extensions.
+    #[test]
+    fn generated_identities_carry_a_server_name_and_a_key_identifier() {
+        use x509_parser::extensions::{GeneralName, ParsedExtension};
+
+        let start = SystemTime::now();
+        for identity in [
+            Identity::generate().unwrap(),
+            Identity::generate_valid_for(Duration::from_secs(14 * DAY)).unwrap(),
+            Identity::generate_with(start, start + Duration::from_secs(DAY)).unwrap(),
+        ] {
+            let (_, certificate) =
+                x509_parser::parse_x509_certificate(identity.certificate_der()).unwrap();
+            let names: Vec<_> = certificate
+                .subject_alternative_name()
+                .unwrap()
+                .expect("a subjectAltName")
+                .value
+                .general_names
+                .clone();
+            assert_eq!(names, vec![GeneralName::DNSName(crate::SERVER_NAME)]);
+            let key_identifier = certificate
+                .extensions()
+                .iter()
+                .find_map(|extension| match extension.parsed_extension() {
+                    ParsedExtension::SubjectKeyIdentifier(id) => Some(id.0.to_vec()),
+                    _ => None,
+                })
+                .expect("a subjectKeyIdentifier");
+            assert!(!key_identifier.is_empty());
+            let constraints = certificate.basic_constraints().unwrap().unwrap();
+            assert!(!constraints.value.ca);
+            // The fingerprint names the certificate as made, extensions included.
+            assert_eq!(
+                identity.fingerprint(),
+                Fingerprint::of(identity.certificate_der())
+            );
+        }
     }
 
     #[test]
