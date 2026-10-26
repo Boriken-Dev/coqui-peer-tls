@@ -12,7 +12,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::config::crypto_provider;
 use crate::error::PeerError;
-use coqui_peer::PeerId as Fingerprint;
+use coqui_peer::PeerId;
 
 /// A verified peer: the certificate the other side proved it holds the key of.
 ///
@@ -20,7 +20,7 @@ use coqui_peer::PeerId as Fingerprint;
 #[derive(Clone, PartialEq, Eq)]
 pub struct PeerIdentity {
     /// The certificate's fingerprint.
-    pub fingerprint: Fingerprint,
+    pub fingerprint: PeerId,
     /// The certificate, DER encoded.
     pub certificate: Vec<u8>,
 }
@@ -44,7 +44,7 @@ impl fmt::Debug for PeerIdentity {
 ///
 /// On disk it is one PEM file: the certificate block, then a PKCS#8 `PRIVATE KEY` block.
 pub struct Identity {
-    fingerprint: Fingerprint,
+    fingerprint: PeerId,
     certificate: CertificateDer<'static>,
     intermediates: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
@@ -116,7 +116,7 @@ impl Identity {
             .map_err(|_| PeerError::Certificate)?;
         let certificate = certificates.remove(0);
         Ok(Self {
-            fingerprint: Fingerprint::of(certificate.as_ref()),
+            fingerprint: PeerId::of(certificate.as_ref()),
             certificate,
             intermediates: certificates,
             key,
@@ -186,7 +186,7 @@ impl Identity {
     }
 
     /// The certificate's fingerprint: what a peer pins.
-    pub fn fingerprint(&self) -> Fingerprint {
+    pub fn fingerprint(&self) -> PeerId {
         self.fingerprint
     }
 
@@ -422,7 +422,7 @@ mod tests {
             // The fingerprint names the certificate as made, extensions included.
             assert_eq!(
                 identity.fingerprint(),
-                Fingerprint::of(identity.certificate_der())
+                PeerId::of(identity.certificate_der())
             );
         }
     }

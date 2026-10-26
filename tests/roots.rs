@@ -8,8 +8,8 @@ use std::thread::{self, JoinHandle};
 
 use coqui_peer::Handshake;
 use coqui_peer_tls::{
-    Fingerprint, Identity, PeerError, PeerIdentity, Pins, Policy, Refusal, Roots, TlsHandshake,
-    Trust, client_config_without_identity, client_config_without_identity_with, dial, dial_named,
+    Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal, Roots, TlsHandshake, Trust,
+    client_config_without_identity, client_config_without_identity_with, dial, dial_named,
     server_config, server_config_without_client_auth, server_config_without_client_auth_with,
 };
 use rcgen::{
@@ -310,7 +310,7 @@ fn pinned_trust_still_ignores_the_name() {
     let config = client(&Trust::Pinned(Pins::fixed([server.fingerprint()])));
     let other = ServerName::try_from("example.invalid").unwrap();
     let (peer, _) = ping(address, &config, other).unwrap();
-    assert_eq!(peer.fingerprint, Fingerprint::of(server.certificate_der()));
+    assert_eq!(peer.fingerprint, PeerId::of(server.certificate_der()));
     served.join().unwrap();
 }
 

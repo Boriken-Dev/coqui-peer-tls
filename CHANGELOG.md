@@ -7,80 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+
 ### Added
 
-- `Tls` and `TlsHandshake` implement the sans-IO `coqui_peer::Method` and `Handshake`
-  traits over rustls's own sans-IO connection. `dial`, `accept` and `asynch` are unchanged.
-- `Policy::allow_resumption` (false in every preset) and the `allow_resumption` key of the
-  policy text form (version 1). True keeps rustls's session resumption and is reported by
-  `weakened()`.
-- `Refusal` (`NotPinned`, `NotAccepted`, `NotTrusted`, `ChainWhenPinned`), with
-  `Refusal::from_rustls` and `PeerError::refusal`, to tell why this side refused a certificate.
-- Server TLS, where the server proves itself by certificate and the client presents none:
-  `server_config_without_client_auth[_with]` (the policy handling of `server_config_with`, no
-  client certificate requested, and a `client_auth = none` entry, `CLIENT_AUTH_SETTING`, in
-  `Built::weakened`), `client_config_without_identity[_with]` (the server verified as by
-  `client_config_with`) and `TlsHandshake::finish_unauthenticated`, which finishes with the
-  connection and the peer only when it sent a certificate. The application authenticates the
-  client inside the channel. Session resumption stays off unless the policy allows it.
-- `Identity::from_pem_chain` and `Identity::intermediates_der`: an identity that presents a
-  CA-issued leaf with its intermediates; the fingerprint is the leaf's, the key must be the
-  leaf's, and a pinning peer still refuses the chain unless `allow_chain_when_pinned`.
-  `to_pem` writes the intermediates after the leaf.
-- `Identity::generate_valid_for(Duration)` and `Identity::generate_with(not_before, not_after)`
-  (feature `generate`, which now also takes `time`): short-lived self-signed identities, for
-  example for WebTransport's `serverCertificateHashes` (at most 14 days).
-- A client can verify a server by the web PKI: `Trust::Roots(Roots)` and
-  `Trust::PinnedOrRoots { pins, roots }`, with `Roots::bundle_pem`, `Roots::bundle_file` and,
-  with the new default-off `platform-roots` feature (rustls-platform-verifier),
-  `Roots::platform`. The chain, the dates and the server name are always checked. A wrong
-  name is the new `Refusal::NameMismatch`; any other chain failure `Refusal::NotTrusted`.
-  Roots are client-side only: `client_cert_verifier*` and `server_config*` answer
-  `PeerError::Unsupported` for them.
-- `dial_named`, `asynch::dial_named` and `TlsHandshake::client_named` send a chosen server
-  name, the host dialled, which roots check. `dial` and `TlsHandshake::client` still send
-  `SERVER_NAME`. The peer is still the leaf certificate's fingerprint.
+- The TLS method of [coqui-peer](https://github.com/Boriken-Dev/coqui-peer): mutual-TLS peer
+  identity over rustls (0.23.27 or later, ring provider passed explicitly; nothing installs a
+  process-wide provider). A certificate's id is the core crate's `PeerId`.
+- `Identity`: certificate and key as one PEM file (`from_pem`, `read`, `write_new`, `to_pem`),
+  CA-issued leaves with intermediates (`from_pem_chain`, `intermediates_der`), and, with
+  `generate`, self-signed ECDSA P-256 identities (`generate`, `generate_valid_for`,
+  `generate_with`, `open_or_create`) carrying a subjectAltName `SERVER_NAME`, a
+  subjectKeyIdentifier and basicConstraints `CA:FALSE`.
+- `Trust`: `Pinned` (fixed pins or a `TrustStore`), `Ca` and `PinnedOrCa` (feature `ca`) for
+  client certificates, `Roots` and `PinnedOrRoots` (web PKI, with `Roots::bundle_pem`,
+  `bundle_file` and, with `platform-roots`, `platform`) for servers, and `AnyWithKeyProof`;
+  `PeerClientVerifier` and `PeerServerVerifier` as rustls verifiers for other stacks. A
+  store-backed server records an untrusted client as waiting only after its handshake
+  signature verified. Certificates are kept in the store as `KeyMaterial` with method `tls`
+  (`certificate_key`, `TrustStoreExt`).
+- `Refusal` (`NotPinned`, `NotAccepted`, `NotTrusted`, `ChainWhenPinned`, `NameMismatch`), sent
+  as `certificate_unknown` and read back with `Refusal::from_rustls` and `PeerError::refusal`.
+- `Policy` with the `strict` (default), `compatible` and `legacy` presets: TLS versions, cipher
+  suites, key-exchange groups, pin digests, validity checks, chains on the pinned path,
+  session resumption (off in every preset), waiting limits and, with `acl`, an access list
+  from `coqui-net-acl`. `weakened()` lists every setting looser than strict. With `serde`, a
+  text form (`policy_version` 1) in the format the consumer picks.
+- Configurations with ALPN as a parameter: `client_config[_with]`, `server_config[_with]`, and
+  server TLS where only the server presents a certificate
+  (`server_config_without_client_auth[_with]`, `client_config_without_identity[_with]`,
+  `TlsHandshake::finish_unauthenticated`).
+- Blocking `dial`, `dial_named`, `accept`, `accept_from` and, with `tokio`, their `asynch`
+  forms plus `accept_with` (configuration chosen from the ClientHello); `with_source` for
+  hosts that drive rustls themselves.
+- `Tls` and `TlsHandshake`: the sans-IO `coqui_peer::Method` and `Handshake` over rustls's own
+  sans-IO connection.
 
-### Fixed
-
-- `Identity::generate`, `generate_valid_for` and `generate_with` made certificates with no
-  X.509 extensions, which Chrome's WebTransport `serverCertificateHashes` verifier refuses.
-  They now carry a DNS subjectAltName `SERVER_NAME` (`coqui-peer.invalid`), a
-  subjectKeyIdentifier and basicConstraints `CA:FALSE`. Pinning is unaffected; identities
-  already generated keep their certificates.
-- TLS session resumption is off at both ends of every configuration `client_config*` and
-  `server_config*` build: rustls did not call the certificate verifiers on a resumed session,
-  so a peer removed from the trust store or no longer pinned could reconnect on a session it
-  held. Set `Policy::allow_resumption` to keep resumption. A stack built around the verifiers
-  alone must turn resumption off itself.
-
-### Changed
-
-- The verifiers refuse a certificate with
-  `rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Refusal)))` instead of
-  `rustls::Error::General(<text>)`, so the alert sent is `certificate_unknown`, no longer
-  `handshake_failure`; code matching the text should use `PeerError::refusal`. A pinned
-  certificate whose validity dates cannot be read is `CertificateError::BadEncoding`.
-- The policy text form always writes `allow_resumption`; a reader without the key refuses such
-  a document as an unknown key.
-- `rustls` 0.23.27 or later is required.
-- The method-independent parts moved to
-  [Boriken-Dev/coqui-peer](https://github.com/Boriken-Dev/coqui-peer), which this crate now
-  depends on by revision: `Fingerprint` is `coqui_peer::PeerId` (a type alias here, so pins
-  and imports keep working; `Fingerprint::of_certificate` and `Digest::of_certificate` are
-  `PeerId::of` and `Digest::of`), and `TrustStore`, `WaitingEntry { id, source }`,
-  `WaitingLimits` and the pairing flow are the core crate's. Certificates are kept in the store
-  as `KeyMaterial` under the method name `tls`; `TrustStoreExt::accept_certificate` and
-  `record_waiting_certificate` take a DER certificate. The store's on-disk format is version 3
-  (a `Method:` line); versions 1 and 2 still read. The certificate vectors stay here, the id
-  and store vectors moved with the code.
-
-- The crate moved out of the `coqui-access` repository into this one, with its history, and
-  was renamed from `coqui-peer` to `coqui-peer-tls` (library `coqui_peer_tls`). The API is
-  otherwise unchanged. Depend on this repository instead of
-  [Boriken-Dev/coqui-access](https://github.com/Boriken-Dev/coqui-access):
-  `coqui-peer-tls = { git = "https://github.com/Boriken-Dev/coqui-peer-tls", rev = "<commit>" }`,
-  and replace `coqui_peer::` with `coqui_peer_tls::` in imports. The crate is still not
-  published to crates.io.
-- The optional `acl` feature takes `coqui-net-acl` from
-  [Boriken-Dev/coqui-net-acl](https://github.com/Boriken-Dev/coqui-net-acl), pinned by revision.
+Depend on this repository by revision:
+`coqui-peer-tls = { git = "https://github.com/Boriken-Dev/coqui-peer-tls", rev = "<commit>" }`.
+The crate is not published to crates.io.

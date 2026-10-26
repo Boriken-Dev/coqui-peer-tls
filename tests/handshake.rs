@@ -7,8 +7,7 @@ use std::sync::Arc;
 use std::thread;
 
 use coqui_peer_tls::{
-    CaPolicy, Fingerprint, Identity, Pins, Trust, TrustStore, accept, client_config, dial,
-    server_config,
+    CaPolicy, Identity, PeerId, Pins, Trust, TrustStore, accept, client_config, dial, server_config,
 };
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
 use rustls::client::danger::ServerCertVerifier;
@@ -16,7 +15,7 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
 const ALPN: &[u8] = b"test-proto/1";
 
-fn pinned(fingerprint: Fingerprint) -> Trust {
+fn pinned(fingerprint: PeerId) -> Trust {
     Trust::Pinned(Pins::fixed([fingerprint]))
 }
 
@@ -24,7 +23,7 @@ fn pinned(fingerprint: Fingerprint) -> Trust {
 fn serve(
     listener: TcpListener,
     config: rustls::ServerConfig,
-) -> thread::JoinHandle<Option<Fingerprint>> {
+) -> thread::JoinHandle<Option<PeerId>> {
     thread::spawn(move || {
         let (socket, _) = listener.accept().unwrap();
         let (mut stream, peer) = accept(Arc::new(config), socket).ok()?;
@@ -36,7 +35,7 @@ fn serve(
     })
 }
 
-fn echo(address: std::net::SocketAddr, config: rustls::ClientConfig) -> Option<Fingerprint> {
+fn echo(address: std::net::SocketAddr, config: rustls::ClientConfig) -> Option<PeerId> {
     let socket = TcpStream::connect(address).unwrap();
     let (mut stream, peer) = dial(Arc::new(config), socket).ok()?;
     stream.write_all(b"ping").ok()?;

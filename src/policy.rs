@@ -6,7 +6,7 @@ use rustls::SupportedProtocolVersion;
 use rustls::crypto::CryptoProvider;
 
 use crate::error::PeerError;
-use coqui_peer::{Digest, PeerId as Fingerprint, WaitingLimits};
+use coqui_peer::{Digest, PeerId, WaitingLimits};
 
 /// The version of the serialized form of [`Policy`] (`policy_version`).
 pub const POLICY_VERSION: u32 = 1;
@@ -277,7 +277,7 @@ impl Policy {
     /// # Errors
     ///
     /// [`PeerError::Policy`] naming the digest and the allowed ones.
-    pub fn check_pin(&self, fingerprint: &Fingerprint) -> Result<(), PeerError> {
+    pub fn check_pin(&self, fingerprint: &PeerId) -> Result<(), PeerError> {
         if self.pin_digests.contains(&fingerprint.digest()) {
             return Ok(());
         }

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use coqui_peer::Handshake;
 use coqui_peer_tls::{
-    CLIENT_AUTH_SETTING, Fingerprint, Identity, PeerError, PeerIdentity, Pins, Policy, Refusal,
+    CLIENT_AUTH_SETTING, Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal,
     TlsHandshake, Trust, accept, client_config, client_config_without_identity,
     client_config_without_identity_with, dial, server_config, server_config_without_client_auth,
     server_config_without_client_auth_with,
@@ -21,7 +21,7 @@ use rustls::{Connection, ServerConfig, StreamOwned};
 
 const ALPN: &[u8] = b"server-tls-test/1";
 
-fn pinned(fingerprint: Fingerprint) -> Trust {
+fn pinned(fingerprint: PeerId) -> Trust {
     Trust::Pinned(Pins::fixed([fingerprint]))
 }
 
@@ -252,7 +252,7 @@ fn a_chained_identity_keeps_the_leaf_fingerprint_and_its_intermediates() {
         Err(PeerError::Certificate)
     ));
     let identity = Identity::from_pem_chain(&chain.pem()).unwrap();
-    assert_eq!(identity.fingerprint(), Fingerprint::of(chain.leaf.der()));
+    assert_eq!(identity.fingerprint(), PeerId::of(chain.leaf.der()));
     assert_eq!(identity.certificate_der(), chain.leaf.der().as_ref());
     let intermediates: Vec<&[u8]> = identity.intermediates_der().collect();
     assert_eq!(intermediates, vec![chain.intermediate.der().as_ref()]);

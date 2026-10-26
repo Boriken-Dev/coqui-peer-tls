@@ -8,7 +8,7 @@ use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, Str
 use crate::error::PeerError;
 use crate::identity::PeerIdentity;
 use crate::source::with_source;
-use coqui_peer::PeerId as Fingerprint;
+use coqui_peer::PeerId;
 
 /// The server name [`dial`] and [`TlsHandshake::client`](crate::TlsHandshake::client) send,
 /// and the subjectAltName of generated identities. Pinned trust is by fingerprint, so the name
@@ -27,7 +27,7 @@ pub(crate) fn identity_of(
         .and_then(<[_]>::first)
         .ok_or(PeerError::Certificate)?;
     Ok(PeerIdentity {
-        fingerprint: Fingerprint::of(certificate.as_ref()),
+        fingerprint: PeerId::of(certificate.as_ref()),
         certificate: certificate.as_ref().to_vec(),
     })
 }

@@ -1,7 +1,7 @@
 //! Mutual-TLS peer identity, with no RPC layer: the TLS method of [`coqui_peer`].
 //!
 //! Each side has a self-issued certificate ([`Identity`]) and tells the other only its
-//! SHA-256 [`Fingerprint`], the [`PeerId`] of the core crate. [`dial`] and [`accept`] (and,
+//! [`PeerId`]: the SHA-256 of the certificate. [`dial`] and [`accept`] (and,
 //! with the `tokio` feature, `asynch::dial` and `asynch::accept`) return an authenticated,
 //! encrypted byte stream together with the verified [`PeerIdentity`]. [`Tls`] is the same
 //! method as a sans-IO [`coqui_peer::Method`], for message transports and the drivers of the
@@ -13,7 +13,7 @@
 //!
 //! | Item | Purpose |
 //! | --- | --- |
-//! | [`Fingerprint`] | The core crate's `PeerId`: `sha256:HEX` and grouped base32 spellings. |
+//! | [`PeerId`] | A certificate's id, `sha256:HEX`, from the core crate. |
 //! | [`Identity`] | Certificate and key as one PEM file; `generate` and `open_or_create` with the `generate` feature. |
 //! | [`TrustStore`] | The core crate's store of accepted and waiting peers; certificates stored under the method name `tls`. |
 //! | [`Trust`], [`Pins`], [`Roots`] | Whom to trust: pinned, CA (`ca` feature), pinned or CA, any with key proof; a server by the web PKI (roots). |
@@ -71,8 +71,3 @@ pub use stream::{PeerAddr, SERVER_NAME, accept, accept_from, dial, dial_named};
 #[cfg(feature = "ca")]
 pub use trust::CaPolicy;
 pub use trust::{PeerClientVerifier, PeerServerVerifier, Pins, Trust};
-
-/// The SHA-256 id of a certificate: the [`PeerId`] of the core crate, kept under its former
-/// name so pins and code written against it keep working. Parsing, display and equality are
-/// the core crate's.
-pub type Fingerprint = PeerId;

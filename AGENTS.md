@@ -11,7 +11,7 @@ package and is self-contained. Development documentation lives with the source a
 | `generate` | `rcgen`, `time`: `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
 | `ca` | `x509-parser`, `globset`: `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio`, `tokio-rustls`: module `asynch` | off |
-| `serde` | `serde`, `coqui-peer/serde`: text form of `Policy`, `Fingerprint` as text; the consumer picks the format | off |
+| `serde` | `serde`, `coqui-peer/serde`: text form of `Policy`, `PeerId` as text; the consumer picks the format | off |
 | `acl` | `coqui-net-acl`: `Policy::acl`, re-exported as `coqui_peer_tls::acl` | off |
 | `platform-roots` | `rustls-platform-verifier`: `Roots::platform` | off |
 
@@ -21,14 +21,14 @@ This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sa
 nothing reads a file or an environment variable unless the caller passes a path. TLS 1.3 is
 the default; TLS 1.2 only when a policy allows it.
 
-## Fingerprint, Digest (from `coqui-peer`)
+## PeerId, Digest (from `coqui-peer`)
 
 ```rust
-pub type Fingerprint = coqui_peer::PeerId;      // Copy, Eq (constant time), Ord, Hash, Display = "sha256:<hex>", FromStr
 pub use coqui_peer::{Digest, PeerId, KeyMaterial, TrustStore, WaitingEntry, WaitingLimits};
+// PeerId: Copy, Eq (constant time), Ord, Hash, Display = "sha256:<hex>", FromStr
 ```
 
-The id of a certificate is `Fingerprint::of(der)` (SHA-256) or `Digest::Sha384.of(der)`. Text
+The id of a certificate is `PeerId::of(der)` (SHA-256) or `Digest::Sha384.of(der)`. Text
 forms, `canonical()`, `hex()`, `to_base32_grouped()` and the parsing rules (`sha256:<hex>`, bare
 hex, colon pairs, grouped base32; MD5 is `PeerError::WeakDigest`) are the core crate's. Whether a
 policy lets a pin use a digest is a `Policy` matter.
@@ -43,7 +43,7 @@ impl Identity {
     pub fn to_pem(&self) -> Result<String, PeerError>;                // certificate, intermediates, then PKCS#8 key
     pub fn read(path: &Path) -> Result<Option<Identity>, PeerError>;  // None when absent; one certificate
     pub fn write_new(&self, path: &Path) -> Result<(), PeerError>;    // never replaces; 0600; creates parents
-    pub fn fingerprint(&self) -> Fingerprint;                         // the leaf's
+    pub fn fingerprint(&self) -> PeerId;                               // the leaf's
     pub fn certificate_der(&self) -> &[u8];                           // the leaf
     pub fn intermediates_der(&self) -> impl ExactSizeIterator<Item = &[u8]>;   // empty unless from_pem_chain
     pub fn peer_identity(&self) -> PeerIdentity;
@@ -54,7 +54,7 @@ impl Identity {
     pub fn generate_with(not_before: SystemTime, not_after: SystemTime) -> Result<Identity, PeerError>;
     pub fn open_or_create(path: &Path) -> Result<Identity, PeerError>;
 }
-pub struct PeerIdentity { pub fingerprint: Fingerprint, pub certificate: Vec<u8> }   // DER
+pub struct PeerIdentity { pub fingerprint: PeerId, pub certificate: Vec<u8> }   // DER
 ```
 
 - **Chains.** `from_pem_chain` takes a CA-issued leaf with its intermediates (a web-PKI server a
@@ -62,7 +62,7 @@ pub struct PeerIdentity { pub fingerprint: Fingerprint, pub certificate: Vec<u8>
   whole chain. The key must be the first certificate's, or `PeerError::Certificate`. The
   fingerprint is the leaf's. A peer that pins it refuses the chain (`Refusal::ChainWhenPinned`)
   unless its policy sets `allow_chain_when_pinned`; `AnyWithKeyProof` takes it. `from_pem`,
-  `read` and `open_or_create` still refuse a chain, so a chained identity written with
+  `read` and `open_or_create` refuse a chain, so a chained identity written with
   `write_new` is read back by passing the file's text to `from_pem_chain`.
 - **Short-lived identities.** `generate_valid_for(d)` is valid from now to now + `d`;
   `generate_with` takes both ends. Times are truncated to whole seconds; a window under one
@@ -82,7 +82,7 @@ pub struct PeerIdentity { pub fingerprint: Fingerprint, pub certificate: Vec<u8>
 #[non_exhaustive]
 pub enum Trust { Pinned(Pins), Ca(CaPolicy), PinnedOrCa { pins: Pins, ca: CaPolicy }, AnyWithKeyProof,
                  Roots(Roots), PinnedOrRoots { pins: Pins, roots: Roots } }
-impl Pins { pub fn fixed(impl IntoIterator<Item = Fingerprint>) -> Pins; pub fn store(TrustStore) -> Pins;
+impl Pins { pub fn fixed(impl IntoIterator<Item = PeerId>) -> Pins; pub fn store(TrustStore) -> Pins;
             pub fn matches(&self, der: &[u8]) -> bool; }
 pub struct CaPolicy { pub ca_file: PathBuf, pub subject: Vec<String>, pub san: Vec<String> }  // feature ca
 pub struct Roots;    // Clone, Debug (a PEM bundle shows only its length)
@@ -190,7 +190,7 @@ impl Policy {
     pub fn preset(name: &str) -> Result<Policy, PeerError>;
     pub fn weakened(&self) -> Vec<Weakening>;
     pub fn weakened_against(&self, baseline: &Policy) -> Vec<Weakening>;
-    pub fn check_pin(&self, fingerprint: &Fingerprint) -> Result<(), PeerError>;
+    pub fn check_pin(&self, fingerprint: &PeerId) -> Result<(), PeerError>;
     pub fn waiting_limits(&self) -> WaitingLimits;
     pub fn crypto_provider(&self) -> Result<Arc<CryptoProvider>, PeerError>;
     pub fn supported_cipher_suites() -> Vec<String>;
@@ -327,7 +327,7 @@ completion it is `PeerError::Tls`.
 ## Errors
 
 ```rust
-#[non_exhaustive] pub enum PeerError { InvalidFingerprint, Certificate, Tls, WeakDigest, Policy(String),
+#[non_exhaustive] pub enum PeerError { InvalidId, Certificate, Tls, WeakDigest, Policy(String),
     TrustPattern, NotWaiting, AlreadyAccepted, Path, Unsupported, Io(io::Error) }
 impl PeerError { pub fn refusal(&self) -> Option<Refusal>; }
 #[non_exhaustive] pub enum Refusal {      // Copy, Eq, Hash, Display, std::error::Error
@@ -354,21 +354,18 @@ For peers in other languages. All files are UTF-8 with LF line endings.
   exactly one certificate (a chain is refused); 64-character base64 lines. Mode `0600`. The
   text of a chained identity (`to_pem`) adds the intermediates' `CERTIFICATE` blocks after the
   leaf, before the key, and reads back with `from_pem_chain` only.
-- **Fingerprint** — SHA-256 of the certificate's DER encoding. Canonical text
+- **Certificate id** (`PeerId`) — SHA-256 of the certificate's DER encoding. Canonical text
   `sha256:<64 lowercase hex>` (`openssl x509 -outform DER | sha256sum` gives the hex).
   Grouped base32 (RFC 4648 alphabet, no padding, 52 characters, groups of four joined by `-`)
   is a display form.
-- **Trust store** — `coqui-peer`'s format, version 3: `peers/{accepted,waiting}/<64 hex>.pem`,
-  header lines `Method: tls` and (waiting) `Source: <ip>:<port>`, then one `CERTIFICATE` block
-  whose DER hashes to the name. Versions 1 and 2 (no `Method:` line) read as `tls`. The store
+- **Trust store** — `coqui-peer`'s format (see its header): certificates are kept as
+  `peers/{accepted,waiting}/<64 hex>.pem` with header lines `Method: tls` and (waiting)
+  `Source: <ip>:<port>`, then one `CERTIFICATE` block whose DER hashes to the name. The store
   vectors live in that crate.
 - **Vectors** — `tests/vectors/identity-{a,b}.pem` and `identity-{a,b}.fingerprint` (three
   lines: canonical, bare hex, grouped base32) are checked by `tests/vectors.rs`; the policy
   vectors under `tests/vectors/policy/` are byte-exact text forms (TOML and JSON, read in
   tests through dev-dependencies only).
-
-Format changes bump a version and the changelog; older versions stay readable (the text form
-of `Policy` is still version 1).
 
 ## Gotchas
 
@@ -379,4 +376,4 @@ of `Policy` is still version 1).
   `SERVER_NAME`. Use the `_named` entries.
 - A server-TLS server has no client verifier: no pins, no CA, no waiting entries. A client
   pinning its server works the same in both modes.
-- `Fingerprint` equality is constant time; compare through it, not through `to_string()`.
+- `PeerId` equality is constant time; compare through it, not through `to_string()`.
