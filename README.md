@@ -33,6 +33,14 @@ store and the sans-IO handshake trait; this crate adds X.509 and rustls on top. 
 - **Streams** — blocking `dial`/`accept` over any `Read + Write`; async over any
   `AsyncRead + AsyncWrite` with `tokio`. `accept` reads the peer address from a TCP stream;
   other streams use `accept_from`.
+- **Server TLS** — `server_config_without_client_auth` and `client_config_without_identity`:
+  the server proves itself by certificate, the client presents none and is authenticated by
+  your application inside the channel (browsers over `wss://` and WebTransport, hosts without
+  an identity). The server's `weakened` list says so (`client_auth = none`), and
+  `TlsHandshake::finish_unauthenticated` finishes its handshake with no peer certificate.
+- **Web PKI and WebTransport identities** — `Identity::from_pem_chain` presents a CA-issued
+  leaf with its intermediates; `Identity::generate_valid_for` makes a short-lived
+  certificate for WebTransport's `serverCertificateHashes` (at most 14 days there).
 
 ## Installation
 
@@ -43,7 +51,7 @@ cargo add coqui-peer-tls --git https://github.com/Boriken-Dev/coqui-peer-tls
 | Feature | Adds | Needed for |
 | --- | --- | --- |
 | `tls12` | rustls `tls12` | the `compatible` and `legacy` presets |
-| `generate` | `rcgen` | `Identity::generate`, `open_or_create` |
+| `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` |
 | `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa` |
 | `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_from`, `accept_with`, `accept_with_from` |
 | `serde` | `serde`, `coqui-peer/serde` | reading and writing a `Policy` and `Fingerprint` as text, in the format you choose |
@@ -67,7 +75,8 @@ let (stream, peer) = dial(Arc::new(config), tcp_stream)?;        // peer.fingerp
 `legacy()` are constructors for plain values; start from one, or from a policy of your own,
 and change any public field. `weakened()` lists, as data, every setting looser than strict
 (`weakened_against(&baseline)` compares with a baseline you choose); `client_config_with` and
-`server_config_with` return that list beside the configuration. Nothing is printed.
+`server_config_with` return that list beside the configuration, and
+`server_config_without_client_auth_with` adds `client_auth = none` to it. Nothing is printed.
 
 | Field | `strict` | `compatible` | `legacy` |
 | --- | --- | --- | --- |
