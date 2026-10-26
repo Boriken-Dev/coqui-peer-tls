@@ -22,6 +22,8 @@
 //! | [`client_config`], [`server_config`] | TLS 1.3 configurations with ALPN as a parameter. |
 //! | [`server_config_without_client_auth`], [`client_config_without_identity`] | Server TLS: the server proves itself by certificate, the client inside the channel. |
 //! | [`Tls`], [`TlsHandshake`] | The method and handshake of [`coqui_peer`]. |
+//! | [`pair_dial`], [`pair_accept`], [`pair`] | Pairing by invitation, PIN or device flow on a connection of its own. |
+//! | [`announce`], [`receive_announcement`] | Key rotation: a successor certificate, promoted once proven. |
 //!
 //! Nothing here installs a process-wide crypto provider: every configuration receives the
 //! ring provider explicitly.
@@ -45,6 +47,7 @@ mod config;
 mod error;
 mod handshake;
 mod identity;
+mod pairing;
 mod policy;
 mod roots;
 mod source;
@@ -60,10 +63,19 @@ pub use config::{
 };
 #[cfg(feature = "acl")]
 pub use coqui_net_acl as acl;
-pub use coqui_peer::{Digest, KeyMaterial, PeerId, TrustStore, WaitingEntry, WaitingLimits};
+pub use coqui_peer::pair;
+pub use coqui_peer::{
+    Clock, Digest, Invitation, InvitationOptions, KeyMaterial, PeerId, Random, RotationEvent,
+    RotationOptions, TrustStore, WaitingEntry, WaitingLimits,
+};
 pub use error::{PeerError, Refusal};
 pub use handshake::{Tls, TlsHandshake};
 pub use identity::{Identity, PeerIdentity};
+pub use pairing::{
+    EXPORTER_LABEL, PAIR_ALPN, PairConfig, PairDial, ResponderTrust, announce, pair_accept,
+    pair_accept_from, pair_client_config, pair_dial, pair_server_config, random,
+    receive_announcement,
+};
 pub use policy::{POLICY_VERSION, Policy, TlsVersion, Weakening};
 pub use roots::Roots;
 pub use source::with_source;

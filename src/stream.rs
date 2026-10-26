@@ -108,7 +108,7 @@ pub fn accept<S: Read + Write + PeerAddr>(
     io: S,
 ) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
     let source = io.peer_addr();
-    accept_as(config, io, source)
+    accept_from_as(config, io, source)
 }
 
 /// [`accept`] for a stream that is not a [`TcpStream`], with the address it came from given.
@@ -122,10 +122,10 @@ pub fn accept_from<S: Read + Write>(
     io: S,
     source: SocketAddr,
 ) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
-    accept_as(config, io, Some(source))
+    accept_from_as(config, io, Some(source))
 }
 
-fn accept_as<S: Read + Write>(
+pub(crate) fn accept_from_as<S: Read + Write>(
     config: Arc<ServerConfig>,
     mut io: S,
     source: Option<SocketAddr>,

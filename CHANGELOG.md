@@ -41,6 +41,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   hosts that drive rustls themselves.
 - `Tls` and `TlsHandshake`: the sans-IO `coqui_peer::Method` and `Handshake` over rustls's own
   sans-IO connection.
+- Pairing over TLS: `pair_dial` (two steps: `PairDial::shown`, then `finish`), `pair_accept`,
+  `pair_accept_from` and, with `tokio`, their `asynch` forms plus `asynch::pair_respond` for a
+  connection chosen by `accept_with`; `pair_server_config`, `pair_client_config`, `PairConfig`
+  (the device's `Policy` and the pairing ALPN, `PAIR_ALPN` by default), `ResponderTrust`, the
+  exporter binding (`EXPORTER_LABEL`) and `random()`. PIN pairing needs the `pin` feature. The
+  exchange, the desk and the options are `coqui-peer`'s, re-exported as `pair`.
+- Key rotation: `announce`, `receive_announcement` and their `asynch` forms; store-backed `Pins`
+  admit a pending successor and promote it once its handshake signature verifies (or refuse it
+  until approved under `RotationOptions::require_approval`); `Identity::renew_before`.
+- `PeerError::Pairing` and `PeerError::pair_refusal`.
 
 Depend on this repository by revision:
 `coqui-peer-tls = { git = "https://github.com/Boriken-Dev/coqui-peer-tls", rev = "<commit>" }`.

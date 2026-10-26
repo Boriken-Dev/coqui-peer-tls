@@ -10,7 +10,8 @@ package and is self-contained. Development documentation lives with the source a
 | `tls12` | rustls `tls12` (needed by `Policy::compatible()` and `legacy()`) | off |
 | `generate` | `rcgen`, `time`: `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
 | `ca` | `x509-parser`, `globset`: `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
-| `tokio` | `tokio`, `tokio-rustls`: module `asynch` | off |
+| `tokio` | `tokio` (`net`, `io-util`, `time`), `tokio-rustls`: module `asynch` | off |
+| `pin` | `coqui-peer/pin`: PIN pairing (`Pairing::pin`) | off |
 | `serde` | `serde`, `coqui-peer/serde`: text form of `Policy`, `PeerId` as text; the consumer picks the format | off |
 | `acl` | `coqui-net-acl`: `Policy::acl`, re-exported as `coqui_peer_tls::acl` | off |
 | `platform-roots` | `rustls-platform-verifier`: `Roots::platform` | off |
@@ -324,12 +325,89 @@ drives its handshake with `coqui_peer::complete_stream` / `complete_messages` (o
 `server_config_without_client_auth*` it is always `None`, meaning not authenticated. Before
 completion it is `PeerError::Tls`.
 
+## Pairing and rotation over TLS
+
+The `coqui-peer` pairing exchange (re-exported as `coqui_peer_tls::pair`; its API header has the
+modes, options, desk, throttles and their costs) on a connection of its own, and key rotation
+over an authenticated one. TLS settings are the device's own `Policy`; nothing here sets a
+version or suite.
+
+```rust
+pub use coqui_peer::pair;                    // Pairing, PairingDesk, PairingOptions, DeskLimits, Pin, ...
+pub use coqui_peer::{Clock, Random, Invitation, InvitationOptions, RotationOptions, RotationEvent};
+pub const PAIR_ALPN: &[u8] = b"coqui-pair/1";
+pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
+pub struct PairConfig { pub policy: Policy, pub alpn: Vec<u8> }   // Default: strict, PAIR_ALPN
+pub enum ResponderTrust { Unverified, Verified { trust: Box<Trust>, name: Option<ServerName<'static>> } }
+impl ResponderTrust { pub fn pinned(id: PeerId) -> ResponderTrust; }
+pub fn random() -> Random;                   // the TLS provider's secure random source
+pub fn pair_server_config(&Identity, &PairConfig) -> Result<ServerConfig, PeerError>;
+pub fn pair_client_config(&Identity, &Pairing, &ResponderTrust, &PairConfig) -> Result<(ClientConfig, ServerName<'static>), PeerError>;
+pub fn pair_dial<S: Read + Write>(S, &Identity, Pairing, &ResponderTrust, &PairConfig) -> Result<PairDial<S>, PeerError>;
+impl<S> PairDial<S> { pub fn shown(&self) -> Option<&Shown>; pub fn finish(self, &TrustStore) -> Result<Paired, PeerError>; }
+pub fn pair_accept<S: Read + Write + PeerAddr>(S, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
+pub fn pair_accept_from<S: Read + Write>(S, SocketAddr, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
+pub fn announce(&mut impl Write, successor: &Identity) -> Result<(), PeerError>;
+pub fn receive_announcement(&mut impl Read, &TrustStore, sender: &PeerIdentity) -> Result<PeerId, PeerError>;
+impl Identity { pub fn renew_before(&self, margin: Duration) -> bool; pub fn renew_before_at(&self, Duration, SystemTime) -> bool; }
+// feature tokio, module asynch: pair_dial -> asynch::PairDial (shown, async finish), pair_accept,
+// pair_accept_from, pair_respond(server::TlsStream<S>, Option<SocketAddr>, &Identity, &TrustStore,
+// &PairingDesk, &PairConfig), announce, receive_announcement
+```
+
+**Pairing connection.** `pair_server_config` admits any client certificate whose key is proven,
+under `PairConfig::alpn` only; the app's own configurations stay as strict as they are, so an
+unknown certificate offering the app's ALPN is still refused. Both ends check that the pairing
+ALPN was negotiated (`PeerError::Tls` otherwise), then run the exchange with both certificates as
+`Channel::local`/`remote` and the exporter (`EXPORTER_LABEL`, 32 bytes, empty context) as the
+binding. Messages are framed with a four-byte big-endian length (at most `coqui_peer::MAX_MESSAGE`).
+The connection carries only the exchange and then closes; both sides reconnect with the app's
+ALPN and their stores. One port can serve both: `asynch::accept_with` choosing
+`pair_server_config` when the ClientHello offers the pairing ALPN, then `asynch::pair_respond`.
+
+**Joiner.** `pair_dial` handshakes and runs the exchange until there is something to show
+(`shown()`: its PIN with the slot, or the device-flow user code) or the end; `finish` runs the rest
+(for a shown code, until the operator acts at the responder), `accept_key`s the responder's
+certificate in the joiner's store, and closes. The responder's certificate is checked by:
+an invitation, a pin of the inviter whatever `ResponderTrust` says; a PIN, `ResponderTrust` (the
+PIN authenticates the responder, so `Unverified` is enough); the device flow, `Verified` trust
+(pins, a store, or roots with the host's `name`), and `Unverified` or `Trust::AnyWithKeyProof` is
+`PeerError::Pairing(PairingError::Unverified)` before connecting unless
+`Pairing::allow_unverified(true)`, at the cost stated in `coqui-peer`'s header.
+
+**Responder.** `pair_accept` handshakes, then runs the responder until done: redeeming an
+invitation, taking the shown PIN, or waiting for the operator through the desk. The blocking form
+blocks in `PairingDesk::wait` (rechecks expiry every second on the system clock); the async form
+awaits `PairingDesk::decided` and sweeps the desk every second meanwhile. On success the joiner's
+certificate is accepted in the store before the joiner is told. The address of the stream is the
+source the desk throttles by (`pair_accept_from` for other streams).
+
+**What each TLS version gives.** TLS 1.3 (the strict policy): the exporter is unique to the
+connection, so a relay between two connections fails the PIN confirmation. TLS 1.2 (a policy
+that allows it, feature `tls12`): the exporter is unique only with the extended master secret,
+which rustls negotiates when the peer offers it and insists on only with `require_ems` on the
+configuration; without it, the confirmation still covers both certificates, which a relay
+cannot replace with its own without failing it.
+
+**Rotation.** A peer sends `announce(stream, &successor)` over a connection its current
+certificate authenticated; the other side calls `receive_announcement(stream, store, &peer)`,
+which records the successor (`TrustStore::announce_successor`; a peer that is not accepted, or
+is retiring, is `PeerError::Pairing(PairingError::Local(coqui_peer::Error::NotAccepted))`). A
+store-backed `Pins` then admits the successor: the verifier lets it through presentation
+(after `check_pinned`'s chain and date checks), and once its handshake signature verifies,
+promotes it (`promote_successor`), so the predecessor retires after
+`RotationOptions::retire_after`. With `RotationOptions::require_approval` the successor is
+refused (`NotAccepted`) until the caller promotes it, and is not recorded as waiting. This
+works both ways: a server verifying clients by its store, and a client pinning its server by
+its store. `take_rotation_events` returns what happened. `Identity::renew_before(margin)` says
+when the certificate ends within `margin` (an unreadable one is due).
+
 ## Errors
 
 ```rust
 #[non_exhaustive] pub enum PeerError { InvalidId, Certificate, Tls, WeakDigest, Policy(String),
-    TrustPattern, NotWaiting, AlreadyAccepted, Path, Unsupported, Io(io::Error) }
-impl PeerError { pub fn refusal(&self) -> Option<Refusal>; }
+    TrustPattern, NotWaiting, AlreadyAccepted, Path, Unsupported, Pairing(pair::PairingError), Io(io::Error) }
+impl PeerError { pub fn refusal(&self) -> Option<Refusal>; pub fn pair_refusal(&self) -> Option<pair::PairRefusal>; }
 #[non_exhaustive] pub enum Refusal {      // Copy, Eq, Hash, Display, std::error::Error
     NotPinned,         // matches no fixed pin
     NotAccepted,       // not accepted in the trust store (a store-backed server records it as waiting)
