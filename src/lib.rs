@@ -72,8 +72,8 @@ pub use error::{PeerError, Refusal};
 pub use handshake::{Tls, TlsHandshake};
 pub use identity::{Identity, PeerIdentity};
 pub use pairing::{
-    EXPORTER_LABEL, PAIR_ALPN, PairConfig, PairDial, ResponderTrust, announce, pair_accept,
-    pair_accept_from, pair_client_config, pair_dial, pair_server_config, random,
+    EXPORTER_LABEL, PAIR_ALPN, PairConfig, PairDial, ReadTimeout, ResponderTrust, announce,
+    pair_accept, pair_accept_from, pair_client_config, pair_dial, pair_server_config, random,
     receive_announcement,
 };
 pub use policy::{POLICY_VERSION, Policy, TlsVersion, Weakening};

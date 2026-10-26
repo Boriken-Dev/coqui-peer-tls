@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   admit a pending successor and promote it once its handshake signature verifies (or refuse it
   until approved under `RotationOptions::require_approval`); `Identity::renew_before`.
 - `PeerError::Pairing` and `PeerError::pair_refusal`.
+- `PairConfig::timeout` (default 15 minutes) bounds each side's whole pairing exchange; the
+  responder's reads also stop at its deadline and tell the joiner `Expired`. Blocking pairing
+  takes a `ReadTimeout` stream (implemented for `TcpStream`). Frames grow as they arrive.
 - A pairing channel is `verified` only when the joiner pinned the inviter or verified the
   responder by `Verified` trust; store-backed pins record a successor's proof once its
   handshake signature verifies, and under `require_approval` refuse it until the caller

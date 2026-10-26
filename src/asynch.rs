@@ -9,7 +9,7 @@ use rustls::{ClientConfig, ServerConfig};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::{TlsConnector, client, server};
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use coqui_peer::pair::{
     Paired, Pairing, PairingDesk, PairingJoiner, PairingResponder, Rotation, Shown,
@@ -18,7 +18,7 @@ use coqui_peer::{PeerId, TrustStore};
 
 use crate::error::PeerError;
 use crate::identity::{Identity, PeerIdentity};
-use crate::pairing::{PairConfig, ResponderTrust};
+use crate::pairing::{PairConfig, ResponderTrust, ends, left, sooner};
 use crate::source::with_source;
 use crate::stream::{PeerAddr, default_name, identity_of};
 
@@ -194,13 +194,29 @@ async fn read_frame<S: AsyncRead + Unpin>(io: &mut S) -> std::io::Result<Vec<u8>
     use tokio::io::AsyncReadExt;
     let mut length = [0u8; 4];
     io.read_exact(&mut length).await?;
-    let length = usize::try_from(u32::from_be_bytes(length)).unwrap_or(usize::MAX);
-    if length > coqui_peer::MAX_MESSAGE {
+    let length = u32::from_be_bytes(length);
+    if usize::try_from(length).map_or(true, |length| length > coqui_peer::MAX_MESSAGE) {
         return Err(std::io::ErrorKind::InvalidData.into());
     }
-    let mut message = vec![0u8; length];
-    io.read_exact(&mut message).await?;
+    // The buffer grows as bytes arrive, so a declared length costs nothing until it is sent.
+    let mut message = Vec::new();
+    AsyncReadExt::take(&mut *io, u64::from(length))
+        .read_to_end(&mut message)
+        .await?;
+    if message.len() != length as usize {
+        return Err(std::io::ErrorKind::UnexpectedEof.into());
+    }
     Ok(message)
+}
+
+/// `work`, given at most `wait` (forever when `None`); `TimedOut` when it took longer.
+async fn within<F: Future>(wait: Option<Duration>, work: F) -> std::io::Result<F::Output> {
+    match wait {
+        Some(wait) => tokio::time::timeout(wait, work)
+            .await
+            .map_err(|_| std::io::ErrorKind::TimedOut.into()),
+        None => Ok(work.await),
+    }
 }
 
 /// The asynchronous [`PairDial`](crate::PairDial).
@@ -208,6 +224,7 @@ async fn read_frame<S: AsyncRead + Unpin>(io: &mut S) -> std::io::Result<Vec<u8>
 pub struct PairDial<S> {
     tls: client::TlsStream<S>,
     joiner: PairingJoiner,
+    until: Option<Instant>,
 }
 
 impl<S: AsyncRead + AsyncWrite + Unpin> PairDial<S> {
@@ -223,7 +240,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> PairDial<S> {
     ///
     /// As [`crate::PairDial::finish`].
     pub async fn finish(mut self, store: &TrustStore) -> Result<Paired, PeerError> {
-        join_until(&mut self.tls, &mut self.joiner, |_| false).await?;
+        join_until(&mut self.tls, &mut self.joiner, self.until, |_| false).await?;
         let paired = self.joiner.finish()?;
         match store.accept_key(&paired.peer) {
             Ok(_) | Err(coqui_peer::Error::AlreadyAccepted) => {}
@@ -237,6 +254,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> PairDial<S> {
 async fn join_until<S: AsyncRead + AsyncWrite + Unpin>(
     tls: &mut client::TlsStream<S>,
     joiner: &mut PairingJoiner,
+    until: Option<Instant>,
     stop: impl Fn(&PairingJoiner) -> bool,
 ) -> Result<(), PeerError> {
     loop {
@@ -246,7 +264,10 @@ async fn join_until<S: AsyncRead + AsyncWrite + Unpin>(
         if joiner.is_complete() || stop(joiner) {
             return Ok(());
         }
-        let message = read_frame(tls).await.map_err(PeerError::Io)?;
+        let message = within(left(until), read_frame(tls))
+            .await
+            .and_then(|read| read)
+            .map_err(PeerError::Io)?;
         if let Err(error) = joiner.receive(&message) {
             while let Some(message) = joiner.transmit() {
                 let _ = write_frame(tls, &message).await;
@@ -271,9 +292,12 @@ pub async fn pair_dial<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    let until = ends(config.timeout);
     let (client, name) = crate::pair_client_config(identity, &pairing, responder, config)?;
     let verified = crate::pairing::responder_verified(&pairing, responder);
-    let (tls, peer) = dial_named(Arc::new(client), name, stream).await?;
+    let (tls, peer) = within(left(until), dial_named(Arc::new(client), name, stream))
+        .await
+        .map_err(PeerError::Io)??;
     let connection = tls.get_ref().1;
     let exporter = connection
         .export_keying_material([0u8; 32], crate::EXPORTER_LABEL, Some(&[]))
@@ -289,8 +313,9 @@ where
     let mut dial = PairDial {
         tls,
         joiner: pairing.join(channel)?,
+        until,
     };
-    join_until(&mut dial.tls, &mut dial.joiner, |joiner| {
+    join_until(&mut dial.tls, &mut dial.joiner, until, |joiner| {
         joiner.shown().is_some()
     })
     .await?;
@@ -347,26 +372,45 @@ async fn pair_accept_as<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
+    let until = ends(config.timeout);
     let server = Arc::new(crate::pair_server_config(identity, config)?);
-    let (tls, _) = accept_as(server, stream, source).await?;
-    pair_respond(tls, source, identity, store, desk, config).await
+    let (tls, _) = within(left(until), accept_as(server, stream, source))
+        .await
+        .map_err(PeerError::Io)??;
+    respond_on(tls, source, identity, store, desk, config, until).await
 }
 
 /// Runs the responder's side of pairing on a connection already accepted with
 /// [`pair_server_config`](crate::pair_server_config) (for example chosen by
 /// [`accept_with`] for a client that offered the pairing ALPN), as `identity`, for a client
-/// from `source`.
+/// from `source`. The exchange waits at most [`PairConfig::timeout`] from this call.
 ///
 /// # Errors
 ///
 /// As [`crate::pair_accept`].
 pub async fn pair_respond<S>(
+    tls: server::TlsStream<S>,
+    source: Option<SocketAddr>,
+    identity: &Identity,
+    store: &TrustStore,
+    desk: &PairingDesk,
+    config: &PairConfig,
+) -> Result<Paired, PeerError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let until = ends(config.timeout);
+    respond_on(tls, source, identity, store, desk, config, until).await
+}
+
+async fn respond_on<S>(
     mut tls: server::TlsStream<S>,
     source: Option<SocketAddr>,
     identity: &Identity,
     store: &TrustStore,
     desk: &PairingDesk,
     config: &PairConfig,
+    until: Option<Instant>,
 ) -> Result<Paired, PeerError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -379,7 +423,7 @@ where
     let channel =
         crate::pairing::channel(connection, exporter, identity, &peer, false, &config.alpn)?;
     let mut responder = PairingResponder::new(channel, store, desk, source);
-    let result = respond(&mut tls, &mut responder, desk).await;
+    let result = respond(&mut tls, &mut responder, desk, until).await;
     let _ = tokio::io::AsyncWriteExt::shutdown(&mut tls).await;
     result?;
     Ok(responder.finish()?)
@@ -389,6 +433,7 @@ async fn respond<S: AsyncRead + AsyncWrite + Unpin>(
     tls: &mut server::TlsStream<S>,
     responder: &mut PairingResponder,
     desk: &PairingDesk,
+    until: Option<Instant>,
 ) -> Result<(), PeerError> {
     loop {
         while let Some(message) = responder.transmit() {
@@ -409,8 +454,17 @@ async fn respond<S: AsyncRead + AsyncWrite + Unpin>(
                 responder.resume(decision)
             }
             None => {
-                let message = read_frame(tls).await.map_err(PeerError::Io)?;
-                responder.receive(&message)
+                let wait = sooner(left(until), responder.time_left());
+                match within(wait, read_frame(tls)).await {
+                    Ok(Ok(message)) => responder.receive(&message),
+                    Ok(Err(error)) => return Err(PeerError::Io(error)),
+                    // Past the responder's deadline the joiner is told; past the transport's
+                    // own timeout the connection just ends.
+                    Err(error) => match responder.check_deadline() {
+                        Err(expired) => Err(expired),
+                        Ok(()) => return Err(PeerError::Io(error)),
+                    },
+                }
             }
         };
         if let Err(error) = step {
