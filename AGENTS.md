@@ -87,7 +87,8 @@ prove its key. Names are not checked on the pinned path.
   `tokio::net::TcpStream`; any other stream uses `accept_from(config, io, SocketAddr)` /
   `asynch::accept_from` / `asynch::accept_with_from`. `with_source(Option<SocketAddr>, f)`
   scopes the address for a host that drives rustls itself; outside it, entries have no source.
-  Caps are per source IP address; the full `SocketAddr` is stored.
+  Caps are per source: an IPv4 address, or an IPv6 /64 (`TrustStore::with_ipv6_prefix`); the
+  full `SocketAddr` is stored.
 - A pin whose digest the policy does not list is `PeerError::Policy` when the verifier is built.
 - A refusal is `rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Arc<Refusal>)))`
   (alert `certificate_unknown`); a pinned certificate outside its dates is rustls's `Expired` /
