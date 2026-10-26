@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `weakened()`.
 - `Refusal` (`NotPinned`, `NotAccepted`, `NotTrusted`, `ChainWhenPinned`), with
   `Refusal::from_rustls` and `PeerError::refusal`, to tell why this side refused a certificate.
+- Server TLS, where the server proves itself by certificate and the client presents none:
+  `server_config_without_client_auth[_with]` (the policy handling of `server_config_with`, no
+  client certificate requested, and a `client_auth = none` entry, `CLIENT_AUTH_SETTING`, in
+  `Built::weakened`), `client_config_without_identity[_with]` (the server verified as by
+  `client_config_with`) and `TlsHandshake::finish_unauthenticated`, which finishes with the
+  connection and the peer only when it sent a certificate. The application authenticates the
+  client inside the channel. Session resumption stays off unless the policy allows it.
+- `Identity::from_pem_chain` and `Identity::intermediates_der`: an identity that presents a
+  CA-issued leaf with its intermediates; the fingerprint is the leaf's, the key must be the
+  leaf's, and a pinning peer still refuses the chain unless `allow_chain_when_pinned`.
+  `to_pem` writes the intermediates after the leaf.
+- `Identity::generate_valid_for(Duration)` and `Identity::generate_with(not_before, not_after)`
+  (feature `generate`, which now also takes `time`): short-lived self-signed identities, for
+  example for WebTransport's `serverCertificateHashes` (at most 14 days).
 
 ### Fixed
 

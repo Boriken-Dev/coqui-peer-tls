@@ -8,7 +8,7 @@ package and is self-contained. Development documentation lives with the source a
 | Feature | Adds | Default |
 | --- | --- | --- |
 | `tls12` | rustls `tls12` (needed by `Policy::compatible()` and `legacy()`) | off |
-| `generate` | `rcgen`: `Identity::generate`, `Identity::open_or_create` | off |
+| `generate` | `rcgen`, `time`: `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
 | `ca` | `x509-parser`, `globset`: `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio`, `tokio-rustls`: module `asynch` | off |
 | `serde` | `serde`, `coqui-peer/serde`: text form of `Policy`, `Fingerprint` as text; the consumer picks the format | off |
@@ -38,17 +38,37 @@ policy lets a pin use a digest is a `Policy` matter.
 pub struct Identity;                       // Clone; Debug shows only the fingerprint
 impl Identity {
     pub fn from_pem(text: &str) -> Result<Identity, PeerError>;       // exactly one certificate + its key
-    pub fn to_pem(&self) -> Result<String, PeerError>;                // certificate, then PKCS#8 key
-    pub fn read(path: &Path) -> Result<Option<Identity>, PeerError>;  // None when absent
+    pub fn from_pem_chain(text: &str) -> Result<Identity, PeerError>; // leaf, its intermediates in order, the leaf's key
+    pub fn to_pem(&self) -> Result<String, PeerError>;                // certificate, intermediates, then PKCS#8 key
+    pub fn read(path: &Path) -> Result<Option<Identity>, PeerError>;  // None when absent; one certificate
     pub fn write_new(&self, path: &Path) -> Result<(), PeerError>;    // never replaces; 0600; creates parents
-    pub fn fingerprint(&self) -> Fingerprint;
-    pub fn certificate_der(&self) -> &[u8];
+    pub fn fingerprint(&self) -> Fingerprint;                         // the leaf's
+    pub fn certificate_der(&self) -> &[u8];                           // the leaf
+    pub fn intermediates_der(&self) -> impl ExactSizeIterator<Item = &[u8]>;   // empty unless from_pem_chain
     pub fn peer_identity(&self) -> PeerIdentity;
-    pub fn generate() -> Result<Identity, PeerError>;                 // feature generate: ECDSA P-256, CN "coqui-peer"
-    pub fn open_or_create(path: &Path) -> Result<Identity, PeerError>; // feature generate
+    // feature generate: self-signed ECDSA P-256, CN "coqui-peer", no SAN
+    pub fn generate() -> Result<Identity, PeerError>;                 // rcgen's default validity (decades)
+    pub fn generate_valid_for(validity: Duration) -> Result<Identity, PeerError>;           // from now
+    pub fn generate_with(not_before: SystemTime, not_after: SystemTime) -> Result<Identity, PeerError>;
+    pub fn open_or_create(path: &Path) -> Result<Identity, PeerError>;
 }
 pub struct PeerIdentity { pub fingerprint: Fingerprint, pub certificate: Vec<u8> }   // DER
 ```
+
+- **Chains.** `from_pem_chain` takes a CA-issued leaf with its intermediates (a web-PKI server a
+  browser reaches over `wss://`); every configuration built from the identity presents the
+  whole chain. The key must be the first certificate's, or `PeerError::Certificate`. The
+  fingerprint is the leaf's. A peer that pins it refuses the chain (`Refusal::ChainWhenPinned`)
+  unless its policy sets `allow_chain_when_pinned`; `AnyWithKeyProof` takes it. `from_pem`,
+  `read` and `open_or_create` still refuse a chain, so a chained identity written with
+  `write_new` is read back by passing the file's text to `from_pem_chain`.
+- **Short-lived identities.** `generate_valid_for(d)` is valid from now to now + `d`;
+  `generate_with` takes both ends. Times are truncated to whole seconds; a window under one
+  second, an end before the start, or a time before 1970 is `PeerError::Certificate`. Any
+  positive length is accepted. WebTransport's `serverCertificateHashes` accepts only a
+  certificate whose whole validity period is at most 14 days: pass at most
+  `Duration::from_secs(14 * 86_400)` and replace it before it expires; a peer whose clock runs
+  behind sees it as not yet valid until its start.
 
 ## Trust (`Trust`, `Pins`, `CaPolicy`)
 
@@ -144,7 +164,7 @@ impl Policy {
     pub fn supported_kx_groups() -> Vec<String>;
     pub fn deserialize_over<'de, D: Deserializer<'de>>(base: Policy, d: D) -> Result<Policy, D::Error>;  // feature serde
 }
-pub struct Weakening { pub setting: String, pub value: String, pub strict: String }
+pub struct Weakening { pub setting: String, pub value: String, pub strict: String }   // setting: a field, or "client_auth"
 pub const POLICY_VERSION: u32 = 1;
 ```
 
@@ -192,6 +212,12 @@ pub fn client_config(&Identity, &Trust, alpn: &[&[u8]]) -> Result<ClientConfig, 
 pub fn server_config(&Identity, &Trust, alpn: &[&[u8]]) -> Result<ServerConfig, PeerError>;
 pub fn client_config_with(&Identity, &Trust, &[&[u8]], &Policy) -> Result<Built<ClientConfig>, PeerError>;
 pub fn server_config_with(&Identity, &Trust, &[&[u8]], &Policy) -> Result<Built<ServerConfig>, PeerError>;
+// server TLS: the server presents a certificate, the client none
+pub fn server_config_without_client_auth(&Identity, alpn: &[&[u8]]) -> Result<ServerConfig, PeerError>;
+pub fn server_config_without_client_auth_with(&Identity, &[&[u8]], &Policy) -> Result<Built<ServerConfig>, PeerError>;
+pub fn client_config_without_identity(&Trust, alpn: &[&[u8]]) -> Result<ClientConfig, PeerError>;
+pub fn client_config_without_identity_with(&Trust, &[&[u8]], &Policy) -> Result<Built<ClientConfig>, PeerError>;
+pub const CLIENT_AUTH_SETTING: &str = "client_auth";
 pub fn crypto_provider() -> Arc<CryptoProvider>;       // default ring provider
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
 pub fn dial<S: Read + Write>(Arc<ClientConfig>, S) -> Result<(StreamOwned<ClientConnection, S>, PeerIdentity), PeerError>;
@@ -212,6 +238,26 @@ returned `PeerIdentity` is verified. The server name sent is `SERVER_NAME`; trus
 fingerprint, never by name. `accept_with` chooses the server configuration from the
 ClientHello, for example by ALPN, so one port serves peers and other clients.
 
+### Server TLS
+
+The server proves itself by certificate; the client presents none and **must be
+authenticated by the application inside the encrypted channel** (a key proof, a token) before
+it is trusted. For browsers (`wss://`, WebTransport), which cannot present a chosen client
+certificate, and hosts without an identity of their own.
+
+- `server_config_without_client_auth*` handle versions, suites, groups, ALPN and resumption as
+  `server_config_with` does (resumption off unless `allow_resumption`) and request no client
+  certificate. `Built::weakened` always ends with `Weakening { setting: "client_auth" (=
+  CLIENT_AUTH_SETTING), value: "none", strict: "certificate" }`, after the policy's own.
+- `client_config_without_identity*` verify the server by `Trust` exactly as `client_config*`
+  (pins or a store; `AnyWithKeyProof`; CA is `Unsupported`) and present no certificate. A
+  mutual-TLS server refuses such a client. Its `weakened` is the policy's only.
+- The server finishes with `TlsHandshake::finish_unauthenticated` (below), or any rustls /
+  tokio-rustls acceptor: there is no client verifier, so `with_source` has nothing to scope.
+  `accept`, `accept_from` and the `asynch` accepts return a verified client, so with this
+  configuration they fail with `PeerError::Certificate` after the handshake. `dial` and
+  `TlsHandshake::finish` on the client side work as in mutual TLS.
+
 ## The method (`Tls`, `TlsHandshake`)
 
 ```rust
@@ -219,6 +265,9 @@ pub struct Tls;      // Clone, Default
 impl Tls { pub fn new() -> Tls; pub fn with_client(self, Arc<ClientConfig>) -> Tls; pub fn with_server(self, Arc<ServerConfig>) -> Tls; }
 impl coqui_peer::Method for Tls { /* name() = "tls"; initiate(); respond(source: Option<SocketAddr>) */ }
 pub struct TlsHandshake;   // client(Arc<ClientConfig>), server(Arc<ServerConfig>, Option<SocketAddr>)
+impl TlsHandshake {
+    pub fn finish_unauthenticated(self) -> Result<(rustls::Connection, Option<PeerIdentity>), PeerError>;
+}
 impl coqui_peer::Handshake for TlsHandshake { /* Output = rustls::Connection, Framing::Stream */ }
 ```
 
@@ -229,6 +278,13 @@ handshake bytes. The server handshake scopes its `source` around each `receive`,
 entries carry the address exactly as `accept` does. A role without a configuration is
 `PeerError::Unsupported`. Run it with `coqui_peer::drive_stream` / `drive_messages` (the
 latter needs a reliable, ordered message channel) or the `tokio` forms.
+
+`finish` needs a peer certificate (`PeerError::Certificate` without one), so a server-TLS server
+drives its handshake with `coqui_peer::complete_stream` / `complete_messages` (or the
+`receive`/`transmit` loop itself) and calls `finish_unauthenticated`: the connection, and
+`Some` verified peer only when the client sent a certificate. With a configuration from
+`server_config_without_client_auth*` it is always `None`, meaning not authenticated. Before
+completion it is `PeerError::Tls`.
 
 ## Errors
 
@@ -256,7 +312,9 @@ material or a path.
 For peers in other languages. All files are UTF-8 with LF line endings.
 
 - **Identity file** — one PEM file: a `CERTIFICATE` block, then a PKCS#8 `PRIVATE KEY` block;
-  exactly one certificate (a chain is refused); 64-character base64 lines. Mode `0600`.
+  exactly one certificate (a chain is refused); 64-character base64 lines. Mode `0600`. The
+  text of a chained identity (`to_pem`) adds the intermediates' `CERTIFICATE` blocks after the
+  leaf, before the key, and reads back with `from_pem_chain` only.
 - **Fingerprint** — SHA-256 of the certificate's DER encoding. Canonical text
   `sha256:<64 lowercase hex>` (`openssl x509 -outform DER | sha256sum` gives the hex).
   Grouped base32 (RFC 4648 alphabet, no padding, 52 characters, groups of four joined by `-`)
@@ -277,4 +335,6 @@ of `Policy` is still version 1).
 
 - TLS 1.0 and 1.1 and non-AEAD suites cannot be offered; asking is `PeerError::Policy`.
 - A CA policy applies to servers only. Pairing (waiting entries) is a server-side feature.
+- A server-TLS server has no client verifier: no pins, no CA, no waiting entries. A client
+  pinning its server works the same in both modes.
 - `Fingerprint` equality is constant time; compare through it, not through `to_string()`.
