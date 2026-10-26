@@ -77,8 +77,13 @@ and change any public field. `weakened()` lists, as data, every setting looser t
 | `pin_digests` | sha256, sha384, sha512 | same | plus sha1 |
 | `check_validity` | true | true | true |
 | `allow_chain_when_pinned` | false | false | false |
+| `allow_resumption` | false | false | false |
 | `waiting_per_source` / `waiting_total` / `waiting_rerecord_secs` | 16 / 1000 / 60 | same | same |
 | `acl` | none | none | none |
+
+Session resumption is off in every preset: rustls does not check the peer's certificate again
+on a resumed session, so a peer removed from the trust store could reconnect on a session it
+held. `allow_resumption = true` turns it back on and is reported by `weakened()`.
 
 rustls offers TLS 1.2 and 1.3 only. TLS 1.0, 1.1 and non-AEAD suites cannot be offered by
 this crate, and asking for them is an error that lists what is supported. MD5 pins are never
@@ -107,6 +112,7 @@ kx_groups = ["X25519"]                          # optional
 pin_digests = ["sha256", "sha384", "sha512"]
 check_validity = true
 allow_chain_when_pinned = false
+allow_resumption = false
 waiting_per_source = 16
 waiting_total = 1000
 waiting_rerecord_secs = 60
@@ -132,6 +138,7 @@ a document over your own base policy. Committed examples for every preset are in
 | `Fingerprint`, `Digest` | Certificate hashes and their text forms. |
 | `Trust`, `Pins`, `CaPolicy` | Whom to trust. |
 | `PeerClientVerifier`, `PeerServerVerifier` | The rustls verifiers as values. |
+| `Refusal`, `PeerError::refusal` | Why this side refused a peer's certificate, as a value. |
 | `TrustStore`, `WaitingLimits` | Accepted and waiting peers as files. |
 | `Policy`, `Weakening` | What is allowed, and what is looser than strict. |
 | `client_config(_with)`, `server_config(_with)`, `Built` | TLS configurations, ALPN as a parameter. |

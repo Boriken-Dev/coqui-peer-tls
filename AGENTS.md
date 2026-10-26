@@ -89,6 +89,13 @@ prove its key. Names are not checked on the pinned path.
   scopes the address for a host that drives rustls itself; outside it, entries have no source.
   Caps are per source IP address; the full `SocketAddr` is stored.
 - A pin whose digest the policy does not list is `PeerError::Policy` when the verifier is built.
+- A refusal is `rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Arc<Refusal>)))`
+  (alert `certificate_unknown`); a pinned certificate outside its dates is rustls's `Expired` /
+  `NotValidYet`, one whose dates cannot be read `BadEncoding`. See Errors.
+- The verifiers are not called on a resumed session. The configurations built here turn
+  resumption off (see Policy); a stack that takes only the verifiers must turn it off itself
+  (server `session_storage = NoServerSessionStorage`, `send_tls13_tickets = 0`; client
+  `resumption = Resumption::disabled()`), or a peer that lost trust can resume.
 
 ## TrustStore (from `coqui-peer`) and certificates
 
@@ -119,6 +126,7 @@ pub struct Policy {
     pub pin_digests: Vec<Digest>,
     pub check_validity: bool,
     pub allow_chain_when_pinned: bool,
+    pub allow_resumption: bool,                // a resumed session skips the verifiers
     pub waiting_per_source: usize, pub waiting_total: usize, pub waiting_rerecord_secs: u64,
     pub acl: Option<coqui_net_acl::Acl>,       // feature acl
 }
@@ -145,14 +153,21 @@ pub const POLICY_VERSION: u32 = 1;
 | `pin_digests` | sha256, sha384, sha512 | same | plus sha1 |
 | `check_validity` | true | true | true |
 | `allow_chain_when_pinned` | false | false | false |
+| `allow_resumption` | false | false | false |
 | `waiting_per_source`, `waiting_total`, `waiting_rerecord_secs` | 16, 1000, 60 | same | same |
 | `cipher_suites`, `kx_groups`, `acl` | none | none | none |
 
 `crypto_provider` narrows the ring provider to the policy's versions, suites and groups; an
 unknown name, or a version left with no suite, is `PeerError::Policy` whose message lists the
 supported names. `weakened` reports `tls_versions` including 1.2, `pin_digests` beyond
-sha256/384/512, `check_validity` false, `allow_chain_when_pinned` true, larger waiting caps or
-a shorter rerecord time, and an ACL with a `permit` default.
+sha256/384/512, `check_validity` false, `allow_chain_when_pinned` true, `allow_resumption`
+true, larger waiting caps or a shorter rerecord time, and an ACL with a `permit` default.
+
+`allow_resumption` false (every preset) builds configurations with resumption off at both ends:
+the server keeps no session cache and sends no TLS 1.3 tickets, the client keeps no sessions, so
+every connection runs the verifiers and a peer removed from the store or no longer pinned is
+refused at its next connection. True keeps rustls's defaults (a 256-session cache, two TLS 1.3
+tickets) and lets a peer that lost trust reconnect on a session it holds.
 
 ### Text form, version 1 (feature `serde`)
 
@@ -163,7 +178,7 @@ TOML or JSON object. Keys: `policy_version` (must be 1 when present), `profile` 
 preset name to start from; unknown names are errors; free text when read with
 `deserialize_over`), `tls_versions` (`"1.2"`, `"1.3"`), `cipher_suites`, `kx_groups`,
 `pin_digests` (`"sha256"`, `"sha384"`, `"sha512"`, `"sha1"`), `check_validity`,
-`allow_chain_when_pinned`, `waiting_per_source`, `waiting_total`, `waiting_rerecord_secs`, and
+`allow_chain_when_pinned`, `allow_resumption`, `waiting_per_source`, `waiting_total`, `waiting_rerecord_secs`, and
 `acl` (see `coqui-net-acl`). Unknown keys are errors; absent keys keep the preset. Writing
 always names every field. `tests/vectors/policy/{strict,compatible,legacy,acl}.{toml,json}`
 are byte-exact.
@@ -215,6 +230,25 @@ entries carry the address exactly as `accept` does. A role without a configurati
 latter needs a reliable, ordered message channel) or the `tokio` forms.
 
 ## Errors
+
+```rust
+#[non_exhaustive] pub enum PeerError { InvalidFingerprint, Certificate, Tls, WeakDigest, Policy(String),
+    TrustPattern, NotWaiting, AlreadyAccepted, Path, Unsupported, Io(io::Error) }
+impl PeerError { pub fn refusal(&self) -> Option<Refusal>; }
+#[non_exhaustive] pub enum Refusal {      // Copy, Eq, Hash, Display, std::error::Error
+    NotPinned,         // matches no fixed pin
+    NotAccepted,       // not accepted in the trust store (a store-backed server records it as waiting)
+    NotTrusted,        // no pin, and the CA policy does not trust it
+    ChainWhenPinned,   // a pinned peer sent a chain and allow_chain_when_pinned is false
+}
+impl Refusal { pub fn from_rustls(error: &rustls::Error) -> Option<Refusal>; }
+```
+
+A failed handshake in `dial`, `accept` and `asynch` is `PeerError::Io` wrapping the rustls error;
+`refusal()` digs the `Refusal` out of it (`TlsHandshake` errors too). Only the refusing side has
+one: the refused side sees the TLS alert, so its `refusal()` is `None`. A host driving rustls
+itself calls `Refusal::from_rustls`. `Display` of `PeerError` names the category only, never key
+material or a path.
 
 ## On-disk formats
 

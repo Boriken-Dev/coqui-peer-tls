@@ -11,9 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - `Tls` and `TlsHandshake` implement the sans-IO `coqui_peer::Method` and `Handshake`
   traits over rustls's own sans-IO connection. `dial`, `accept` and `asynch` are unchanged.
+- `Policy::allow_resumption` (false in every preset) and the `allow_resumption` key of the
+  policy text form (version 1). True keeps rustls's session resumption and is reported by
+  `weakened()`.
+- `Refusal` (`NotPinned`, `NotAccepted`, `NotTrusted`, `ChainWhenPinned`), with
+  `Refusal::from_rustls` and `PeerError::refusal`, to tell why this side refused a certificate.
+
+### Fixed
+
+- TLS session resumption is off at both ends of every configuration `client_config*` and
+  `server_config*` build: rustls did not call the certificate verifiers on a resumed session,
+  so a peer removed from the trust store or no longer pinned could reconnect on a session it
+  held. Set `Policy::allow_resumption` to keep resumption. A stack built around the verifiers
+  alone must turn resumption off itself.
 
 ### Changed
 
+- The verifiers refuse a certificate with
+  `rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Refusal)))` instead of
+  `rustls::Error::General(<text>)`, so the alert sent is `certificate_unknown`, no longer
+  `handshake_failure`; code matching the text should use `PeerError::refusal`. A pinned
+  certificate whose validity dates cannot be read is `CertificateError::BadEncoding`.
+- The policy text form always writes `allow_resumption`; a reader without the key refuses such
+  a document as an unknown key.
 - The method-independent parts moved to
   [Boriken-Dev/coqui-peer](https://github.com/Boriken-Dev/coqui-peer), which this crate now
   depends on by revision: `Fingerprint` is `coqui_peer::PeerId` (a type alias here, so pins
