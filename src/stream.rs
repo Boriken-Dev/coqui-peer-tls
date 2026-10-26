@@ -68,6 +68,12 @@ impl PeerAddr for TcpStream {
 /// handshake; when the trust is a store-backed pin set and the client proved it holds the
 /// certificate's key, it is recorded as waiting under the address of `io`.
 ///
+/// It returns a verified client, so it needs one: with a configuration from
+/// [`server_config_without_client_auth`](crate::server_config_without_client_auth) it fails
+/// with [`PeerError::Certificate`] after the handshake. Accept those with
+/// [`TlsHandshake::finish_unauthenticated`](crate::TlsHandshake::finish_unauthenticated), or
+/// with rustls's or tokio-rustls's own acceptor, which need nothing from this crate.
+///
 /// # Errors
 ///
 /// [`PeerError::Io`] when the handshake fails; [`PeerError::refusal`] says why this side

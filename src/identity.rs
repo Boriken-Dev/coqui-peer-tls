@@ -2,6 +2,8 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "generate")]
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustls::ServerConfig;
@@ -32,12 +34,19 @@ impl fmt::Debug for PeerIdentity {
     }
 }
 
-/// This side's self-issued certificate and its private key.
+/// This side's certificate and its private key, with the intermediates that issued the
+/// certificate when it has any.
+///
+/// A peer identity is one self-issued certificate ([`from_pem`](Identity::from_pem)). A server
+/// a browser reaches under web PKI presents a CA-issued certificate with its intermediates
+/// ([`from_pem_chain`](Identity::from_pem_chain)). The fingerprint is always the leaf
+/// certificate's.
 ///
 /// On disk it is one PEM file: the certificate block, then a PKCS#8 `PRIVATE KEY` block.
 pub struct Identity {
     fingerprint: Fingerprint,
     certificate: CertificateDer<'static>,
+    intermediates: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
 }
 
@@ -55,6 +64,7 @@ impl Clone for Identity {
         Self {
             fingerprint: self.fingerprint,
             certificate: self.certificate.clone(),
+            intermediates: self.intermediates.clone(),
             key: self.key.clone_key(),
         }
     }
@@ -72,24 +82,50 @@ impl Identity {
         if CertificateDer::pem_slice_iter(text.as_bytes()).count() != 1 {
             return Err(PeerError::Certificate);
         }
-        let certificate =
-            CertificateDer::from_pem_slice(text.as_bytes()).map_err(|_| PeerError::Certificate)?;
+        Self::from_pem_chain(text)
+    }
+
+    /// Reads a certificate, the intermediates that issued it and the leaf's private key from
+    /// PEM text: the leaf certificate first, then each issuer in order up to (not necessarily
+    /// including) the root, and one private key in any block position.
+    ///
+    /// A configuration built from it presents the whole chain. The fingerprint is the leaf's.
+    /// A peer that pins this identity refuses the chain unless its policy sets
+    /// [`allow_chain_when_pinned`](crate::Policy::allow_chain_when_pinned). One certificate
+    /// alone gives the same identity as [`from_pem`](Identity::from_pem).
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Certificate`] when there is no certificate or no key, either is malformed,
+    /// or the key is not the first certificate's.
+    pub fn from_pem_chain(text: &str) -> Result<Self, PeerError> {
+        let mut certificates = CertificateDer::pem_slice_iter(text.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| PeerError::Certificate)?;
+        if certificates.is_empty() {
+            return Err(PeerError::Certificate);
+        }
         let key =
             PrivateKeyDer::from_pem_slice(text.as_bytes()).map_err(|_| PeerError::Certificate)?;
+        // rustls refuses a key whose public key is not the first certificate's.
         ServerConfig::builder_with_provider(crypto_provider())
             .with_protocol_versions(&[&rustls::version::TLS13])
             .map_err(|_| PeerError::Tls)?
             .with_no_client_auth()
-            .with_single_cert(vec![certificate.clone()], key.clone_key())
+            .with_single_cert(certificates.clone(), key.clone_key())
             .map_err(|_| PeerError::Certificate)?;
+        let certificate = certificates.remove(0);
         Ok(Self {
             fingerprint: Fingerprint::of(certificate.as_ref()),
             certificate,
+            intermediates: certificates,
             key,
         })
     }
 
-    /// The identity as PEM text: the certificate, then the PKCS#8 private key.
+    /// The identity as PEM text: the certificate, its intermediates in order, then the PKCS#8
+    /// private key. Text with intermediates reads back with
+    /// [`from_pem_chain`](Identity::from_pem_chain) only.
     ///
     /// # Errors
     ///
@@ -98,14 +134,16 @@ impl Identity {
         let PrivateKeyDer::Pkcs8(key) = &self.key else {
             return Err(PeerError::Certificate);
         };
-        Ok(format!(
-            "{}{}",
-            encode_pem("CERTIFICATE", self.certificate.as_ref()),
-            encode_pem("PRIVATE KEY", key.secret_pkcs8_der())
-        ))
+        let mut pem = encode_pem("CERTIFICATE", self.certificate.as_ref());
+        for intermediate in &self.intermediates {
+            pem.push_str(&encode_pem("CERTIFICATE", intermediate.as_ref()));
+        }
+        pem.push_str(&encode_pem("PRIVATE KEY", key.secret_pkcs8_der()));
+        Ok(pem)
     }
 
-    /// Reads the identity file at `path`; `None` when it is absent.
+    /// Reads the identity file at `path`; `None` when it is absent. The file holds one
+    /// certificate; a chain is refused as by [`from_pem`](Identity::from_pem).
     ///
     /// # Errors
     ///
@@ -157,6 +195,12 @@ impl Identity {
         self.certificate.as_ref()
     }
 
+    /// The intermediates presented after the certificate, DER encoded, in order; none for an
+    /// identity read by [`from_pem`](Identity::from_pem) or generated.
+    pub fn intermediates_der(&self) -> impl ExactSizeIterator<Item = &[u8]> {
+        self.intermediates.iter().map(AsRef::as_ref)
+    }
+
     /// This identity as the value a remote peer sees after a handshake.
     pub fn peer_identity(&self) -> PeerIdentity {
         PeerIdentity {
@@ -165,8 +209,12 @@ impl Identity {
         }
     }
 
-    pub(crate) fn certificate(&self) -> CertificateDer<'static> {
-        self.certificate.clone()
+    /// The certificate followed by its intermediates, as a configuration presents them.
+    pub(crate) fn certificate_chain(&self) -> Vec<CertificateDer<'static>> {
+        let mut chain = Vec::with_capacity(1 + self.intermediates.len());
+        chain.push(self.certificate.clone());
+        chain.extend(self.intermediates.iter().cloned());
+        chain
     }
 
     pub(crate) fn key(&self) -> PrivateKeyDer<'static> {
@@ -182,12 +230,67 @@ impl Identity {
     ///
     /// [`PeerError::Certificate`] when key generation fails.
     pub fn generate() -> Result<Self, PeerError> {
-        let key = rcgen::KeyPair::generate().map_err(|_| PeerError::Certificate)?;
+        Self::generate_from(Self::parameters()?)
+    }
+
+    /// Creates a self-signed ECDSA P-256 identity valid from now for `validity`, without
+    /// writing it.
+    ///
+    /// For WebTransport's `serverCertificateHashes`, which accepts only a certificate whose
+    /// whole validity period is at most 14 days: pass at most `Duration::from_secs(14 * 86_400)`,
+    /// and replace the identity before it expires. A peer whose clock runs behind sees the
+    /// certificate as not yet valid; [`generate_with`](Identity::generate_with) can start the
+    /// period earlier, within the same 14 days.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Certificate`] when `validity` is under one second or out of range, or key
+    /// generation fails.
+    pub fn generate_valid_for(validity: Duration) -> Result<Self, PeerError> {
+        if validity < Duration::from_secs(1) {
+            return Err(PeerError::Certificate);
+        }
+        let now = SystemTime::now();
+        let not_after = now.checked_add(validity).ok_or(PeerError::Certificate)?;
+        Self::generate_with(now, not_after)
+    }
+
+    /// Creates a self-signed ECDSA P-256 identity valid from `not_before` to `not_after`,
+    /// without writing it. Certificates hold whole seconds: both are truncated to the second.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Certificate`] when `not_after` is not at least one second after
+    /// `not_before`, either is before 1970 or out of range, or key generation fails.
+    pub fn generate_with(not_before: SystemTime, not_after: SystemTime) -> Result<Self, PeerError> {
+        let seconds = |at: SystemTime| -> Result<time::OffsetDateTime, PeerError> {
+            let since = at
+                .duration_since(UNIX_EPOCH)
+                .map_err(|_| PeerError::Certificate)?;
+            let since = i64::try_from(since.as_secs()).map_err(|_| PeerError::Certificate)?;
+            time::OffsetDateTime::from_unix_timestamp(since).map_err(|_| PeerError::Certificate)
+        };
+        let (not_before, not_after) = (seconds(not_before)?, seconds(not_after)?);
+        if not_after <= not_before {
+            return Err(PeerError::Certificate);
+        }
+        let mut parameters = Self::parameters()?;
+        parameters.not_before = not_before;
+        parameters.not_after = not_after;
+        Self::generate_from(parameters)
+    }
+
+    fn parameters() -> Result<rcgen::CertificateParams, PeerError> {
         let mut parameters = rcgen::CertificateParams::new(Vec::<String>::new())
             .map_err(|_| PeerError::Certificate)?;
         parameters
             .distinguished_name
             .push(rcgen::DnType::CommonName, "coqui-peer");
+        Ok(parameters)
+    }
+
+    fn generate_from(parameters: rcgen::CertificateParams) -> Result<Self, PeerError> {
+        let key = rcgen::KeyPair::generate().map_err(|_| PeerError::Certificate)?;
         let certificate = parameters
             .self_signed(&key)
             .map_err(|_| PeerError::Certificate)?;
@@ -234,4 +337,61 @@ pub(crate) fn temporary_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(format!(".{}.{}.tmp", std::process::id(), nonce));
     path.with_file_name(name)
+}
+
+#[cfg(all(test, feature = "generate"))]
+mod tests {
+    use super::*;
+
+    const DAY: u64 = 86_400;
+
+    fn window(identity: &Identity) -> (i64, i64) {
+        crate::x509::validity(identity.certificate_der()).unwrap()
+    }
+
+    #[test]
+    fn a_short_lived_identity_has_the_requested_window() {
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let identity = Identity::generate_valid_for(Duration::from_secs(14 * DAY)).unwrap();
+        let after = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let (not_before, not_after) = window(&identity);
+        let not_before = u64::try_from(not_before).unwrap();
+        assert!((before..=after).contains(&not_before));
+        assert_eq!(u64::try_from(not_after).unwrap() - not_before, 14 * DAY);
+        assert_eq!(identity.intermediates_der().len(), 0);
+    }
+
+    #[test]
+    fn an_explicit_window_is_kept_to_the_second() {
+        let start = UNIX_EPOCH + Duration::from_secs(1_800_000_000) + Duration::from_millis(700);
+        let end = start + Duration::from_secs(3 * DAY);
+        let identity = Identity::generate_with(start, end).unwrap();
+        assert_eq!(
+            window(&identity),
+            (1_800_000_000, 1_800_000_000 + 3 * 86_400)
+        );
+    }
+
+    #[test]
+    fn an_empty_or_inverted_window_is_refused() {
+        assert!(matches!(
+            Identity::generate_valid_for(Duration::ZERO),
+            Err(PeerError::Certificate)
+        ));
+        assert!(matches!(
+            Identity::generate_valid_for(Duration::from_millis(999)),
+            Err(PeerError::Certificate)
+        ));
+        let now = SystemTime::now();
+        assert!(matches!(
+            Identity::generate_with(now, now - Duration::from_secs(60)),
+            Err(PeerError::Certificate)
+        ));
+    }
 }

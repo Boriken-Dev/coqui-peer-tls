@@ -8,6 +8,7 @@ use rustls::{ClientConfig, ClientConnection, Connection, ServerConfig, ServerCon
 
 use crate::certificate::certificate_key;
 use crate::error::PeerError;
+use crate::identity::PeerIdentity;
 use crate::source::with_source;
 use crate::stream::{SERVER_NAME, identity_of};
 
@@ -107,6 +108,31 @@ impl TlsHandshake {
             connection: connection.into(),
             source,
         })
+    }
+
+    /// Finishes a completed handshake whose peer may have presented no certificate: the
+    /// connection, and the peer's verified certificate when it sent one.
+    ///
+    /// A server built with [`server_config_without_client_auth`](crate::server_config_without_client_auth)
+    /// asks for none, so its peer is always `None` and [`Handshake::finish`], which needs a
+    /// peer, fails there. **`None` means the client is not authenticated**: the application
+    /// must authenticate it inside the connection before trusting it. Drive the handshake with
+    /// `coqui_peer::complete_stream` or `complete_messages`, then call this.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Tls`] when the handshake is not complete.
+    pub fn finish_unauthenticated(self) -> Result<(Connection, Option<PeerIdentity>), PeerError> {
+        if self.connection.is_handshaking() {
+            return Err(PeerError::Tls);
+        }
+        let peer = match self.connection.peer_certificates() {
+            Some(certificates) if !certificates.is_empty() => {
+                Some(identity_of(Some(certificates))?)
+            }
+            _ => None,
+        };
+        Ok((self.connection, peer))
     }
 }
 
