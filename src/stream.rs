@@ -32,7 +32,8 @@ pub(crate) fn identity_of(
 ///
 /// # Errors
 ///
-/// [`PeerError::Io`] when the handshake fails, including a refused peer certificate.
+/// [`PeerError::Io`] when the handshake fails, including a refused peer certificate;
+/// [`PeerError::refusal`] says why this side refused one.
 pub fn dial<S: Read + Write>(
     config: Arc<ClientConfig>,
     mut io: S,
@@ -69,7 +70,8 @@ impl PeerAddr for TcpStream {
 ///
 /// # Errors
 ///
-/// [`PeerError::Io`] when the handshake fails.
+/// [`PeerError::Io`] when the handshake fails; [`PeerError::refusal`] says why this side
+/// refused the peer certificate, when it did.
 pub fn accept<S: Read + Write + PeerAddr>(
     config: Arc<ServerConfig>,
     io: S,
@@ -82,7 +84,8 @@ pub fn accept<S: Read + Write + PeerAddr>(
 ///
 /// # Errors
 ///
-/// [`PeerError::Io`] when the handshake fails.
+/// [`PeerError::Io`] when the handshake fails; [`PeerError::refusal`] says why this side
+/// refused the peer certificate, when it did.
 pub fn accept_from<S: Read + Write>(
     config: Arc<ServerConfig>,
     io: S,

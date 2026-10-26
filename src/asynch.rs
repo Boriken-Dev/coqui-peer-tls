@@ -18,7 +18,8 @@ use crate::stream::{PeerAddr, SERVER_NAME, identity_of};
 ///
 /// # Errors
 ///
-/// [`PeerError::Io`] when the handshake fails, including a refused peer certificate.
+/// [`PeerError::Io`] when the handshake fails, including a refused peer certificate;
+/// [`PeerError::refusal`] says why this side refused one.
 pub async fn dial<S>(
     config: Arc<ClientConfig>,
     io: S,
@@ -55,7 +56,8 @@ async fn sourced<F: Future>(source: Option<SocketAddr>, future: F) -> F::Output 
 ///
 /// # Errors
 ///
-/// [`PeerError::Io`] when the handshake fails.
+/// [`PeerError::Io`] when the handshake fails; [`PeerError::refusal`] says why this side
+/// refused the peer certificate, when it did.
 pub async fn accept<S>(
     config: Arc<ServerConfig>,
     io: S,
@@ -71,7 +73,8 @@ where
 ///
 /// # Errors
 ///
-/// [`PeerError::Io`] when the handshake fails.
+/// [`PeerError::Io`] when the handshake fails; [`PeerError::refusal`] says why this side
+/// refused the peer certificate, when it did.
 pub async fn accept_from<S>(
     config: Arc<ServerConfig>,
     io: S,
@@ -103,7 +106,8 @@ where
 ///
 /// # Errors
 ///
-/// [`PeerError::Io`] when the hello cannot be read or the handshake fails.
+/// [`PeerError::Io`] when the hello cannot be read or the handshake fails;
+/// [`PeerError::refusal`] says why this side refused the peer certificate, when it did.
 pub async fn accept_with<S>(
     io: S,
     select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>,
@@ -119,7 +123,8 @@ where
 ///
 /// # Errors
 ///
-/// [`PeerError::Io`] when the hello cannot be read or the handshake fails.
+/// [`PeerError::Io`] when the hello cannot be read or the handshake fails;
+/// [`PeerError::refusal`] says why this side refused the peer certificate, when it did.
 pub async fn accept_with_from<S>(
     io: S,
     source: SocketAddr,
