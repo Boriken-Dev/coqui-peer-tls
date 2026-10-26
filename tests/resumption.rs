@@ -5,8 +5,9 @@
 use std::sync::Arc;
 
 use coqui_peer_tls::{
-    Identity, PeerError, Pins, Policy, TlsVersion, Trust, TrustStore, TrustStoreExt, asynch,
-    client_config_with, server_config_with,
+    CLIENT_AUTH_SETTING, Identity, PeerError, Pins, Policy, TlsVersion, Trust, TrustStore,
+    TrustStoreExt, asynch, client_config_with, client_config_without_identity_with,
+    server_config_with, server_config_without_client_auth_with,
 };
 use rustls::{ClientConfig, HandshakeKind, ServerConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -180,4 +181,80 @@ async fn resumption_is_an_opt_in_reported_as_a_weakening() {
     let (accepted, dialed) = link(&server_config, &client_config).await;
     assert_eq!(accepted.unwrap(), HandshakeKind::Resumed);
     assert_eq!(dialed.unwrap(), HandshakeKind::Resumed);
+}
+
+/// A handshake and an echo with a server that asks for no client certificate, accepted by
+/// tokio-rustls directly; the kind of handshake each side saw.
+async fn link_server_tls(
+    server: &Arc<ServerConfig>,
+    client: &Arc<ClientConfig>,
+) -> (HandshakeKind, HandshakeKind) {
+    let (near, far) = tokio::io::duplex(16384);
+    let acceptor = tokio_rustls::TlsAcceptor::from(server.clone());
+    let accepting = tokio::spawn(async move {
+        let mut stream = acceptor.accept(far).await.unwrap();
+        assert!(stream.get_ref().1.peer_certificates().is_none());
+        let mut ping = [0u8; 4];
+        stream.read_exact(&mut ping).await.unwrap();
+        stream.write_all(&ping).await.unwrap();
+        stream.flush().await.unwrap();
+        stream.get_ref().1.handshake_kind().unwrap()
+    });
+    let (mut stream, _) = asynch::dial(client.clone(), near).await.unwrap();
+    stream.write_all(b"ping").await.unwrap();
+    let mut pong = [0u8; 4];
+    stream.read_exact(&mut pong).await.unwrap();
+    let dialed = stream.get_ref().1.handshake_kind().unwrap();
+    (accepting.await.unwrap(), dialed)
+}
+
+/// Server TLS keeps resumption off under every preset and either version, and resumes only
+/// when the policy allows it, reported beside the missing client authentication.
+#[tokio::test]
+async fn server_tls_configurations_resume_only_when_allowed() {
+    let server = Identity::generate().unwrap();
+    let server_pin = Trust::Pinned(Pins::fixed([server.fingerprint()]));
+    let presets = [
+        Policy::strict(),
+        Policy::compatible(),
+        Policy::legacy(),
+        policy(TlsVersion::V1_2),
+    ];
+    for policy in presets {
+        assert!(!policy.allow_resumption);
+        let server_config = Arc::new(
+            server_config_without_client_auth_with(&server, &[ALPN], &policy)
+                .unwrap()
+                .config,
+        );
+        let client_config = Arc::new(
+            client_config_without_identity_with(&server_pin, &[ALPN], &policy)
+                .unwrap()
+                .config,
+        );
+        for _ in 0..2 {
+            let (accepted, dialed) = link_server_tls(&server_config, &client_config).await;
+            assert_eq!(accepted, HandshakeKind::Full, "{}", policy.name);
+            assert_eq!(dialed, HandshakeKind::Full, "{}", policy.name);
+        }
+    }
+
+    let mut policy = Policy::strict();
+    policy.allow_resumption = true;
+    let built = server_config_without_client_auth_with(&server, &[ALPN], &policy).unwrap();
+    let settings: Vec<&str> = built
+        .weakened
+        .iter()
+        .map(|weakening| weakening.setting.as_str())
+        .collect();
+    assert_eq!(settings, ["allow_resumption", CLIENT_AUTH_SETTING]);
+    let server_config = Arc::new(built.config);
+    let built = client_config_without_identity_with(&server_pin, &[ALPN], &policy).unwrap();
+    assert_eq!(built.weakened.len(), 1);
+    let client_config = Arc::new(built.config);
+    let (accepted, _) = link_server_tls(&server_config, &client_config).await;
+    assert_eq!(accepted, HandshakeKind::Full);
+    let (accepted, dialed) = link_server_tls(&server_config, &client_config).await;
+    assert_eq!(accepted, HandshakeKind::Resumed);
+    assert_eq!(dialed, HandshakeKind::Resumed);
 }
