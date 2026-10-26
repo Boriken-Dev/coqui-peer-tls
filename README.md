@@ -149,7 +149,8 @@ a document over your own base policy. Committed examples for every preset are in
 - A waiting entry is recorded only after the peer proves it holds the certificate's key, with
   pins alone or beside a CA policy. Each entry stores the address the handshake came from:
   `accept` takes it from a TCP stream, `accept_from` takes it for any other stream, and the
-  per-source caps (`waiting_per_source`, `waiting_rerecord_secs`) apply per source IP address.
+  per-source caps (`waiting_per_source`, `waiting_rerecord_secs`) apply per IPv4 address or
+  per IPv6 /64 (`TrustStore::with_ipv6_prefix`).
 - Not provided: a handshake probe (`Unknown | Online | Rejected | Offline`), a helper for
   reading and writing one connection from two threads, and QUIC with datagrams.
 - `coqui-net-acl` is its own crate, not part of this one: it needs no TLS and is used on
