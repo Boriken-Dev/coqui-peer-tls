@@ -1,9 +1,9 @@
-use std::fmt;
+use core::fmt;
+#[cfg(feature = "generate")]
+use core::time::Duration;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-#[cfg(feature = "generate")]
-use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustls::ServerConfig;
@@ -332,7 +332,7 @@ pub(crate) fn encode_pem(label: &str, der: &[u8]) -> String {
     let encoded = data_encoding::BASE64.encode(der);
     let mut pem = format!("-----BEGIN {label}-----\n");
     for chunk in encoded.as_bytes().chunks(64) {
-        pem.push_str(std::str::from_utf8(chunk).unwrap_or_default());
+        pem.push_str(core::str::from_utf8(chunk).unwrap_or_default());
         pem.push('\n');
     }
     pem.push_str(&format!("-----END {label}-----\n"));

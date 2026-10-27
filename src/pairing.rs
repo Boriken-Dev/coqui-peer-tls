@@ -1,10 +1,12 @@
 //! Pairing over TLS: the `coqui_peer::pair` exchange on a connection of its own, under a pairing
 //! ALPN, bound to the connection by its exporter; and key rotation over an authenticated one.
 
+use alloc::sync::Arc;
+use core::net::SocketAddr;
+use core::time::Duration;
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpStream};
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::net::TcpStream;
+use std::time::{Instant, SystemTime};
 
 use coqui_peer::pair::{
     Channel, Mode, Paired, Pairing, PairingDesk, PairingError, PairingJoiner, PairingResponder,
@@ -57,6 +59,7 @@ impl Default for PairConfig {
 
 /// How a joiner checks the responder's certificate on the pairing connection.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum ResponderTrust {
     /// Any certificate whose key the responder proves. Enough for a PIN, which authenticates
     /// the responder; the device flow refuses it unless [`Pairing::allow_unverified`].

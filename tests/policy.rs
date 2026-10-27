@@ -148,8 +148,10 @@ fn unknown_suites_groups_and_versions_are_clear_errors_that_list_what_is_support
     let Err(PeerError::Policy(message)) = policy.crypto_provider() else {
         panic!("an unknown suite must be an error");
     };
+    // The message names the position and lists what is supported; it does not quote the input.
     assert!(
-        message.contains("TLS_RSA_WITH_RC4_128_SHA")
+        message.contains("cipher_suites[0]")
+            && !message.contains("TLS_RSA_WITH_RC4_128_SHA")
             && message.contains("TLS13_AES_128_GCM_SHA256")
     );
     assert!(Policy::supported_cipher_suites().contains(&"TLS13_AES_256_GCM_SHA384".to_owned()));

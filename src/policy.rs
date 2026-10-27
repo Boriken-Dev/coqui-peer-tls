@@ -1,6 +1,6 @@
-use std::fmt;
-use std::str::FromStr;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::fmt;
+use core::str::FromStr;
 
 use rustls::SupportedProtocolVersion;
 use rustls::crypto::CryptoProvider;
@@ -14,6 +14,7 @@ pub const POLICY_VERSION: u32 = 1;
 /// A TLS protocol version. rustls offers 1.2 and 1.3 only: SSL 3, TLS 1.0 and 1.1 cannot be
 /// offered by this crate, and asking for them is an error, never ignored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
 pub enum TlsVersion {
     /// TLS 1.2, text `"1.2"`.
     V1_2,
@@ -44,12 +45,12 @@ impl FromStr for TlsVersion {
         match value.trim() {
             "1.2" => Ok(Self::V1_2),
             "1.3" => Ok(Self::V1_3),
-            "1.0" | "1.1" | "ssl3" | "SSL3" => Err(PeerError::Policy(format!(
-                "TLS {value} is not supported: rustls offers only TLS 1.2 and 1.3"
-            ))),
-            other => Err(PeerError::Policy(format!(
-                "unknown TLS version {other:?}; supported: \"1.2\", \"1.3\""
-            ))),
+            "1.0" | "1.1" | "ssl3" | "SSL3" => Err(PeerError::Policy(
+                "TLS before 1.2 is not supported: rustls offers only TLS 1.2 and 1.3".to_owned(),
+            )),
+            _ => Err(PeerError::Policy(
+                "unknown TLS version; supported: \"1.2\", \"1.3\"".to_owned(),
+            )),
         }
     }
 }
@@ -164,14 +165,18 @@ impl Policy {
     }
 
     /// The built-in preset called `name`: `strict`, `compatible` or `legacy`.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Policy`] for any other name.
     pub fn preset(name: &str) -> Result<Self, PeerError> {
         match name.trim() {
             "strict" => Ok(Self::strict()),
             "compatible" => Ok(Self::compatible()),
             "legacy" => Ok(Self::legacy()),
-            other => Err(PeerError::Policy(format!(
-                "unknown profile {other:?}; built in: strict, compatible, legacy"
-            ))),
+            _ => Err(PeerError::Policy(
+                "unknown profile; built in: strict, compatible, legacy".to_owned(),
+            )),
         }
     }
 }
@@ -277,7 +282,7 @@ impl Policy {
         WaitingLimits {
             per_source: self.waiting_per_source,
             total: self.waiting_total,
-            rerecord: std::time::Duration::from_secs(self.waiting_rerecord_secs),
+            rerecord: core::time::Duration::from_secs(self.waiting_rerecord_secs),
         }
     }
 
@@ -336,18 +341,18 @@ impl Policy {
             |group: &&'static dyn rustls::crypto::SupportedKxGroup| format!("{:?}", group.name());
         if let Some(wanted) = &self.cipher_suites {
             let known: Vec<String> = ring.cipher_suites.iter().map(suite_name).collect();
-            if let Some(unknown) = wanted.iter().find(|name| !known.contains(name)) {
+            if let Some(position) = wanted.iter().position(|name| !known.contains(name)) {
                 return Err(PeerError::Policy(format!(
-                    "unknown cipher suite {unknown:?}; supported: {}",
+                    "cipher_suites[{position}] is not a supported cipher suite; supported: {}",
                     known.join(", ")
                 )));
             }
         }
         if let Some(wanted) = &self.kx_groups {
             let known: Vec<String> = ring.kx_groups.iter().map(group_name).collect();
-            if let Some(unknown) = wanted.iter().find(|name| !known.contains(name)) {
+            if let Some(position) = wanted.iter().position(|name| !known.contains(name)) {
                 return Err(PeerError::Policy(format!(
-                    "unknown key-exchange group {unknown:?}; supported: {}",
+                    "kx_groups[{position}] is not a supported key-exchange group; supported: {}",
                     known.join(", ")
                 )));
             }
@@ -358,6 +363,7 @@ impl Policy {
             .filter(|suite| {
                 let version = match suite {
                     rustls::SupportedCipherSuite::Tls13(_) => TlsVersion::V1_3,
+                    // Without the `tls12` feature rustls has no TLS 1.2 variant to match.
                     #[allow(unreachable_patterns)]
                     _ => TlsVersion::V1_2,
                 };
@@ -372,6 +378,7 @@ impl Policy {
         for version in &self.tls_versions {
             let present = cipher_suites.iter().any(|suite| match suite {
                 rustls::SupportedCipherSuite::Tls13(_) => *version == TlsVersion::V1_3,
+                // Without the `tls12` feature rustls has no TLS 1.2 variant to match.
                 #[allow(unreachable_patterns)]
                 _ => *version == TlsVersion::V1_2,
             });
@@ -576,6 +583,11 @@ mod text {
         /// Reads a policy document over `base` instead of a built-in preset: the fields it
         /// names replace the base's, and the rest are kept. A consumer with its own default
         /// profile reads its configuration with this.
+        ///
+        /// # Errors
+        ///
+        /// The deserializer's error for an unknown key, a value of the wrong type or a
+        /// `policy_version` other than 1.
         pub fn deserialize_over<'de, D: Deserializer<'de>>(
             base: Policy,
             deserializer: D,

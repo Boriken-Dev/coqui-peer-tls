@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use alloc::sync::Arc;
+#[cfg(feature = "ca")]
+use core::time::Duration;
 #[cfg(feature = "ca")]
 use std::sync::{Mutex, PoisonError};
 #[cfg(feature = "ca")]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use rustls::DigitallySignedStruct;
 use rustls::DistinguishedName;
@@ -403,7 +405,7 @@ impl ServerCertVerifier for PeerServerVerifier {
 /// With a store-backed pin set, a certificate that is neither pinned nor trusted by the CA
 /// policy is not refused when it is presented: rustls calls
 /// [`verify_client_cert`](ClientCertVerifier::verify_client_cert) before the client's
-/// CertificateVerify signature, so the client has not yet shown it holds the key. The decision
+/// `CertificateVerify` signature, so the client has not yet shown it holds the key. The decision
 /// is deferred to the signature check, which records the certificate as waiting only once the
 /// signature verifies, and then refuses the handshake.
 #[derive(Debug)]

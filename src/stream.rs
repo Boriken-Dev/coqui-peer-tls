@@ -1,6 +1,7 @@
+use alloc::sync::Arc;
+use core::net::SocketAddr;
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpStream};
-use std::sync::Arc;
+use std::net::TcpStream;
 
 use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, StreamOwned};

@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 use std::io;
 
 use coqui_peer::pair::{PairRefusal, PairingError};
@@ -80,8 +80,8 @@ impl From<coqui_peer::Error> for PeerError {
     }
 }
 
-impl std::error::Error for PeerError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl core::error::Error for PeerError {
+    fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
         match self {
             Self::Io(error) => Some(error),
             Self::Pairing(error) => Some(error),
@@ -154,7 +154,7 @@ impl Refusal {
     /// The rustls error a verifier returns for this refusal.
     pub(crate) fn into_rustls(self) -> rustls::Error {
         rustls::Error::InvalidCertificate(rustls::CertificateError::Other(rustls::OtherError(
-            std::sync::Arc::new(self),
+            alloc::sync::Arc::new(self),
         )))
     }
 }
@@ -175,4 +175,4 @@ impl fmt::Display for Refusal {
     }
 }
 
-impl std::error::Error for Refusal {}
+impl core::error::Error for Refusal {}

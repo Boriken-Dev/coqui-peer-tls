@@ -1,6 +1,6 @@
+use alloc::sync::Arc;
+use core::net::SocketAddr;
 use std::io::Cursor;
-use std::net::SocketAddr;
-use std::sync::Arc;
 
 use coqui_peer::{Established, Framing, Handshake, Method};
 use rustls::pki_types::ServerName;
