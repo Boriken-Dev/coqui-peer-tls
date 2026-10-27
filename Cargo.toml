@@ -1,22 +1,25 @@
 [package]
 name = "coqui-peer-tls"
-version = "0.1.0"
+version = "0.0.0-alpha.0"
 description = "The TLS method of coqui-peer: mutual-TLS identity with pinned, CA and key-proof trust, policy profiles and encrypted streams"
 readme = "README.md"
 edition = "2024"
 rust-version = "1.89"
 license = "MPL-2.0"
 repository = "https://github.com/Boriken-Dev/coqui-peer-tls"
-publish = false
+homepage = "https://boriken-dev.github.io/coqui-peer-tls/"
+keywords = ["tls", "mtls", "rustls", "peer", "pinning"]
+categories = ["cryptography", "network-programming", "authentication"]
 exclude = [".*", "*.local.*"]
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
+default = []
 # TLS 1.2 support in rustls, needed by the `compatible` and `legacy` profiles. It adds only
 # code to rustls; without it a policy that asks for TLS 1.2 is a clear error.
-default = []
 tls12 = ["rustls/tls12", "tokio-rustls?/tls12"]
 # Generate self-signed identities (rcgen; `time`, which rcgen already uses, for validity dates).
 generate = ["dep:rcgen", "dep:time"]
@@ -38,21 +41,30 @@ platform-roots = ["dep:rustls-platform-verifier"]
 # family's crates are released together. The version is what a published package resolves;
 # the revision is the commit with that version, for building from git.
 coqui-peer = { version = "0.0.0-alpha.0", git = "https://github.com/Boriken-Dev/coqui-peer", rev = "2961de356caf2390cffedddf119d22eb403c14f1" }
+# TLS. Pre-1.0: rustls's current release line; the ring provider is passed explicitly.
 rustls = { version = "0.23.27", default-features = false, features = ["std", "ring"] }
 # The access control list inside a `Policy`, behind `acl`. Alpha, released with this crate.
 coqui-net-acl = { version = "0.0.0-alpha.0", git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "e0f31323bffeb6ff05c2c3e5c50a7d58e6aafd28", optional = true }
+# The text form of `Policy`, behind `serde`.
 serde = { version = "1", default-features = false, features = ["derive", "std"], optional = true }
-rcgen = { version = "0.14", optional = true }
+# Self-signed identities, behind `generate`. Pre-1.0: rcgen's and time's current release lines.
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"], optional = true }
 time = { version = "0.3.6", default-features = false, optional = true }
-x509-parser = { version = "0.18", optional = true }
-globset = { version = "0.4", optional = true }
+# CA trust, behind `ca`: certificate names and their globs. Pre-1.0: the current release lines.
+x509-parser = { version = "0.18", default-features = false, optional = true }
+globset = { version = "0.4", default-features = false, optional = true }
+# Async streams, behind `tokio`. Pre-1.0: tokio-rustls's release line for rustls 0.23.
 tokio = { version = "1", default-features = false, features = ["net", "io-util", "time"], optional = true }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
+# The operating system's verifier, behind `platform-roots`. Pre-1.0: its current release line.
 rustls-platform-verifier = { version = "0.7.1", default-features = false, optional = true }
 
 [dev-dependencies]
+# Temporary identity and store directories.
 tempfile = "3"
+# Certificate chains and CAs in tests.
 rcgen = "0.14"
+# The policy text form in tests.
 serde_json = "1"
 toml = "0.9"
 # Reads the extensions of generated certificates in tests.

@@ -6,7 +6,7 @@
 
 # Agent config and personal overrides, at any depth.
 .agents
-/CLAUDE*
+CLAUDE*
 .claude
 *.local.*
 
