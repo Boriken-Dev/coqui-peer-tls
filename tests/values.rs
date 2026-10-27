@@ -49,3 +49,11 @@ fn a_refused_policy_name_is_not_quoted_back() {
     let error = policy.crypto_provider().expect_err("not a group");
     assert!(!error.to_string().contains(secret), "{error}");
 }
+
+#[test]
+fn the_default_server_name_is_server_name() {
+    let expected = rustls::pki_types::ServerName::try_from(coqui_peer_tls::SERVER_NAME)
+        .expect("a DNS name")
+        .to_owned();
+    assert_eq!(coqui_peer_tls::default_server_name(), expected);
+}

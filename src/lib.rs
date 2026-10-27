@@ -90,7 +90,9 @@ pub use pairing::{
 pub use policy::{POLICY_VERSION, Policy, TlsVersion, Weakening};
 pub use roots::Roots;
 pub use source::{with_addresses, with_source};
-pub use stream::{PeerAddr, SERVER_NAME, accept, accept_at, accept_from, dial, dial_named};
+pub use stream::{
+    PeerAddr, SERVER_NAME, accept, accept_at, accept_from, default_server_name, dial, dial_named,
+};
 #[cfg(feature = "ca")]
 pub use trust::CaPolicy;
 pub use trust::{PeerClientVerifier, PeerServerVerifier, Pins, Trust};
