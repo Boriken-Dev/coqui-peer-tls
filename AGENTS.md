@@ -18,7 +18,7 @@ package and is self-contained. Development documentation lives with the source a
 
 This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sans-IO
 `Handshake`); its API header is in that crate. MSRV Rust 1.89. A default build depends on
-`coqui-peer`, `rustls` (0.23.27 or later, ring provider) and `data-encoding`. No `unsafe` code. Nothing installs a process-wide crypto provider, and
+`coqui-peer` and `rustls` (0.23.27 or later, ring provider). No `unsafe` code. Nothing installs a process-wide crypto provider, and
 nothing reads a file or an environment variable unless the caller passes a path. TLS 1.3 is
 the default; TLS 1.2 only when a policy allows it.
 
