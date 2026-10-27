@@ -17,8 +17,10 @@ use coqui_peer::PeerId;
 /// verify with [`dial_named`].
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
 
-pub(crate) fn default_name() -> Result<ServerName<'static>, PeerError> {
-    ServerName::try_from(SERVER_NAME).map_err(|_| PeerError::Tls)
+/// [`SERVER_NAME`] as the name rustls takes, for a host that dials with a connector of its own
+/// (rustls, tokio-rustls, quinn) and trusts by pins.
+pub fn default_server_name() -> ServerName<'static> {
+    ServerName::try_from(SERVER_NAME).expect("SERVER_NAME is a valid DNS name")
 }
 
 pub(crate) fn identity_of(
@@ -46,7 +48,7 @@ pub fn dial<S: Read + Write>(
     config: Arc<ClientConfig>,
     io: S,
 ) -> Result<(StreamOwned<ClientConnection, S>, PeerIdentity), PeerError> {
-    dial_named(config, default_name()?, io)
+    dial_named(config, default_server_name(), io)
 }
 
 /// [`dial`] sending `name` as the server name: the host the client dialled, for a server

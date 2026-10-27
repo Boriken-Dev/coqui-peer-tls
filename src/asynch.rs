@@ -23,7 +23,7 @@ use crate::error::Refusal;
 use crate::identity::{Identity, PeerIdentity};
 use crate::pairing::{PairConfig, ResponderTrust, ends, left, sooner};
 use crate::source::scoped;
-use crate::stream::{PeerAddr, default_name, handshake_error, identity_of};
+use crate::stream::{PeerAddr, default_server_name, handshake_error, identity_of};
 
 /// Dials a peer over `io`, completing the handshake before returning. The server name sent
 /// is [`SERVER_NAME`](crate::SERVER_NAME); [`dial_named`] sends another.
@@ -39,7 +39,7 @@ pub async fn dial<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    dial_named(config, default_name()?, io).await
+    dial_named(config, default_server_name(), io).await
 }
 
 /// [`dial`] sending `name` as the server name, as [`crate::dial_named`] does.

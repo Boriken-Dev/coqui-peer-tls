@@ -313,6 +313,7 @@ pub fn client_config_with_verifier(Option<&Identity>, Arc<dyn ServerCertVerifier
 pub const CLIENT_AUTH_SETTING: &str = "client_auth";
 pub fn crypto_provider() -> Arc<CryptoProvider>;       // default ring provider
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
+pub fn default_server_name() -> ServerName<'static>;   // SERVER_NAME as rustls takes it
 pub fn dial<S: Read + Write>(Arc<ClientConfig>, S) -> Result<(StreamOwned<ClientConnection, S>, PeerIdentity), PeerError>;
 pub fn dial_named<S: Read + Write>(Arc<ClientConfig>, ServerName<'static>, S) -> Result<(StreamOwned<ClientConnection, S>, PeerIdentity), PeerError>;
 pub fn accept<S: Read + Write + PeerAddr>(Arc<ServerConfig>, S) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;

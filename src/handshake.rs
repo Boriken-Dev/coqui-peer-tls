@@ -11,7 +11,7 @@ use crate::error::PeerError;
 use crate::identity::PeerIdentity;
 use crate::source::scoped;
 use crate::stream::handshake_error;
-use crate::stream::{default_name, identity_of};
+use crate::stream::{default_server_name, identity_of};
 
 /// The TLS method: client and server configurations, each optional, that start handshakes.
 ///
@@ -89,7 +89,7 @@ impl TlsHandshake {
     ///
     /// [`PeerError::Tls`] when the connection cannot be created.
     pub fn client(config: Arc<ClientConfig>) -> Result<Self, PeerError> {
-        Self::client_named(config, default_name()?)
+        Self::client_named(config, default_server_name())
     }
 
     /// A handshake as the dialing side, sending `name` as the server name: the host dialled,
