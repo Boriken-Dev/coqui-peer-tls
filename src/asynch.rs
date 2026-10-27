@@ -12,6 +12,7 @@ use tokio_rustls::{TlsConnector, client, server};
 use core::time::Duration;
 use std::time::Instant;
 
+use coqui_peer::asynch::{read_frame, write_frame};
 use coqui_peer::pair::{
     Paired, Pairing, PairingDesk, PairingJoiner, PairingResponder, Rotation, Shown,
 };
@@ -179,35 +180,6 @@ where
         .map_err(PeerError::Io)?;
     let peer = identity_of(stream.get_ref().1.peer_certificates())?;
     Ok((stream, peer))
-}
-
-/// Writes one framed message, as [`announce`](crate::announce) and the pairing exchange do.
-async fn write_frame<S: AsyncWrite + Unpin>(io: &mut S, message: &[u8]) -> std::io::Result<()> {
-    use tokio::io::AsyncWriteExt;
-    let length = u32::try_from(message.len()).map_err(|_| std::io::ErrorKind::InvalidInput)?;
-    io.write_all(&length.to_be_bytes()).await?;
-    io.write_all(message).await?;
-    io.flush().await
-}
-
-/// Reads one framed message of at most [`coqui_peer::MAX_MESSAGE`] bytes.
-async fn read_frame<S: AsyncRead + Unpin>(io: &mut S) -> std::io::Result<Vec<u8>> {
-    use tokio::io::AsyncReadExt;
-    let mut length = [0u8; 4];
-    io.read_exact(&mut length).await?;
-    let length = u32::from_be_bytes(length);
-    if usize::try_from(length).map_or(true, |length| length > coqui_peer::MAX_MESSAGE) {
-        return Err(std::io::ErrorKind::InvalidData.into());
-    }
-    // The buffer grows as bytes arrive, so a declared length costs nothing until it is sent.
-    let mut message = Vec::new();
-    AsyncReadExt::take(&mut *io, u64::from(length))
-        .read_to_end(&mut message)
-        .await?;
-    if message.len() != length as usize {
-        return Err(std::io::ErrorKind::UnexpectedEof.into());
-    }
-    Ok(message)
 }
 
 /// `work`, given at most `wait` (forever when `None`); `TimedOut` when it took longer.

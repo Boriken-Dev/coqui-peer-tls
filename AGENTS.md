@@ -342,7 +342,7 @@ pub use coqui_peer::{Clock, Random, Invitation, InvitationOptions, RotationOptio
 pub const PAIR_ALPN: &[u8] = b"coqui-pair/1";
 pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
 pub struct PairConfig { pub policy: Policy, pub alpn: Vec<u8>, pub timeout: Duration }  // strict, PAIR_ALPN, 15 min
-pub trait ReadTimeout { fn set_read_timeout(&self, Option<Duration>) -> io::Result<()>; }  // TcpStream
+pub use coqui_peer::ReadTimeout;            // fn set_read_timeout(&self, Option<Duration>) -> io::Result<()>; TcpStream
 pub enum ResponderTrust { Unverified, Verified { trust: Box<Trust>, name: Option<ServerName<'static>> } }
 impl ResponderTrust { pub fn pinned(id: PeerId) -> ResponderTrust; }
 pub fn random() -> Random;                   // the TLS provider's secure random source
@@ -365,7 +365,8 @@ under `PairConfig::alpn` only; the app's own configurations stay as strict as th
 unknown certificate offering the app's ALPN is still refused. Both ends check that the pairing
 ALPN was negotiated (`PeerError::Tls` otherwise), then run the exchange with both certificates as
 `Channel::local`/`remote` and the exporter (`EXPORTER_LABEL`, 32 bytes, empty context) as the
-binding. Messages are framed with a four-byte big-endian length (at most `coqui_peer::MAX_MESSAGE`).
+binding. Messages are `coqui_peer` frames (`write_frame` / `read_frame`: a four-byte big-endian
+length, at most `coqui_peer::MAX_MESSAGE`).
 The connection carries only the exchange and then closes; both sides reconnect with the app's
 ALPN and their stores. One port can serve both: `asynch::accept_with` choosing
 `pair_server_config` when the ClientHello offers the pairing ALPN, then `asynch::pair_respond`.
