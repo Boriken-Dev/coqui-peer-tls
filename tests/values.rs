@@ -57,3 +57,32 @@ fn the_default_server_name_is_server_name() {
         .to_owned();
     assert_eq!(coqui_peer_tls::default_server_name(), expected);
 }
+
+#[test]
+fn a_policy_reports_weakenings_with_coqui_peers_type() {
+    let mut policy = Policy::strict();
+    policy.allow_resumption = true;
+    let weakened: Vec<coqui_peer::Weakening> = policy.weakened();
+    assert_eq!(
+        weakened,
+        [coqui_peer::Weakening::new(
+            "allow_resumption",
+            "true",
+            "false"
+        )]
+    );
+}
+
+#[cfg(feature = "acl")]
+#[test]
+fn an_acl_weakening_is_converted_field_for_field() {
+    let mut policy = Policy::strict();
+    policy.acl = Some(coqui_net_acl::Acl {
+        rules: Vec::new(),
+        default: coqui_net_acl::Action::Permit,
+    });
+    assert_eq!(
+        policy.weakened(),
+        [Weakening::new("acl.default", "permit", "deny")]
+    );
+}

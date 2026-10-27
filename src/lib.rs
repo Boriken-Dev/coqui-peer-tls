@@ -77,7 +77,7 @@ pub use coqui_net_acl as acl;
 pub use coqui_peer::pair;
 pub use coqui_peer::{
     Clock, Digest, Invitation, InvitationOptions, KeyMaterial, PeerId, Random, ReadTimeout,
-    RotationEvent, RotationOptions, TrustStore, WaitingEntry, WaitingLimits,
+    RotationEvent, RotationOptions, TrustStore, WaitingEntry, WaitingLimits, Weakening,
 };
 pub use error::{PeerError, Refusal};
 pub use handshake::{Tls, TlsHandshake};
@@ -87,7 +87,7 @@ pub use pairing::{
     pair_accept_from, pair_client_config, pair_dial, pair_server_config, random,
     receive_announcement,
 };
-pub use policy::{POLICY_VERSION, Policy, TlsVersion, Weakening};
+pub use policy::{POLICY_VERSION, Policy, TlsVersion};
 pub use roots::Roots;
 pub use source::{with_addresses, with_source};
 pub use stream::{

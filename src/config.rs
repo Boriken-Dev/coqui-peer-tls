@@ -10,8 +10,9 @@ use rustls::{ClientConfig, ServerConfig};
 
 use crate::error::PeerError;
 use crate::identity::Identity;
-use crate::policy::{Policy, Weakening};
+use crate::policy::Policy;
 use crate::trust::Trust;
+use coqui_peer::Weakening;
 
 /// The [`Weakening::setting`] a server configuration without client authentication reports.
 pub const CLIENT_AUTH_SETTING: &str = "client_auth";
