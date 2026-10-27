@@ -5,14 +5,13 @@ use alloc::sync::Arc;
 use core::net::SocketAddr;
 use core::time::Duration;
 use std::io::{self, Read, Write};
-use std::net::TcpStream;
 use std::time::{Instant, SystemTime};
 
 use coqui_peer::pair::{
     Channel, Mode, Paired, Pairing, PairingDesk, PairingError, PairingJoiner, PairingResponder,
     Rotation, Shown,
 };
-use coqui_peer::{KeyMaterial, MAX_MESSAGE, PeerId, Random, TrustStore};
+use coqui_peer::{KeyMaterial, PeerId, Random, ReadTimeout, TrustStore, read_frame, write_frame};
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, StreamOwned};
 
@@ -182,24 +181,6 @@ pub(crate) fn channel(
     })
 }
 
-/// A stream whose reads can be given a timeout, so a pairing exchange cannot hold a thread
-/// forever. Implemented for `TcpStream`. A stream that cannot time out may implement it as a
-/// no-op; its caller then bounds the exchange another way.
-pub trait ReadTimeout {
-    /// Sets the timeout of every read from now on; `None` waits forever.
-    ///
-    /// # Errors
-    ///
-    /// When the stream refuses the setting.
-    fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()>;
-}
-
-impl ReadTimeout for TcpStream {
-    fn set_read_timeout(&self, timeout: Option<Duration>) -> io::Result<()> {
-        TcpStream::set_read_timeout(self, timeout)
-    }
-}
-
 /// The instant `timeout` from now; `None` when it is too far to represent, which waits forever.
 pub(crate) fn ends(timeout: Duration) -> Option<Instant> {
     Instant::now().checked_add(timeout)
@@ -228,31 +209,6 @@ pub(crate) fn timed_out(error: &io::Error) -> bool {
         error.kind(),
         io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
     )
-}
-
-/// Writes one message, its length first as four big-endian bytes.
-pub(crate) fn write_frame(io: &mut impl Write, message: &[u8]) -> io::Result<()> {
-    let length = u32::try_from(message.len()).map_err(|_| io::ErrorKind::InvalidInput)?;
-    io.write_all(&length.to_be_bytes())?;
-    io.write_all(message)?;
-    io.flush()
-}
-
-/// Reads one message written by [`write_frame`], at most [`MAX_MESSAGE`] bytes. The buffer grows
-/// as bytes arrive, so a declared length costs nothing until it is sent.
-pub(crate) fn read_frame(io: &mut impl Read) -> io::Result<Vec<u8>> {
-    let mut length = [0u8; 4];
-    io.read_exact(&mut length)?;
-    let length = u32::from_be_bytes(length);
-    if usize::try_from(length).map_or(true, |length| length > MAX_MESSAGE) {
-        return Err(io::ErrorKind::InvalidData.into());
-    }
-    let mut message = Vec::new();
-    io.take(u64::from(length)).read_to_end(&mut message)?;
-    if message.len() != length as usize {
-        return Err(io::ErrorKind::UnexpectedEof.into());
-    }
-    Ok(message)
 }
 
 /// A joiner's pairing connection, past the point where it has something to show (or done).
