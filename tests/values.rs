@@ -96,3 +96,21 @@ fn a_policy_holds_its_waiting_limits_as_one_value() {
     let settings: Vec<String> = policy.weakened().into_iter().map(|w| w.setting).collect();
     assert_eq!(settings, ["waiting_total", "waiting_rerecord_secs"]);
 }
+
+#[cfg(feature = "ca")]
+#[test]
+fn a_ca_file_that_cannot_be_read_is_named_in_the_error() {
+    let directory = tempfile::tempdir().expect("a directory");
+    let path = directory.path().join("missing-ca.pem");
+    let trust = Trust::Ca(coqui_peer_tls::CaPolicy {
+        ca_file: path.clone(),
+        subject: Vec::new(),
+        san: Vec::new(),
+    });
+    let refused = trust.client_cert_verifier().expect_err("no file");
+    assert!(matches!(
+        &refused,
+        PeerError::CaFile { path: Some(named), certificate: None, read: Some(_) } if *named == path
+    ));
+    assert!(refused.to_string().contains("missing-ca.pem"), "{refused}");
+}

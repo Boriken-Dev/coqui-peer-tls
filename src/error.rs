@@ -3,8 +3,8 @@ use std::io;
 
 use coqui_peer::pair::{PairRefusal, PairingError};
 
-/// Sanitized failures while loading, storing or using a peer identity. No message holds
-/// key material or a path.
+/// Sanitized failures while loading, storing or using a peer identity. No message holds key
+/// material; only [`CaFile`](PeerError::CaFile) names a path, the file it could not use.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum PeerError {
@@ -35,6 +35,19 @@ pub enum PeerError {
     Pairing(PairingError),
     /// A filesystem or stream operation failed.
     Io(io::Error),
+    /// A file of certificate authorities ([`CaPolicy::ca_file`](crate::CaPolicy::ca_file),
+    /// [`Roots::bundle_file`](crate::Roots::bundle_file)) or a bundle given as text cannot be
+    /// used: unreadable, holding no certificate, or holding one that is malformed or cannot be
+    /// a trust anchor.
+    CaFile {
+        /// The file; `None` for a bundle given as text.
+        path: Option<std::path::PathBuf>,
+        /// The certificate that failed, by its position in the file from 0; `None` when the
+        /// file cannot be read or holds no certificate.
+        certificate: Option<usize>,
+        /// Why the file could not be read, when that is the failure.
+        read: Option<io::Error>,
+    },
 }
 
 impl fmt::Display for PeerError {
@@ -42,8 +55,28 @@ impl fmt::Display for PeerError {
         if let Self::Pairing(error) = self {
             return write!(formatter, "{error}");
         }
+        if let Self::CaFile {
+            path,
+            certificate,
+            read,
+        } = self
+        {
+            match path {
+                Some(path) => write!(formatter, "CA file {}: ", path.display())?,
+                None => formatter.write_str("CA bundle: ")?,
+            }
+            return match (certificate, read) {
+                (_, Some(_)) => formatter.write_str("cannot be read"),
+                (Some(index), None) => write!(
+                    formatter,
+                    "certificate {index} is malformed or cannot be a trust anchor"
+                ),
+                (None, None) => formatter.write_str("holds no certificate"),
+            };
+        }
         formatter.write_str(match self {
             Self::Pairing(_) => "pairing failed",
+            Self::CaFile { .. } => "CA file cannot be used",
             Self::InvalidId => "peer id is invalid",
             Self::Certificate => "certificate or private key is invalid",
             Self::Tls => "TLS configuration or handshake failed",
@@ -85,6 +118,9 @@ impl core::error::Error for PeerError {
         match self {
             Self::Io(error) => Some(error),
             Self::Pairing(error) => Some(error),
+            Self::CaFile {
+                read: Some(error), ..
+            } => Some(error),
             _ => None,
         }
     }

@@ -2,7 +2,7 @@
 
 use alloc::sync::Arc;
 use core::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::ServerCertVerifier;
@@ -78,9 +78,9 @@ impl Roots {
         &self,
         provider: &Arc<CryptoProvider>,
     ) -> Result<Arc<dyn ServerCertVerifier>, PeerError> {
-        let text = match &self.0 {
-            RootsKind::Pem(text) => text.as_bytes().to_vec(),
-            RootsKind::File(path) => std::fs::read(path).map_err(PeerError::Io)?,
+        let (text, path) = match &self.0 {
+            RootsKind::Pem(text) => (text.as_bytes().to_vec(), None),
+            RootsKind::File(path) => (read_anchors(path)?, Some(path.as_path())),
             #[cfg(feature = "platform-roots")]
             RootsKind::Platform => {
                 let verifier = rustls_platform_verifier::Verifier::new(provider.clone())
@@ -88,21 +88,42 @@ impl Roots {
                 return Ok(Arc::new(verifier));
             }
         };
-        let mut roots = RootCertStore::empty();
-        for certificate in CertificateDer::pem_slice_iter(&text) {
-            roots
-                .add(certificate.map_err(|_| PeerError::Certificate)?)
-                .map_err(|_| PeerError::Certificate)?;
-        }
-        if roots.is_empty() {
-            return Err(PeerError::Certificate);
-        }
+        let roots = anchors(&text, path)?;
         let verifier =
             WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
                 .build()
                 .map_err(|_| PeerError::Certificate)?;
         Ok(verifier)
     }
+}
+
+/// The bytes of the file of certificate authorities at `path`.
+pub(crate) fn read_anchors(path: &Path) -> Result<Vec<u8>, PeerError> {
+    std::fs::read(path).map_err(|error| PeerError::CaFile {
+        path: Some(path.to_path_buf()),
+        certificate: None,
+        read: Some(error),
+    })
+}
+
+/// Every `CERTIFICATE` block of `text` as a trust anchor; the error names `path` and the
+/// position of the first certificate that is malformed or cannot be one.
+pub(crate) fn anchors(text: &[u8], path: Option<&Path>) -> Result<RootCertStore, PeerError> {
+    let failed = |certificate| PeerError::CaFile {
+        path: path.map(Path::to_path_buf),
+        certificate,
+        read: None,
+    };
+    let mut roots = RootCertStore::empty();
+    for (index, certificate) in CertificateDer::pem_slice_iter(text).enumerate() {
+        roots
+            .add(certificate.map_err(|_| failed(Some(index)))?)
+            .map_err(|_| failed(Some(index)))?;
+    }
+    if roots.is_empty() {
+        return Err(failed(None));
+    }
+    Ok(roots)
 }
 
 /// The error a roots verifier's refusal becomes: a wrong name is [`Refusal::NameMismatch`];
