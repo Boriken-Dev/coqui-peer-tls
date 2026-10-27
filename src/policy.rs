@@ -6,7 +6,7 @@ use rustls::SupportedProtocolVersion;
 use rustls::crypto::CryptoProvider;
 
 use crate::error::PeerError;
-use coqui_peer::{Digest, PeerId, WaitingLimits};
+use coqui_peer::{Digest, PeerId, WaitingLimits, Weakening};
 
 /// The version of the serialized form of [`Policy`] (`policy_version`).
 pub const POLICY_VERSION: u32 = 1;
@@ -53,20 +53,6 @@ impl FromStr for TlsVersion {
             )),
         }
     }
-}
-
-/// A setting looser than the strict preset, as plain data.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Weakening {
-    /// The setting's name: a [`Policy`] field, or
-    /// [`CLIENT_AUTH_SETTING`](crate::CLIENT_AUTH_SETTING) for a server that does not
-    /// authenticate its clients at the TLS layer.
-    pub setting: String,
-    /// Its current value as text.
-    pub value: String,
-    /// The strict value as text.
-    pub strict: String,
 }
 
 /// What a TLS configuration and a trust decision are allowed to do.
@@ -274,11 +260,12 @@ impl Policy {
         }
         #[cfg(feature = "acl")]
         if let Some(acl) = &self.acl {
-            found.extend(acl.weakened().into_iter().map(|w| Weakening {
-                setting: w.setting,
-                value: w.value,
-                strict: w.strict,
-            }));
+            // coqui-net-acl has no dependencies and keeps a Weakening of its own, field for field.
+            found.extend(
+                acl.weakened()
+                    .into_iter()
+                    .map(|w| Weakening::new(w.setting, w.value, w.strict)),
+            );
         }
         found
     }

@@ -201,7 +201,7 @@ impl Policy {
     pub fn supported_kx_groups() -> Vec<String>;
     pub fn deserialize_over<'de, D: Deserializer<'de>>(base: Policy, d: D) -> Result<Policy, D::Error>;  // feature serde
 }
-pub struct Weakening { pub setting: String, pub value: String, pub strict: String }   // setting: a field, or "client_auth"
+pub use coqui_peer::Weakening;    // { setting, value, strict }, Weakening::new; setting: a field, or "client_auth"
 pub const POLICY_VERSION: u32 = 1;
 ```
 
