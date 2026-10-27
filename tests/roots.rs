@@ -332,16 +332,45 @@ fn roots_are_for_clients_and_a_bundle_must_hold_a_root() {
     }
 
     let empty = Trust::Roots(Roots::bundle_pem("no certificate here\n"));
+    let refused = client_config_without_identity(&empty, &[]).unwrap_err();
     assert!(matches!(
-        client_config_without_identity(&empty, &[]),
-        Err(PeerError::Certificate)
+        &refused,
+        PeerError::CaFile {
+            path: None,
+            certificate: None,
+            read: None
+        }
     ));
+    assert_eq!(refused.to_string(), "CA bundle: holds no certificate");
     let directory = tempfile::tempdir().unwrap();
-    let missing = Trust::Roots(Roots::bundle_file(directory.path().join("absent.pem")));
+    let absent = directory.path().join("absent.pem");
+    let missing = Trust::Roots(Roots::bundle_file(&absent));
+    let refused = client_config_without_identity(&missing, &[]).unwrap_err();
     assert!(matches!(
-        client_config_without_identity(&missing, &[]),
-        Err(PeerError::Io(_))
+        &refused,
+        PeerError::CaFile { path: Some(path), certificate: None, read: Some(_) } if *path == absent
     ));
+    assert!(refused.to_string().contains("absent.pem"), "{refused}");
+    // The second certificate of the file is not one: the error names the file and position 1.
+    let broken = directory.path().join("broken.pem");
+    std::fs::write(
+        &broken,
+        format!(
+            "{}-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+            ca.root.pem()
+        ),
+    )
+    .unwrap();
+    let refused = client_config_without_identity(&Trust::Roots(Roots::bundle_file(&broken)), &[])
+        .unwrap_err();
+    assert!(matches!(
+        &refused,
+        PeerError::CaFile { path: Some(path), certificate: Some(1), read: None } if *path == broken
+    ));
+    assert!(
+        refused.to_string().contains("broken.pem") && refused.to_string().contains("certificate 1"),
+        "{refused}"
+    );
     let path = directory.path().join("roots.pem");
     std::fs::write(&path, format!("# test root\n{}", ca.root.pem())).unwrap();
     let (address, served) = serve(server_config_without_client_auth(&server, &[]).unwrap(), 1);

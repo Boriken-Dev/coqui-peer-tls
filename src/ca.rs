@@ -2,12 +2,11 @@ use alloc::sync::Arc;
 use core::fmt;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use rustls::DistinguishedName;
 use rustls::crypto::CryptoProvider;
-use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, UnixTime};
 use rustls::server::WebPkiClientVerifier;
 use rustls::server::danger::ClientCertVerifier;
-use rustls::{DistinguishedName, RootCertStore};
 
 use crate::error::PeerError;
 use crate::trust::CaPolicy;
@@ -30,17 +29,8 @@ impl Ca {
         policy: &CaPolicy,
         provider: &Arc<CryptoProvider>,
     ) -> Result<Self, PeerError> {
-        let mut roots = RootCertStore::empty();
-        for certificate in
-            CertificateDer::pem_file_iter(&policy.ca_file).map_err(|_| PeerError::Certificate)?
-        {
-            roots
-                .add(certificate.map_err(|_| PeerError::Certificate)?)
-                .map_err(|_| PeerError::Certificate)?;
-        }
-        if roots.is_empty() {
-            return Err(PeerError::Certificate);
-        }
+        let text = crate::roots::read_anchors(&policy.ca_file)?;
+        let roots = crate::roots::anchors(&text, Some(&policy.ca_file))?;
         let verifier =
             WebPkiClientVerifier::builder_with_provider(Arc::new(roots), provider.clone())
                 .build()

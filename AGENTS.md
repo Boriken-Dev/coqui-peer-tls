@@ -127,9 +127,13 @@ prove its key. Names are not checked on the pinned path; roots always check them
   not-yet-valid one rustls's `Expired*` / `NotValidYet*`, and `Revoked` and `BadEncoding` stay
   rustls's own too; any other chain failure (unknown issuer, bad signature, a leaf not for
   server authentication, a platform's own reason) is `Refusal::NotTrusted`.
-- A bundle is read when the verifier is built (`server_cert_verifier*`, `client_config*`): an
-  unreadable file is `PeerError::Io`; no certificate, or one that cannot be a root, is
-  `PeerError::Certificate`. `platform()` failing to start (no system roots on Linux) is
+- A bundle (and a `CaPolicy::ca_file`) is read when the verifier is built
+  (`server_cert_verifier*`, `client_config*`; `client_cert_verifier*`, `server_config*`):
+  every failure is `PeerError::CaFile { path, certificate, read }` naming the file (`None` for
+  `bundle_pem`), and the certificate that is malformed or cannot be a trust anchor by its
+  position from 0, or `read` with the I/O error when the file cannot be read; neither when it
+  holds no certificate. `Display`: `CA file <path>: certificate 1 is malformed or cannot be a
+  trust anchor`, `... cannot be read`, `... holds no certificate`. `platform()` failing to start (no system roots on Linux) is
   `PeerError::Certificate`. On Android the host initializes rustls-platform-verifier from its
   JVM first (`rustls_platform_verifier::android::init_*`), or a handshake panics.
 - `AnyWithKeyProof` takes any certificate whose key is proven; the caller decides from
@@ -491,7 +495,8 @@ when the certificate ends within `margin` (an unreadable one is due).
 
 ```rust
 #[non_exhaustive] pub enum PeerError { InvalidId, Certificate, Tls, WeakDigest, Policy(String),
-    TrustPattern, NotWaiting, AlreadyAccepted, Path, Unsupported, Pairing(pair::PairingError), Io(io::Error) }
+    TrustPattern, NotWaiting, AlreadyAccepted, Path, Unsupported, Pairing(pair::PairingError), Io(io::Error),
+    CaFile { path: Option<PathBuf>, certificate: Option<usize>, read: Option<io::Error> } }
 impl PeerError { pub fn refusal(&self) -> Option<Refusal>; pub fn pair_refusal(&self) -> Option<pair::PairRefusal>; }
 #[non_exhaustive] pub enum Refusal {      // Copy, Eq, Hash, Display, std::error::Error
     NotPinned,         // matches no fixed pin
@@ -517,6 +522,9 @@ What each refusal looks like (server side unless stated; the refused side never 
 | `AddressUnknown`, in a verifier | in the client verifier | as `PeerDenied` | `certificate_unknown` | as `PeerDenied` |
 | `NotPinned`, `NotAccepted`, `NotTrusted`, `ChainWhenPinned` | in the verifier | as `PeerDenied` | `certificate_unknown` | as `PeerDenied` |
 | `NameMismatch` (a client refusing a server) | in the client's server verifier | the client: as `PeerDenied` | `certificate_unknown` | the server: `AlertReceived(CertificateUnknown)` |
+| `PeerDenied`, `AddressUnknown` with `server_config_for` / `client_cert_verifier_for` (quinn) | in the verifier, from the addresses the configuration or verifier holds | the host's rustls error `InvalidCertificate(CertificateError::Other(..))`; `Refusal::from_rustls` is it | `certificate_unknown` | as `PeerDenied` |
+| `AddressDenied` with `server_config_for` | at the `ClientHello`, from the configuration's addresses | rustls's own `Error::General`; check `Policy::admits_address` first | `access_denied` | as `AddressDenied` |
+| no `Refusal`: an unusable CA or roots file | when the configuration or verifier is built, before any connection | `PeerError::CaFile { path, certificate, read }` | none | nothing |
 
 A host driving rustls or quinn itself with `server_config_for` or `server_config_with_verifier`
 sees the verifier's refusals as rustls errors (`Refusal::from_rustls` takes them out), and an
