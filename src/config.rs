@@ -1,4 +1,5 @@
 use alloc::sync::Arc;
+use core::net::SocketAddr;
 
 use rustls::client::Resumption;
 use rustls::client::danger::ServerCertVerifier;
@@ -192,7 +193,39 @@ pub fn server_config_with(
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
     let verifier = trust.client_cert_verifier_with(policy)?;
-    build_server(identity, Some(verifier), alpn, policy)
+    build_server(identity, Some(verifier), alpn, policy, None)
+}
+
+/// [`server_config_with`] for one connection, from `source` to `local`: for a host whose
+/// connections reach rustls without this crate's accept helpers, such as quinn, which runs the
+/// verifier on threads of its own and takes a configuration per incoming connection.
+///
+/// Waiting entries are recorded under `source`, and a policy's access control list (feature
+/// `acl`) is decided from these addresses: by address when the `ClientHello` arrives, and by
+/// the certificate's fingerprint before the trust store is consulted. A host that can refuse a
+/// connection before its handshake (a quinn `Incoming`) checks
+/// [`Policy::admits_address`](crate::Policy::admits_address) first: a refusal inside the
+/// handshake reaches it as rustls's own error.
+///
+/// # Errors
+///
+/// As [`server_config_with`].
+pub fn server_config_for(
+    identity: &Identity,
+    trust: &Trust,
+    alpn: &[&[u8]],
+    policy: &Policy,
+    source: SocketAddr,
+    local: SocketAddr,
+) -> Result<Built<ServerConfig>, PeerError> {
+    let verifier = Arc::new(trust.client_verifier(policy, Some(source))?);
+    build_server(
+        identity,
+        Some(verifier),
+        alpn,
+        policy,
+        Some((source, local)),
+    )
 }
 
 /// A server configuration under the strict policy that presents `identity` and asks for no
@@ -229,7 +262,7 @@ pub fn server_config_without_client_auth_with(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    let mut built = build_server(identity, None, alpn, policy)?;
+    let mut built = build_server(identity, None, alpn, policy, None)?;
     built.weakened.push(Weakening {
         setting: CLIENT_AUTH_SETTING.to_owned(),
         value: "none".to_owned(),
@@ -254,15 +287,39 @@ pub fn server_config_with_verifier(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    build_server(identity, Some(verifier), alpn, policy)
+    build_server(identity, Some(verifier), alpn, policy, None)
 }
 
+/// A server configuration; with a policy access control list, `verifier` is wrapped to decide
+/// each certificate and the certificate resolver to decide each `ClientHello`, from
+/// `addresses`, or from the scope the accept helpers set when `None`.
 fn build_server(
     identity: &Identity,
     verifier: Option<Arc<dyn ClientCertVerifier>>,
     alpn: &[&[u8]],
     policy: &Policy,
+    addresses: Option<(SocketAddr, SocketAddr)>,
 ) -> Result<Built<ServerConfig>, PeerError> {
+    #[cfg(feature = "acl")]
+    let gate = match &policy.acl {
+        Some(acl) => Some(crate::gate::Gate::new(
+            crate::gate::canonical(acl)?,
+            addresses,
+        )),
+        None => None,
+    };
+    #[cfg(not(feature = "acl"))]
+    let _ = addresses;
+    #[cfg(feature = "acl")]
+    let verifier = match (&gate, verifier) {
+        (Some(gate), Some(inner)) => Some(Arc::new(crate::gate::PeerGate {
+            inner,
+            gate: gate.clone(),
+        }) as Arc<dyn ClientCertVerifier>),
+        (_, verifier) => verifier,
+    };
+    #[cfg(feature = "acl")]
+    let identified = verifier.is_some();
     let versions = policy.protocol_versions()?;
     let builder = ServerConfig::builder_with_provider(policy.crypto_provider()?)
         .with_protocol_versions(&versions)
@@ -285,6 +342,14 @@ fn build_server(
         // tickets sent; the builder's ticketer already produces none.
         config.session_storage = Arc::new(NoServerSessionStorage {});
         config.send_tls13_tickets = 0;
+    }
+    #[cfg(feature = "acl")]
+    if let Some(gate) = gate {
+        config.cert_resolver = Arc::new(crate::gate::AddressGate {
+            inner: Arc::clone(&config.cert_resolver),
+            gate,
+            identified,
+        });
     }
     Ok(Built {
         config,

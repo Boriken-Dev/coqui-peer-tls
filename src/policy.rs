@@ -112,8 +112,14 @@ pub struct Policy {
     pub waiting_total: usize,
     /// Seconds before the same certificate from the same source is recorded again.
     pub waiting_rerecord_secs: u64,
-    /// An ordered access control list for connecting addresses, evaluated by the host;
-    /// `None` for none.
+    /// An ordered access control list for connecting clients, applied by every server
+    /// configuration built under this policy: by address when the `ClientHello` arrives
+    /// ([`Refusal::AddressDenied`](crate::Refusal::AddressDenied)) and by the client
+    /// certificate's fingerprint before the trust store is consulted
+    /// ([`Refusal::PeerDenied`](crate::Refusal::PeerDenied)). Its fingerprints may be written
+    /// in any spelling a [`PeerId`] parses, and are made canonical where a policy is read or
+    /// a configuration built; a rule naming something else, or a digest other than SHA-256,
+    /// is an error there. `None` for none.
     #[cfg(feature = "acl")]
     pub acl: Option<coqui_net_acl::Acl>,
 }
@@ -275,6 +281,44 @@ impl Policy {
             }));
         }
         found
+    }
+
+    /// Whether the access control list admits, by address, a client from `source` to `local`
+    /// that will present a certificate: a rule naming a fingerprint defers to the handshake.
+    /// Without a list, every address is admitted. For a host that refuses a connection before
+    /// its handshake, such as a quinn `Incoming`.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::AddressDenied`](crate::Refusal::AddressDenied) with the deciding rule.
+    #[cfg(feature = "acl")]
+    pub fn admits_address(
+        &self,
+        source: core::net::SocketAddr,
+        local: core::net::SocketAddr,
+    ) -> Result<(), crate::Refusal> {
+        match &self.acl {
+            Some(acl) => crate::gate::decide_address(acl, source, local, true),
+            None => Ok(()),
+        }
+    }
+
+    /// [`admits_address`](Policy::admits_address) for a client that proves no identity at the
+    /// TLS layer: rules naming a fingerprint cannot match it.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::AddressDenied`](crate::Refusal::AddressDenied) with the deciding rule.
+    #[cfg(feature = "acl")]
+    pub fn admits_anonymous(
+        &self,
+        source: core::net::SocketAddr,
+        local: core::net::SocketAddr,
+    ) -> Result<(), crate::Refusal> {
+        match &self.acl {
+            Some(acl) => crate::gate::decide_address(acl, source, local, false),
+            None => Ok(()),
+        }
     }
 
     /// The limits for a trust store's waiting queue.
@@ -572,8 +616,8 @@ mod text {
                 policy.waiting_rerecord_secs = value;
             }
             #[cfg(feature = "acl")]
-            if self.acl.is_some() {
-                policy.acl = self.acl;
+            if let Some(acl) = self.acl {
+                policy.acl = Some(crate::gate::canonical(&acl).map_err(E::custom)?);
             }
             Ok(policy)
         }

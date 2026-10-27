@@ -343,8 +343,8 @@ pub fn pair_accept<S: Read + Write + PeerAddr + ReadTimeout>(
     desk: &PairingDesk,
     config: &PairConfig,
 ) -> Result<Paired, PeerError> {
-    let source = stream.peer_addr();
-    pair_accept_as(stream, source, identity, store, desk, config)
+    let (source, local) = (stream.peer_addr(), stream.local_addr());
+    pair_accept_as(stream, (source, local), identity, store, desk, config)
 }
 
 /// [`pair_accept`] for a stream that is not a TCP stream, with the address it came from given.
@@ -360,12 +360,12 @@ pub fn pair_accept_from<S: Read + Write + ReadTimeout>(
     desk: &PairingDesk,
     config: &PairConfig,
 ) -> Result<Paired, PeerError> {
-    pair_accept_as(stream, Some(source), identity, store, desk, config)
+    pair_accept_as(stream, (Some(source), None), identity, store, desk, config)
 }
 
 fn pair_accept_as<S: Read + Write + ReadTimeout>(
     stream: S,
-    source: Option<SocketAddr>,
+    (source, local): (Option<SocketAddr>, Option<SocketAddr>),
     identity: &Identity,
     store: &TrustStore,
     desk: &PairingDesk,
@@ -376,7 +376,7 @@ fn pair_accept_as<S: Read + Write + ReadTimeout>(
     stream
         .set_read_timeout(left(until))
         .map_err(PeerError::Io)?;
-    let (mut tls, peer) = accept_from_as(server, stream, source)?;
+    let (mut tls, peer) = accept_from_as(server, stream, source, local)?;
     let exporter = tls
         .conn
         .export_keying_material([0u8; 32], EXPORTER_LABEL, Some(&[]))
