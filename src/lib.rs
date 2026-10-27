@@ -65,8 +65,9 @@ mod x509;
 
 pub use certificate::{METHOD, TrustStoreExt, certificate_key};
 pub use config::{
-    Built, CLIENT_AUTH_SETTING, client_config, client_config_with, client_config_without_identity,
-    client_config_without_identity_with, crypto_provider, server_config, server_config_with,
+    Built, CLIENT_AUTH_SETTING, client_config, client_config_with, client_config_with_verifier,
+    client_config_without_identity, client_config_without_identity_with, crypto_provider,
+    server_config, server_config_with, server_config_with_verifier,
     server_config_without_client_auth, server_config_without_client_auth_with,
 };
 #[cfg(feature = "acl")]
