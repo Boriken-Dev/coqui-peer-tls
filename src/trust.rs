@@ -1,4 +1,5 @@
 use alloc::sync::Arc;
+use core::net::SocketAddr;
 #[cfg(feature = "ca")]
 use core::time::Duration;
 #[cfg(feature = "ca")]
@@ -119,11 +120,11 @@ impl Pins {
         }
     }
 
-    fn record_waiting(&self, der: &[u8]) {
+    fn record_waiting(&self, der: &[u8], source: Option<SocketAddr>) {
         if let PinsKind::Store(store) = &self.0
             && let Ok(key) = crate::certificate_key(der)
         {
-            store.record_waiting(&key, crate::source::current());
+            store.record_waiting(&key, source);
         }
     }
 }
@@ -222,6 +223,53 @@ impl Trust {
         &self,
         policy: &Policy,
     ) -> Result<Arc<PeerClientVerifier>, PeerError> {
+        self.client_verifier(policy, None).map(Arc::new)
+    }
+
+    /// The verifier a server uses for one connection's client certificate, from `source` to
+    /// `local`: for a host whose connections reach rustls without this crate's accept helpers,
+    /// such as quinn, which runs the verifier on threads of its own.
+    ///
+    /// Waiting entries are recorded under `source`. With the `acl` feature, a policy's access
+    /// control list is applied to the certificate's fingerprint from these addresses before
+    /// the pins or the store are consulted ([`Refusal::PeerDenied`]), so a denied client is
+    /// never recorded as waiting. The list's address rules are not applied here; a host checks
+    /// them before the handshake with [`Policy::admits_address`], or uses
+    /// [`server_config_for`](crate::server_config_for), which applies both.
+    ///
+    /// # Errors
+    ///
+    /// As [`client_cert_verifier_with`](Trust::client_cert_verifier_with), and
+    /// [`PeerError::Policy`] when a rule of the access control list names something that is not
+    /// a SHA-256 peer id.
+    pub fn client_cert_verifier_for(
+        &self,
+        policy: &Policy,
+        source: SocketAddr,
+        local: SocketAddr,
+    ) -> Result<Arc<dyn ClientCertVerifier>, PeerError> {
+        let verifier: Arc<dyn ClientCertVerifier> =
+            Arc::new(self.client_verifier(policy, Some(source))?);
+        #[cfg(feature = "acl")]
+        if let Some(acl) = &policy.acl {
+            let gate = crate::gate::Gate::new(crate::gate::canonical(acl)?, Some((source, local)));
+            return Ok(Arc::new(crate::gate::PeerGate {
+                inner: verifier,
+                gate,
+            }));
+        }
+        #[cfg(not(feature = "acl"))]
+        let _ = local;
+        Ok(verifier)
+    }
+
+    /// The client verifier, recording waiting entries under `source` when it is given and
+    /// under the scope's otherwise.
+    pub(crate) fn client_verifier(
+        &self,
+        policy: &Policy,
+        source: Option<SocketAddr>,
+    ) -> Result<PeerClientVerifier, PeerError> {
         let provider = policy.crypto_provider()?;
         let (pins, ca, any): (Option<Pins>, MaybeCa, bool) = match self {
             Self::Pinned(pins) => (Some(pins.clone()), None, false),
@@ -242,16 +290,17 @@ impl Trust {
         let pins = pins.map(|pins| pins.with_limits(policy.waiting_limits()));
         #[cfg(not(feature = "ca"))]
         let _ = ca;
-        Ok(Arc::new(PeerClientVerifier {
+        Ok(PeerClientVerifier {
             pins,
             #[cfg(feature = "ca")]
             ca,
             any,
             checks: PinnedChecks::of(policy),
             provider,
+            source,
             #[cfg(feature = "ca")]
             ca_trusted: Mutex::default(),
-        }))
+        })
     }
 
     /// The verifier a client uses for the server certificate, under the strict policy.
@@ -416,6 +465,9 @@ pub struct PeerClientVerifier {
     any: bool,
     checks: PinnedChecks,
     provider: Arc<CryptoProvider>,
+    /// The source waiting entries are recorded under, for a verifier made for one connection;
+    /// `None` reads the scope the accept helpers set.
+    source: Option<SocketAddr>,
     /// Certificates the CA policy trusted at presentation, whose signature is still to come.
     /// The signature check receives only the certificate, not the chain the CA policy needed,
     /// so this is how it tells a trusted certificate from a deferred one.
@@ -512,7 +564,10 @@ impl PeerClientVerifier {
                 .ok_or_else(|| self.refusal().into_rustls());
         }
         if let Some(pins) = &self.pins {
-            pins.record_waiting(certificate.as_ref());
+            pins.record_waiting(
+                certificate.as_ref(),
+                self.source.or_else(crate::source::current),
+            );
         }
         Err(self.refusal().into_rustls())
     }

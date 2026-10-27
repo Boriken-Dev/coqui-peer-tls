@@ -53,6 +53,8 @@ mod ca;
 mod certificate;
 mod config;
 mod error;
+#[cfg(feature = "acl")]
+mod gate;
 mod handshake;
 mod identity;
 mod pairing;
@@ -67,7 +69,7 @@ pub use certificate::{METHOD, TrustStoreExt, certificate_key};
 pub use config::{
     Built, CLIENT_AUTH_SETTING, client_config, client_config_with, client_config_with_verifier,
     client_config_without_identity, client_config_without_identity_with, crypto_provider,
-    server_config, server_config_with, server_config_with_verifier,
+    server_config, server_config_for, server_config_with, server_config_with_verifier,
     server_config_without_client_auth, server_config_without_client_auth_with,
 };
 #[cfg(feature = "acl")]
@@ -87,8 +89,8 @@ pub use pairing::{
 };
 pub use policy::{POLICY_VERSION, Policy, TlsVersion, Weakening};
 pub use roots::Roots;
-pub use source::with_source;
-pub use stream::{PeerAddr, SERVER_NAME, accept, accept_from, dial, dial_named};
+pub use source::{with_addresses, with_source};
+pub use stream::{PeerAddr, SERVER_NAME, accept, accept_at, accept_from, dial, dial_named};
 #[cfg(feature = "ca")]
 pub use trust::CaPolicy;
 pub use trust::{PeerClientVerifier, PeerServerVerifier, Pins, Trust};

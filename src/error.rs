@@ -113,13 +113,17 @@ impl PeerError {
     }
 }
 
-/// Why a verifier of this crate refused a peer's certificate.
+/// Why this side refused a peer: its certificate, or its addresses under a policy's access
+/// control list.
 ///
 /// A verifier returns it inside
 /// `rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(..)))`, so rustls
 /// sends the `certificate_unknown` alert; [`Refusal::from_rustls`] and
-/// [`PeerError::refusal`] take it back out. Expired and not-yet-valid certificates are
-/// rustls's own `CertificateError::Expired` and `NotValidYet`.
+/// [`PeerError::refusal`] take it back out. [`AddressDenied`](Refusal::AddressDenied) and an
+/// [`AddressUnknown`](Refusal::AddressUnknown) found at the `ClientHello` stop the handshake
+/// before any certificate: rustls sends `access_denied`, and the accept helpers report the
+/// refusal the same way. Expired and not-yet-valid certificates are rustls's own
+/// `CertificateError::Expired` and `NotValidYet`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Refusal {
@@ -138,6 +142,24 @@ pub enum Refusal {
     /// The server's chain is trusted by the [`Roots`](crate::Roots), but the certificate is
     /// not for the server name the client dialled.
     NameMismatch,
+    /// The policy's access control list denies the connection's addresses: the rule at index
+    /// `rule`, or its default when `None`. Decided from the `ClientHello`, before any
+    /// certificate.
+    AddressDenied {
+        /// The index of the deciding rule in the list; `None` for the default.
+        rule: Option<usize>,
+    },
+    /// The policy's access control list denies this client's certificate from these
+    /// addresses: the rule at index `rule`, or its default when `None`. Decided before the
+    /// trust store is consulted, so nothing is recorded as waiting.
+    PeerDenied {
+        /// The index of the deciding rule in the list; `None` for the default.
+        rule: Option<usize>,
+    },
+    /// The policy has an access control list, and the connection's source address, or the
+    /// local address a rule with a destination or port needs, is unknown: the list is not
+    /// decided, and the connection is refused.
+    AddressUnknown,
 }
 
 impl Refusal {
@@ -171,6 +193,11 @@ impl fmt::Display for Refusal {
                 "pinned peer presented a certificate chain, which the policy does not allow"
             }
             Self::NameMismatch => "server certificate is not valid for the name dialled",
+            Self::AddressDenied { .. } => "access control list denies the client's address",
+            Self::PeerDenied { .. } => "access control list denies the client's certificate",
+            Self::AddressUnknown => {
+                "access control list needs the connection's addresses, which are unknown"
+            }
         })
     }
 }

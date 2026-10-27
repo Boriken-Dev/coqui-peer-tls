@@ -199,8 +199,9 @@ a document over your own base policy. Committed examples for every preset are in
 - Not provided: a handshake probe (`Unknown | Online | Rejected | Offline`), a helper for
   reading and writing one connection from two threads, and QUIC with datagrams.
 - `coqui-net-acl` is its own crate, not part of this one: it needs no TLS and is used on
-  plaintext listeners too. Evaluate it at accept time and again with `decide_peer` after
-  `accept` returns the fingerprint.
+  plaintext listeners too. A `Policy` carrying one (feature `acl`) applies it in every server
+  configuration: by address when the `ClientHello` arrives, and by the client certificate's
+  fingerprint before the trust store is consulted.
 
 ## Development
 

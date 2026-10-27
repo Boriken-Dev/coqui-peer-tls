@@ -19,10 +19,11 @@ use coqui_peer::pair::{
 use coqui_peer::{PeerId, TrustStore};
 
 use crate::error::PeerError;
+use crate::error::Refusal;
 use crate::identity::{Identity, PeerIdentity};
 use crate::pairing::{PairConfig, ResponderTrust, ends, left, sooner};
-use crate::source::with_source;
-use crate::stream::{PeerAddr, default_name, identity_of};
+use crate::source::scoped;
+use crate::stream::{PeerAddr, default_name, handshake_error, identity_of};
 
 /// Dials a peer over `io`, completing the handshake before returning. The server name sent
 /// is [`SERVER_NAME`](crate::SERVER_NAME); [`dial_named`] sends another.
@@ -67,13 +68,29 @@ impl PeerAddr for tokio::net::TcpStream {
     fn peer_addr(&self) -> Option<SocketAddr> {
         tokio::net::TcpStream::peer_addr(self).ok()
     }
+
+    fn local_addr(&self) -> Option<SocketAddr> {
+        tokio::net::TcpStream::local_addr(self).ok()
+    }
 }
 
-/// Polls `future` with `source` as the address the verifiers record, since their callbacks
-/// run inside the poll.
-async fn sourced<F: Future>(source: Option<SocketAddr>, future: F) -> F::Output {
+/// Polls `future` with the connection's addresses in scope, since the verifiers' and the
+/// address check's callbacks run inside the poll; returns its output and the refusal the
+/// address check recorded.
+async fn scoped_poll<F: Future>(
+    source: Option<SocketAddr>,
+    local: Option<SocketAddr>,
+    future: F,
+) -> (F::Output, Option<Refusal>) {
     let mut future = std::pin::pin!(future);
-    core::future::poll_fn(|context| with_source(source, || future.as_mut().poll(context))).await
+    let mut refused = None;
+    let output = core::future::poll_fn(|context| {
+        let (poll, refusal) = scoped(source, local, || future.as_mut().poll(context));
+        refused = refused.or(refusal);
+        poll
+    })
+    .await;
+    (output, refused)
 }
 
 /// Accepts a peer over `io`, completing the handshake before returning.
@@ -92,8 +109,8 @@ pub async fn accept<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + PeerAddr,
 {
-    let source = io.peer_addr();
-    accept_as(config, io, source).await
+    let (source, local) = (io.peer_addr(), io.local_addr());
+    accept_as(config, io, source, local).await
 }
 
 /// [`accept`] for a stream that is not a TCP stream, with the address it came from given.
@@ -110,20 +127,43 @@ pub async fn accept_from<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    accept_as(config, io, Some(source)).await
+    accept_as(config, io, Some(source), None).await
+}
+
+/// [`accept_from`] with the local address the connection arrived at as well, as
+/// [`crate::accept_at`].
+///
+/// # Errors
+///
+/// As [`accept`].
+pub async fn accept_at<S>(
+    config: Arc<ServerConfig>,
+    io: S,
+    source: SocketAddr,
+    local: SocketAddr,
+) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    accept_as(config, io, Some(source), Some(local)).await
 }
 
 async fn accept_as<S>(
     config: Arc<ServerConfig>,
     io: S,
     source: Option<SocketAddr>,
+    local: Option<SocketAddr>,
 ) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    let stream = sourced(source, tokio_rustls::TlsAcceptor::from(config).accept(io))
-        .await
-        .map_err(PeerError::Io)?;
+    let (stream, refused) = scoped_poll(
+        source,
+        local,
+        tokio_rustls::TlsAcceptor::from(config).accept(io),
+    )
+    .await;
+    let stream = stream.map_err(|error| handshake_error(error, refused))?;
     let peer = identity_of(stream.get_ref().1.peer_certificates())?;
     Ok((stream, peer))
 }
@@ -142,8 +182,8 @@ pub async fn accept_with<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + PeerAddr,
 {
-    let source = io.peer_addr();
-    accept_with_as(io, source, select).await
+    let (source, local) = (io.peer_addr(), io.local_addr());
+    accept_with_as(io, (source, local), select).await
 }
 
 /// [`accept_with`] for a stream that is not a TCP stream, with the address it came from given.
@@ -160,12 +200,12 @@ pub async fn accept_with_from<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    accept_with_as(io, Some(source), select).await
+    accept_with_as(io, (Some(source), None), select).await
 }
 
 async fn accept_with_as<S>(
     io: S,
-    source: Option<SocketAddr>,
+    (source, local): (Option<SocketAddr>, Option<SocketAddr>),
     select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>,
 ) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>
 where
@@ -175,9 +215,8 @@ where
         .await
         .map_err(PeerError::Io)?;
     let config = select(&start.client_hello());
-    let stream = sourced(source, start.into_stream(config))
-        .await
-        .map_err(PeerError::Io)?;
+    let (stream, refused) = scoped_poll(source, local, start.into_stream(config)).await;
+    let stream = stream.map_err(|error| handshake_error(error, refused))?;
     let peer = identity_of(stream.get_ref().1.peer_certificates())?;
     Ok((stream, peer))
 }
@@ -311,8 +350,8 @@ pub async fn pair_accept<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin + PeerAddr,
 {
-    let source = stream.peer_addr();
-    pair_accept_as(stream, source, identity, store, desk, config).await
+    let (source, local) = (stream.peer_addr(), stream.local_addr());
+    pair_accept_as(stream, (source, local), identity, store, desk, config).await
 }
 
 /// [`pair_accept`] for a stream that is not a TCP stream, with the address it came from given.
@@ -331,12 +370,12 @@ pub async fn pair_accept_from<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    pair_accept_as(stream, Some(source), identity, store, desk, config).await
+    pair_accept_as(stream, (Some(source), None), identity, store, desk, config).await
 }
 
 async fn pair_accept_as<S>(
     stream: S,
-    source: Option<SocketAddr>,
+    (source, local): (Option<SocketAddr>, Option<SocketAddr>),
     identity: &Identity,
     store: &TrustStore,
     desk: &PairingDesk,
@@ -347,7 +386,7 @@ where
 {
     let until = ends(config.timeout);
     let server = Arc::new(crate::pair_server_config(identity, config)?);
-    let (tls, _) = within(left(until), accept_as(server, stream, source))
+    let (tls, _) = within(left(until), accept_as(server, stream, source, local))
         .await
         .map_err(PeerError::Io)??;
     respond_on(tls, source, identity, store, desk, config, until).await

@@ -9,7 +9,8 @@ use rustls::{ClientConfig, ClientConnection, Connection, ServerConfig, ServerCon
 use crate::certificate::certificate_key;
 use crate::error::PeerError;
 use crate::identity::PeerIdentity;
-use crate::source::with_source;
+use crate::source::scoped;
+use crate::stream::handshake_error;
 use crate::stream::{default_name, identity_of};
 
 /// The TLS method: client and server configurations, each optional, that start handshakes.
@@ -77,6 +78,7 @@ impl Method for Tls {
 pub struct TlsHandshake {
     connection: Connection,
     source: Option<SocketAddr>,
+    local: Option<SocketAddr>,
 }
 
 impl TlsHandshake {
@@ -105,6 +107,7 @@ impl TlsHandshake {
         Ok(Self {
             connection: connection.into(),
             source: None,
+            local: None,
         })
     }
 
@@ -121,7 +124,18 @@ impl TlsHandshake {
         Ok(Self {
             connection: connection.into(),
             source,
+            local: None,
         })
+    }
+
+    /// This handshake knowing the local address the connection arrived at, which a policy's
+    /// access control list reads for rules that name a destination or a port. A server
+    /// handshake without one refuses a connection such a rule would decide
+    /// ([`Refusal::AddressUnknown`](crate::Refusal::AddressUnknown)).
+    #[must_use]
+    pub fn with_local(mut self, local: SocketAddr) -> Self {
+        self.local = Some(local);
+        self
     }
 
     /// Finishes a completed handshake whose peer may have presented no certificate: the
@@ -165,9 +179,15 @@ impl Handshake for TlsHandshake {
                 .connection
                 .read_tls(&mut cursor)
                 .map_err(PeerError::Io)?;
-            with_source(self.source, || self.connection.process_new_packets()).map_err(
-                |error| PeerError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error)),
-            )?;
+            let (processed, refused) = scoped(self.source, self.local, || {
+                self.connection.process_new_packets().map(|_| ())
+            });
+            processed.map_err(|error| {
+                handshake_error(
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                    refused,
+                )
+            })?;
             if read == 0 {
                 return Err(PeerError::Tls);
             }

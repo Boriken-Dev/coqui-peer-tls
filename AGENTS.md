@@ -186,7 +186,7 @@ pub struct Policy {
     pub allow_resumption: bool,                // a resumed session skips the verifiers
     pub require_ems: bool,                     // TLS 1.2: the extended master secret (RFC 7627)
     pub waiting_per_source: usize, pub waiting_total: usize, pub waiting_rerecord_secs: u64,
-    pub acl: Option<coqui_net_acl::Acl>,       // feature acl
+    pub acl: Option<coqui_net_acl::Acl>,       // feature acl; applied by every server configuration
 }
 impl Default for Policy { /* Policy::strict() */ }
 impl Policy {
@@ -243,6 +243,56 @@ preset name to start from; unknown names are errors; free text when read with
 `acl` (see `coqui-net-acl`). Unknown keys are errors; absent keys keep the preset. Writing
 always names every field. `tests/vectors/policy/{strict,compatible,legacy,acl}.{toml,json}`
 are byte-exact.
+
+## Access control (`Policy::acl`, feature `acl`)
+
+Every server configuration built under a policy with `acl: Some(..)` applies it:
+`server_config(_with)`, `server_config_with_verifier`, `server_config_without_client_auth_with`,
+`server_config_for` and `pair_server_config`.
+
+- **By address, at the `ClientHello`**: the certificate resolver is wrapped and answers only an
+  admitted connection. With client certificates, `Acl::decide` (a rule naming a fingerprint
+  defers to the certificate); without (`server_config_without_client_auth_with`),
+  `Acl::decide_anonymous`. A denial is `Refusal::AddressDenied` and no certificate is sent.
+- **By fingerprint, in the client verifier**: `Acl::decide_peer` with the certificate's
+  canonical `sha256:<hex>`, before pins, CA policy or trust store are consulted, so a denied
+  client is never recorded as waiting. A denial is `Refusal::PeerDenied`.
+- **Fingerprints are canonical.** Rules may be written in any spelling `PeerId` parses (hex,
+  colon pairs, grouped base32); they are rewritten to `sha256:<hex>` when a policy is read from
+  text and when a configuration is built. A rule naming something that is not a SHA-256 peer id
+  is `PeerError::Policy` there ("acl rule N: ...").
+- **Addresses.** A configuration shared by connections reads them from the scope the accept
+  helpers set: `accept` takes both from a `PeerAddr` (`TcpStream`, tokio's too), `accept_from`
+  the source only, `accept_at` and `asynch::accept_at` both, `TlsHandshake::server(.., source)`
+  the source and `.with_local(local)` the local address, `with_addresses` both for a host
+  driving rustls itself. Without a source, or without a local address when a rule names a
+  destination or port, the connection is refused (`Refusal::AddressUnknown`); a missing local
+  address is fine when no rule reads it. A configuration for one connection
+  (`server_config_for`, `Trust::client_cert_verifier_for`) holds its addresses and needs no
+  scope: for quinn, which runs the verifier on its own threads.
+- `Policy::admits_address(source, local)` / `admits_anonymous` give the address decision
+  without a handshake, for a host that refuses a connection before it (a quinn `Incoming`).
+- Session resumption skips both checks, as it skips the verifiers: it is off unless
+  `allow_resumption`.
+
+```rust
+pub fn with_addresses<R>(source: Option<SocketAddr>, local: Option<SocketAddr>, work: impl FnOnce() -> R) -> R;
+pub trait PeerAddr { fn peer_addr(&self) -> Option<SocketAddr>; fn local_addr(&self) -> Option<SocketAddr> { None } }
+pub fn accept_at<S: Read + Write>(Arc<ServerConfig>, S, source: SocketAddr, local: SocketAddr) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;
+// feature tokio: asynch::accept_at(Arc<ServerConfig>, S, SocketAddr, SocketAddr), async
+impl TlsHandshake { pub fn with_local(self, local: SocketAddr) -> TlsHandshake; }
+pub fn server_config_for(&Identity, &Trust, alpn: &[&[u8]], &Policy, source: SocketAddr, local: SocketAddr) -> Result<Built<ServerConfig>, PeerError>;
+impl Trust { pub fn client_cert_verifier_for(&self, &Policy, source: SocketAddr, local: SocketAddr) -> Result<Arc<dyn ClientCertVerifier>, PeerError>; }
+impl Policy {   // feature acl
+    pub fn admits_address(&self, source: SocketAddr, local: SocketAddr) -> Result<(), Refusal>;
+    pub fn admits_anonymous(&self, source: SocketAddr, local: SocketAddr) -> Result<(), Refusal>;
+}
+```
+
+`client_cert_verifier_for` records waiting entries under its `source` (no scope needed) and,
+with an ACL, refuses a denied fingerprint before the pins; it does not apply the address rules,
+which `server_config_for` (both) or `Policy::admits_address` (before the handshake) do.
+`client_cert_verifier_with` applies no ACL: it has no addresses.
 
 ## Configurations and streams
 
@@ -449,9 +499,30 @@ impl PeerError { pub fn refusal(&self) -> Option<Refusal>; pub fn pair_refusal(&
     NotTrusted,        // no pin, and the CA policy or the roots do not trust its chain
     ChainWhenPinned,   // a pinned peer sent a chain and allow_chain_when_pinned is false
     NameMismatch,      // the roots trust the server's chain, but not for the name dialled
+    AddressDenied { rule: Option<usize> },   // the policy's ACL denies the addresses (rule index; None = default)
+    PeerDenied { rule: Option<usize> },      // the policy's ACL denies the client certificate from these addresses
+    AddressUnknown,    // the policy has an ACL and the source, or a local address a rule needs, is unknown
 }
 impl Refusal { pub fn from_rustls(error: &rustls::Error) -> Option<Refusal>; }
 ```
+
+What each refusal looks like (server side unless stated; the refused side never gets a
+`Refusal`, only the alert):
+
+| Refusal | Decided | Server (`accept*`, `asynch::accept*`, `TlsHandshake::receive`) | Alert sent | Client sees |
+| --- | --- | --- | --- | --- |
+| `AddressDenied { rule }` | at the `ClientHello`, before any certificate | `PeerError::Io`, kind `PermissionDenied`; `refusal()` is it | `access_denied` | `PeerError::Io` with `rustls::Error::AlertReceived(AccessDenied)` |
+| `AddressUnknown`, at the hello | at the `ClientHello` | as `AddressDenied` | `access_denied` | as `AddressDenied` |
+| `PeerDenied { rule }` | in the client verifier, before pins, CA or store; nothing recorded as waiting | `PeerError::Io`, kind `InvalidData`, wrapping `rustls::Error::InvalidCertificate(CertificateError::Other(..))`; `refusal()` is it | `certificate_unknown` | `PeerError::Io` with `AlertReceived(CertificateUnknown)` |
+| `AddressUnknown`, in a verifier | in the client verifier | as `PeerDenied` | `certificate_unknown` | as `PeerDenied` |
+| `NotPinned`, `NotAccepted`, `NotTrusted`, `ChainWhenPinned` | in the verifier | as `PeerDenied` | `certificate_unknown` | as `PeerDenied` |
+| `NameMismatch` (a client refusing a server) | in the client's server verifier | the client: as `PeerDenied` | `certificate_unknown` | the server: `AlertReceived(CertificateUnknown)` |
+
+A host driving rustls or quinn itself with `server_config_for` or `server_config_with_verifier`
+sees the verifier's refusals as rustls errors (`Refusal::from_rustls` takes them out), and an
+address refusal at the hello as rustls's own `Error::General` with `access_denied` sent: it
+checks `Policy::admits_address` before the handshake to tell, and to refuse before reading a
+byte.
 
 A failed handshake in `dial`, `accept` and `asynch` is `PeerError::Io` wrapping the rustls error;
 `refusal()` digs the `Refusal` out of it (`TlsHandshake` errors too). Only the refusing side has

@@ -1,14 +1,14 @@
 use alloc::sync::Arc;
 use core::net::SocketAddr;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::TcpStream;
 
 use rustls::pki_types::{CertificateDer, ServerName};
 use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, StreamOwned};
 
-use crate::error::PeerError;
+use crate::error::{PeerError, Refusal};
 use crate::identity::PeerIdentity;
-use crate::source::with_source;
+use crate::source::scoped;
 use coqui_peer::PeerId;
 
 /// The server name [`dial`] and [`TlsHandshake::client`](crate::TlsHandshake::client) send,
@@ -80,11 +80,33 @@ pub fn dial_named<S: Read + Write>(
 pub trait PeerAddr {
     /// The remote address, when known.
     fn peer_addr(&self) -> Option<SocketAddr>;
+
+    /// The local address the connection arrived at, when known: a policy's access control
+    /// list reads it for rules that name a destination or a port. `None` unless implemented.
+    fn local_addr(&self) -> Option<SocketAddr> {
+        None
+    }
 }
 
 impl PeerAddr for TcpStream {
     fn peer_addr(&self) -> Option<SocketAddr> {
         TcpStream::peer_addr(self).ok()
+    }
+
+    fn local_addr(&self) -> Option<SocketAddr> {
+        TcpStream::local_addr(self).ok()
+    }
+}
+
+/// The error of a handshake that failed: the refusal the address check recorded, as a
+/// verifier's refusal is carried, or the transport's error.
+pub(crate) fn handshake_error(error: io::Error, refused: Option<Refusal>) -> PeerError {
+    match refused {
+        Some(refusal) => PeerError::Io(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            refusal.into_rustls(),
+        )),
+        None => PeerError::Io(error),
     }
 }
 
@@ -108,8 +130,8 @@ pub fn accept<S: Read + Write + PeerAddr>(
     config: Arc<ServerConfig>,
     io: S,
 ) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
-    let source = io.peer_addr();
-    accept_from_as(config, io, source)
+    let (source, local) = (io.peer_addr(), io.local_addr());
+    accept_from_as(config, io, source, local)
 }
 
 /// [`accept`] for a stream that is not a [`TcpStream`], with the address it came from given.
@@ -123,21 +145,38 @@ pub fn accept_from<S: Read + Write>(
     io: S,
     source: SocketAddr,
 ) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
-    accept_from_as(config, io, Some(source))
+    accept_from_as(config, io, Some(source), None)
+}
+
+/// [`accept_from`] with the local address the connection arrived at as well, which a policy's
+/// access control list reads for rules that name a destination or a port.
+///
+/// # Errors
+///
+/// As [`accept`].
+pub fn accept_at<S: Read + Write>(
+    config: Arc<ServerConfig>,
+    io: S,
+    source: SocketAddr,
+    local: SocketAddr,
+) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
+    accept_from_as(config, io, Some(source), Some(local))
 }
 
 pub(crate) fn accept_from_as<S: Read + Write>(
     config: Arc<ServerConfig>,
     mut io: S,
     source: Option<SocketAddr>,
+    local: Option<SocketAddr>,
 ) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
     let mut connection = ServerConnection::new(config).map_err(|_| PeerError::Tls)?;
-    with_source(source, || {
+    let (handshake, refused) = scoped(source, local, || {
         while connection.is_handshaking() {
-            connection.complete_io(&mut io).map_err(PeerError::Io)?;
+            connection.complete_io(&mut io)?;
         }
-        Ok::<(), PeerError>(())
-    })?;
+        Ok::<(), io::Error>(())
+    });
+    handshake.map_err(|error| handshake_error(error, refused))?;
     let peer = identity_of(connection.peer_certificates())?;
     Ok((StreamOwned::new(connection, io), peer))
 }
