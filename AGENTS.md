@@ -42,7 +42,7 @@ impl Identity {
     pub fn from_pem(text: &str) -> Result<Identity, PeerError>;       // exactly one certificate + its key
     pub fn from_pem_chain(text: &str) -> Result<Identity, PeerError>; // leaf, its intermediates in order, the leaf's key
     pub fn to_pem(&self) -> Result<String, PeerError>;                // certificate, intermediates, then PKCS#8 key
-    pub fn read(path: &Path) -> Result<Option<Identity>, PeerError>;  // None when absent; one certificate
+    pub fn read(path: &Path) -> Result<Option<Identity>, PeerError>;  // None when absent; a chain is read
     pub fn write_new(&self, path: &Path) -> Result<(), PeerError>;    // never replaces; 0600; creates parents
     pub fn fingerprint(&self) -> PeerId;                               // the leaf's
     pub fn certificate_der(&self) -> &[u8];                           // the leaf
@@ -64,9 +64,9 @@ pub struct PeerIdentity { pub fingerprint: PeerId, pub certificate: Vec<u8> }   
   browser reaches over `wss://`); every configuration built from the identity presents the
   whole chain. The key must be the first certificate's, or `PeerError::Certificate`. The
   fingerprint is the leaf's. A peer that pins it refuses the chain (`Refusal::ChainWhenPinned`)
-  unless its policy sets `allow_chain_when_pinned`; `AnyWithKeyProof` takes it. `from_pem`,
-  `read` and `open_or_create` refuse a chain, so a chained identity written with
-  `write_new` is read back by passing the file's text to `from_pem_chain`.
+  unless its policy sets `allow_chain_when_pinned`; `AnyWithKeyProof` takes it. `from_pem`
+  refuses a chain; `read` and `open_or_create` read a file holding one (leaf first), so a
+  chained identity written with `write_new` reads back as it was.
 - **Short-lived identities.** `generate_valid_for(d)` is valid from now to now + `d`;
   `generate_with` takes both ends. Times are truncated to whole seconds; a window under one
   second, an end before the start, or a time before 1970 is `PeerError::Certificate`. Any
@@ -534,10 +534,10 @@ material or a path.
 
 For peers in other languages. All files are UTF-8 with LF line endings.
 
-- **Identity file** — one PEM file: a `CERTIFICATE` block, then a PKCS#8 `PRIVATE KEY` block;
-  exactly one certificate (a chain is refused); 64-character base64 lines. Mode `0600`. The
-  text of a chained identity (`to_pem`) adds the intermediates' `CERTIFICATE` blocks after the
-  leaf, before the key, and reads back with `from_pem_chain` only.
+- **Identity file** — one PEM file: the leaf's `CERTIFICATE` block, the intermediates'
+  `CERTIFICATE` blocks in order (a chained identity only), then a PKCS#8 `PRIVATE KEY` block;
+  64-character base64 lines. Mode `0600` on Unix. `read` and `open_or_create` read either
+  shape; `from_pem` takes the single-certificate one only.
 - **Certificate id** (`PeerId`) — SHA-256 of the certificate's DER encoding. Canonical text
   `sha256:<64 lowercase hex>` (`openssl x509 -outform DER | sha256sum` gives the hex).
   Grouped base32 (RFC 4648 alphabet, no padding, 52 characters, groups of four joined by `-`)

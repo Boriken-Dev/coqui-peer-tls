@@ -145,15 +145,17 @@ impl Identity {
         Ok(pem)
     }
 
-    /// Reads the identity file at `path`; `None` when it is absent. The file holds one
-    /// certificate; a chain is refused as by [`from_pem`](Identity::from_pem).
+    /// Reads the identity file at `path`; `None` when it is absent. The file holds the
+    /// certificate, the intermediates that issued it, if any, and its key, as
+    /// [`from_pem_chain`](Identity::from_pem_chain) reads them: what
+    /// [`write_new`](Identity::write_new) writes for any identity.
     ///
     /// # Errors
     ///
     /// [`PeerError::Io`] when it cannot be read, [`PeerError::Certificate`] when invalid.
     pub fn read(path: &Path) -> Result<Option<Self>, PeerError> {
         match fs::read_to_string(path) {
-            Ok(text) => Self::from_pem(&text).map(Some),
+            Ok(text) => Self::from_pem_chain(&text).map(Some),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(PeerError::Io(error)),
         }
