@@ -10,7 +10,7 @@ repository = "https://github.com/Boriken-Dev/coqui-peer-tls"
 homepage = "https://boriken-dev.github.io/coqui-peer-tls/"
 keywords = ["tls", "mtls", "rustls", "peer", "pinning"]
 categories = ["cryptography", "network-programming", "authentication"]
-exclude = [".*", "*.local.*"]
+exclude = [".*", "*.local.*", "/tools/"]
 
 [package.metadata.docs.rs]
 all-features = true
