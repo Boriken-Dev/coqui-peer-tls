@@ -1,14 +1,16 @@
 use alloc::sync::Arc;
 
 use rustls::client::Resumption;
+use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::CryptoProvider;
 use rustls::server::NoServerSessionStorage;
+use rustls::server::danger::ClientCertVerifier;
 use rustls::{ClientConfig, ServerConfig};
 
 use crate::error::PeerError;
 use crate::identity::Identity;
 use crate::policy::{Policy, Weakening};
-use crate::trust::{PeerClientVerifier, Trust};
+use crate::trust::Trust;
 
 /// The [`Weakening::setting`] a server configuration without client authentication reports.
 pub const CLIENT_AUTH_SETTING: &str = "client_auth";
@@ -98,6 +100,25 @@ pub fn client_config_without_identity_with(
     build_client(None, trust, alpn, policy)
 }
 
+/// A client configuration under `policy` that verifies the server with `verifier`, a verifier
+/// of the host's own (one of this crate's wrapped, for example). It presents `identity` and its
+/// intermediates, or no certificate for `None`, and handles versions, suites, groups, the
+/// extended master secret, ALPN and resumption as [`client_config_with`] does.
+///
+/// # Errors
+///
+/// [`PeerError::Policy`] when the policy asks for something the ring provider or this build
+/// cannot do; [`PeerError::Certificate`] or [`PeerError::Tls`] when the configuration cannot be
+/// built.
+pub fn client_config_with_verifier(
+    identity: Option<&Identity>,
+    verifier: Arc<dyn ServerCertVerifier>,
+    alpn: &[&[u8]],
+    policy: &Policy,
+) -> Result<Built<ClientConfig>, PeerError> {
+    build_client_with(identity, verifier, alpn, policy)
+}
+
 fn build_client(
     identity: Option<&Identity>,
     trust: &Trust,
@@ -105,6 +126,15 @@ fn build_client(
     policy: &Policy,
 ) -> Result<Built<ClientConfig>, PeerError> {
     let verifier = trust.server_cert_verifier_with(policy)?;
+    build_client_with(identity, verifier, alpn, policy)
+}
+
+fn build_client_with(
+    identity: Option<&Identity>,
+    verifier: Arc<dyn ServerCertVerifier>,
+    alpn: &[&[u8]],
+    policy: &Policy,
+) -> Result<Built<ClientConfig>, PeerError> {
     let versions = policy.protocol_versions()?;
     let builder = ClientConfig::builder_with_provider(policy.crypto_provider()?)
         .with_protocol_versions(&versions)
@@ -113,7 +143,7 @@ fn build_client(
         .with_custom_certificate_verifier(verifier);
     let mut config = match identity {
         Some(identity) => builder
-            .with_client_auth_cert(identity.certificate_chain(), identity.key())
+            .with_client_auth_cert(identity.certificate_chain(), identity.private_key_der())
             .map_err(|_| PeerError::Certificate)?,
         None => builder.with_no_client_auth(),
     };
@@ -208,9 +238,28 @@ pub fn server_config_without_client_auth_with(
     Ok(built)
 }
 
+/// A server configuration under `policy` that verifies clients with `verifier`, a verifier of
+/// the host's own (one of this crate's wrapped, for example). It presents `identity` and its
+/// intermediates, and handles versions, suites, groups, the extended master secret, ALPN and
+/// resumption as [`server_config_with`] does.
+///
+/// # Errors
+///
+/// [`PeerError::Policy`] when the policy asks for something the ring provider or this build
+/// cannot do; [`PeerError::Certificate`] or [`PeerError::Tls`] when the configuration cannot be
+/// built.
+pub fn server_config_with_verifier(
+    identity: &Identity,
+    verifier: Arc<dyn ClientCertVerifier>,
+    alpn: &[&[u8]],
+    policy: &Policy,
+) -> Result<Built<ServerConfig>, PeerError> {
+    build_server(identity, Some(verifier), alpn, policy)
+}
+
 fn build_server(
     identity: &Identity,
-    verifier: Option<Arc<PeerClientVerifier>>,
+    verifier: Option<Arc<dyn ClientCertVerifier>>,
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
@@ -223,7 +272,7 @@ fn build_server(
         None => builder.with_no_client_auth(),
     };
     let mut config = builder
-        .with_single_cert(identity.certificate_chain(), identity.key())
+        .with_single_cert(identity.certificate_chain(), identity.private_key_der())
         .map_err(|_| PeerError::Certificate)?;
     config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
     // rustls has the setting only where it can offer TLS 1.2.

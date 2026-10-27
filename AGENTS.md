@@ -48,6 +48,8 @@ impl Identity {
     pub fn certificate_der(&self) -> &[u8];                           // the leaf
     pub fn intermediates_der(&self) -> impl ExactSizeIterator<Item = &[u8]>;   // empty unless from_pem_chain
     pub fn peer_identity(&self) -> PeerIdentity;
+    pub fn certificate_chain(&self) -> Vec<CertificateDer<'static>>;  // leaf, then intermediates
+    pub fn private_key_der(&self) -> PrivateKeyDer<'static>;          // a copy; Debug elides it
     // feature generate: self-signed ECDSA P-256, CN "coqui-peer", DNS SAN SERVER_NAME,
     // subjectKeyIdentifier, basicConstraints CA:FALSE
     pub fn generate() -> Result<Identity, PeerError>;                 // rcgen's default validity (decades)
@@ -255,6 +257,9 @@ pub fn server_config_without_client_auth(&Identity, alpn: &[&[u8]]) -> Result<Se
 pub fn server_config_without_client_auth_with(&Identity, &[&[u8]], &Policy) -> Result<Built<ServerConfig>, PeerError>;
 pub fn client_config_without_identity(&Trust, alpn: &[&[u8]]) -> Result<ClientConfig, PeerError>;
 pub fn client_config_without_identity_with(&Trust, &[&[u8]], &Policy) -> Result<Built<ClientConfig>, PeerError>;
+// a verifier of the host's own, under the policy; the whole chain presented
+pub fn server_config_with_verifier(&Identity, Arc<dyn ClientCertVerifier>, alpn: &[&[u8]], &Policy) -> Result<Built<ServerConfig>, PeerError>;
+pub fn client_config_with_verifier(Option<&Identity>, Arc<dyn ServerCertVerifier>, alpn: &[&[u8]], &Policy) -> Result<Built<ClientConfig>, PeerError>;
 pub const CLIENT_AUTH_SETTING: &str = "client_auth";
 pub fn crypto_provider() -> Arc<CryptoProvider>;       // default ring provider
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
@@ -272,6 +277,13 @@ pub async fn accept_from<S>(Arc<ServerConfig>, S, SocketAddr) -> Result<(server:
 pub async fn accept_with_from<S>(S, SocketAddr, select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
 pub async fn accept_with<S: PeerAddr>(S, select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
 ```
+
+`server_config_with_verifier` and `client_config_with_verifier` build exactly what
+`server_config_with` and `client_config_with` build (the policy's versions, suites, groups,
+extended master secret and resumption, the identity's whole chain, ALPN) around a verifier the
+host supplies, typically one of this crate's wrapped; `Built::weakened` is the policy's. A host
+building a rustls or quinn configuration by hand takes the identity's `certificate_chain()` and
+`private_key_der()`.
 
 Both complete the handshake before returning, so a refused certificate is an error and the
 returned `PeerIdentity` is verified. `dial` sends `SERVER_NAME`, which pinned trust ignores

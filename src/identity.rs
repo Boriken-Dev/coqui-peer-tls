@@ -195,15 +195,19 @@ impl Identity {
         }
     }
 
-    /// The certificate followed by its intermediates, as a configuration presents them.
-    pub(crate) fn certificate_chain(&self) -> Vec<CertificateDer<'static>> {
+    /// The certificate followed by its intermediates, as a configuration presents them: for a
+    /// host that builds a rustls or quinn configuration of its own.
+    pub fn certificate_chain(&self) -> Vec<CertificateDer<'static>> {
         let mut chain = Vec::with_capacity(1 + self.intermediates.len());
         chain.push(self.certificate.clone());
         chain.extend(self.intermediates.iter().cloned());
         chain
     }
 
-    pub(crate) fn key(&self) -> PrivateKeyDer<'static> {
+    /// A copy of the private key, DER encoded, for a host that builds a rustls or quinn
+    /// configuration of its own. It is the secret of this identity: keep it in memory only.
+    /// Its `Debug` shows no key material.
+    pub fn private_key_der(&self) -> PrivateKeyDer<'static> {
         self.key.clone_key()
     }
 }
