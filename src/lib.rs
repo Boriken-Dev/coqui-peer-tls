@@ -1,39 +1,4 @@
-//! Mutual-TLS peer identity, with no RPC layer: the TLS method of [`coqui_peer`].
-//!
-//! Each side has a self-issued certificate ([`Identity`]) and tells the other only its
-//! [`PeerId`]: the SHA-256 of the certificate. [`dial`] and [`accept`] (and,
-//! with the `tokio` feature, `asynch::dial` and `asynch::accept`) return an authenticated,
-//! encrypted byte stream together with the verified [`PeerIdentity`]. [`Tls`] is the same
-//! method as a sans-IO [`coqui_peer::Method`], for message transports and the drivers of the
-//! core crate.
-//!
-//! Server TLS is the other mode: the server proves itself by certificate and the client
-//! presents none ([`server_config_without_client_auth`], [`client_config_without_identity`]),
-//! so the application authenticates the client inside the channel.
-//!
-//! | Item | Purpose |
-//! | --- | --- |
-//! | [`PeerId`] | A certificate's id, `sha256:HEX`, from the core crate. |
-//! | [`Identity`] | Certificate and key as one PEM file; `generate` and `open_or_create` with the `generate` feature. |
-//! | [`TrustStore`] | The core crate's store of accepted and waiting peers; certificates stored under the method name `tls`. |
-//! | [`Trust`], [`Pins`], [`Roots`] | Whom to trust: pinned, CA (`ca` feature), pinned or CA, any with key proof; a server by the web PKI (roots). |
-//! | [`PeerClientVerifier`], [`PeerServerVerifier`] | The rustls verifiers as values, for other TLS stacks. |
-//! | [`Refusal`] | Why a verifier refused a certificate, read back with [`PeerError::refusal`]. |
-//! | [`client_config`], [`server_config`] | TLS 1.3 configurations with ALPN as a parameter. |
-//! | [`server_config_without_client_auth`], [`client_config_without_identity`] | Server TLS: the server proves itself by certificate, the client inside the channel. |
-//! | [`Tls`], [`TlsHandshake`] | The method and handshake of [`coqui_peer`]. |
-//! | [`pair_dial`], [`pair_accept`], [`pair`] | Pairing by invitation, PIN or device flow on a connection of its own. |
-//! | [`announce`], [`receive_announcement`] | Key rotation: a successor certificate, promoted once proven. |
-//!
-//! Nothing here installs a process-wide crypto provider: every configuration receives the
-//! ring provider explicitly.
-//!
-//! # Features
-//!
-//! `default = []`. `tls12` adds TLS 1.2, `generate` adds rcgen, `ca` adds x509-parser and
-//! globset, `tokio` adds tokio-rustls, `serde` the text form of [`Policy`], `platform-roots`
-//! adds rustls-platform-verifier for `Roots::platform`.
-
+#![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

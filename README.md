@@ -1,120 +1,125 @@
 # coqui-peer-tls
 
-[![Version](https://img.shields.io/badge/version-0.1.0--dev-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/CHANGELOG.md#unreleased)
-[![Rust version](https://img.shields.io/badge/rust-1.89%2B-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/Cargo.toml)
+[![Version](https://img.shields.io/crates/v/coqui-peer-tls.svg)](https://crates.io/crates/coqui-peer-tls)
+[![Rust version](https://img.shields.io/crates/msrv/coqui-peer-tls.svg)](https://crates.io/crates/coqui-peer-tls)
 [![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue.svg)](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/LICENSE)
-[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://boriken-dev.github.io/coqui-peer-tls/rust/coqui_peer_tls/index.html)
+[![Docs](https://img.shields.io/docsrs/coqui-peer-tls)](https://docs.rs/coqui-peer-tls)
 [![CI](https://img.shields.io/github/actions/workflow/status/Boriken-Dev/coqui-peer-tls/test.yml)](https://github.com/Boriken-Dev/coqui-peer-tls/actions/workflows/test.yml)
 
 **Mutual-TLS identity between peers, with no RPC layer.** Each side has a self-issued
-certificate and tells the other only its fingerprint. You get back an authenticated, encrypted
-byte stream and the verified peer identity; nothing is installed process-wide, and nothing is
-read from a file or the environment unless you give it a path. This is the TLS method of
-[`coqui-peer`](https://github.com/Boriken-Dev/coqui-peer), which holds the peer id, the trust
-store and the sans-IO handshake trait; this crate adds X.509 and rustls on top. See the
+certificate and tells the other only its fingerprint; you get back an authenticated, encrypted
+byte stream and the verified peer. This is the TLS method of
+[`coqui-peer`](https://crates.io/crates/coqui-peer), which holds the peer id, the trust store
+and the sans-IO handshake trait; this crate adds X.509 and rustls. See the
 [documentation](https://boriken-dev.github.io/coqui-peer-tls/).
+
+> **Status: alpha.** `0.0.0-alpha.0` is a pre-release: the API may change in any release
+> before 1.0.
 
 ## Features
 
-- **Certificate ids** — a certificate's id is the `PeerId` of `coqui-peer`: SHA-256 of the
-  certificate, written `sha256:<hex>`; grouped base32 for screens; SHA-384, SHA-512 and
-  (legacy) SHA-1 pins can be read.
-- **Trust you choose** — pinned fingerprints, a CA with subject and SAN globs, both, or any
-  certificate whose key the peer proves. A client can also verify a server by the web PKI,
-  as a browser does: `Trust::Roots` with a CA bundle or the operating system's verifier,
-  alone or beside pins (`Trust::PinnedOrRoots`).
-- **Pairing** — a peer that proves its key and is not trusted is recorded as waiting in the
-  `coqui-peer` `TrustStore` (certificates are kept under the method name `tls`); an operator
-  accepts it by fingerprint.
-- **Pairing without reading fingerprints** — `pair_dial` / `pair_accept` run `coqui-peer`'s
-  invitation, PIN (SPAKE2, feature `pin`) or device-flow exchange on a connection of its own
-  under the pairing ALPN, bound to it by the TLS exporter, with your device's own `Policy`.
-  Codes to show and decisions to make come back as data; the `PairingDesk` holds them.
-- **Key rotation** — `announce` a successor certificate over an authenticated connection; the
-  store-backed verifiers promote it once proven and retire the old one after a window you
-  choose. `Identity::renew_before` says when to.
-- **Policy** — strict by default (TLS 1.3 only), with `compatible` and `legacy` presets and
-  fields you can change; a policy is a plain value you can build, name and store.
-- **Verifiers as values** — hand the rustls verifiers to another TLS stack.
-- **A `coqui-peer` method** — `Tls` and `TlsHandshake` implement the sans-IO `Method` and
-  `Handshake` traits, so the same TLS runs over message transports (WebSocket messages,
-  datagrams on a reliable channel) with the core crate's drivers.
-- **Streams** — blocking `dial`/`accept` over any `Read + Write`; async over any
-  `AsyncRead + AsyncWrite` with `tokio`. `accept` reads the peer address from a TCP stream;
-  other streams use `accept_from`.
-- **Server TLS** — `server_config_without_client_auth` and `client_config_without_identity`:
-  the server proves itself by certificate, the client presents none and is authenticated by
-  your application inside the channel (browsers over `wss://` and WebTransport, hosts without
-  an identity). The server's `weakened` list says so (`client_auth = none`), and
-  `TlsHandshake::finish_unauthenticated` finishes its handshake with no peer certificate.
-- **Web PKI and WebTransport identities** — `Identity::from_pem_chain` presents a CA-issued
-  leaf with its intermediates; `Identity::generate_valid_for` makes a short-lived
-  certificate for WebTransport's `serverCertificateHashes` (at most 14 days there), with the
-  subjectAltName and subjectKeyIdentifier browsers expect.
+- **Certificate ids**: a certificate's id is `coqui-peer`'s `PeerId`, the SHA-256 of the
+  certificate, written `sha256:<hex>`; SHA-384, SHA-512 and SHA-1 pins can be read.
+- **Trust you choose**: pinned fingerprints, a CA with subject and SAN globs, both, or any
+  certificate whose key the peer proves; a client can verify a server by the web PKI, with a
+  CA bundle or the operating system's verifier, alone or beside pins.
+- **Pairing**: an untrusted peer that proves its key is recorded as waiting in the trust store,
+  and an operator accepts it by fingerprint; or two devices pair by an invitation, a PIN or a
+  device flow on a connection of their own, bound to it by the TLS exporter.
+- **Key rotation**: a peer announces its successor certificate; store-backed pins promote it
+  once proven and retire the old one after a window you choose.
+- **Policy**: strict by default (TLS 1.3 only), with `compatible` and `legacy` presets; looser
+  settings are reported as data, never refused. A policy can carry an access control list,
+  applied by address at the `ClientHello` and by fingerprint before the trust store.
+- **Your own stack**: the rustls verifiers as values, configurations around a verifier of your
+  own, per-connection configurations for quinn, and the identity's chain and key.
+- **Streams**: blocking `dial` and `accept` over any `Read + Write`, async ones over tokio; the
+  sans-IO `coqui-peer` method for message transports.
+- **Server TLS**: the server proves itself by certificate and the client authenticates inside
+  the channel (browsers over `wss://` and WebTransport); short-lived identities for
+  WebTransport's `serverCertificateHashes`.
+- Nothing installs a process-wide crypto provider, and nothing reads a file or the environment
+  unless you give it a path.
 
 ## Installation
 
 ```bash
-cargo add coqui-peer-tls --git https://github.com/Boriken-Dev/coqui-peer-tls
+cargo add coqui-peer-tls@0.0.0-alpha.0
 ```
 
-| Feature | Adds | Needed for |
-| --- | --- | --- |
-| `tls12` | rustls `tls12` | the `compatible` and `legacy` presets |
-| `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` |
-| `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa` |
-| `tokio` | `tokio`, `tokio-rustls` | `asynch::dial`, `accept`, `accept_from`, `accept_with`, `accept_with_from`, and the pairing and rotation twins |
-| `pin` | `coqui-peer/pin` (`spake2`, `hkdf`, `hmac`) | PIN pairing |
-| `serde` | `serde`, `coqui-peer/serde` | reading and writing a `Policy` and `PeerId` as text, in the format you choose |
-| `acl` | `coqui-net-acl` | an access control list inside a `Policy` |
-| `platform-roots` | `rustls-platform-verifier` | `Roots::platform`: servers verified by the operating system's roots |
+| Feature | Adds | Needed for | Default |
+| --- | --- | --- | --- |
+| `tls12` | rustls `tls12` | the `compatible` and `legacy` presets | off |
+| `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
+| `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
+| `tokio` | `tokio`, `tokio-rustls`, `coqui-peer/tokio` | module `asynch`: async dial, accept, pairing and rotation | off |
+| `pin` | `coqui-peer/pin` | PIN pairing | off |
+| `serde` | `serde`, `coqui-peer/serde`, `coqui-net-acl/serde` | reading and writing a `Policy` and `PeerId` as text | off |
+| `acl` | `coqui-net-acl` | an access control list inside a `Policy` | off |
+| `platform-roots` | `rustls-platform-verifier` | `Roots::platform`: servers verified by the operating system | off |
+
+Rust 1.89 or later. A default build depends on `coqui-peer` and `rustls` (0.23.27 or later,
+ring provider).
 
 ## Quick start
 
-```rust,ignore
-use std::sync::Arc;
-use coqui_peer_tls::{Identity, Pins, Trust, client_config, dial, server_config, accept};
+Dial a peer you pinned, with an identity read from a file:
 
-let me = Identity::open_or_create(path)?;                 // `generate` feature
-let trust = Trust::Pinned(Pins::fixed(["sha256:3f15...".parse()?]));
-let config = client_config(&me, &trust, &[b"my-protocol/1"])?;   // strict: TLS 1.3 only
-let (stream, peer) = dial(Arc::new(config), tcp_stream)?;        // peer.fingerprint
+```rust,no_run
+use std::sync::Arc;
+use coqui_peer_tls::{Identity, Pins, Trust, client_config, dial};
+
+let me = Identity::read("identity.pem".as_ref())?.expect("an identity file");
+let trust = Trust::Pinned(Pins::fixed([
+    "sha256:630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd".parse()?,
+]));
+let config = client_config(&me, &trust, &[b"my-protocol/1"])?; // strict: TLS 1.3 only
+let socket = std::net::TcpStream::connect("192.0.2.7:7000")?;
+let (stream, peer) = dial(Arc::new(config), socket)?;
+println!("connected to {}", peer.fingerprint);
+# drop(stream);
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-### A server with a CA-issued certificate
+Dial a server with a CA-issued certificate, verified by the web PKI for its name:
 
-```rust,ignore
-use rustls::pki_types::ServerName;
+```rust,no_run
+use std::sync::Arc;
 use coqui_peer_tls::{Roots, Trust, client_config_without_identity, dial_named};
+use rustls::pki_types::ServerName;
 
 let trust = Trust::Roots(Roots::bundle_file("/etc/ssl/certs/ca-certificates.crt"));
-// or Roots::platform() with the `platform-roots` feature
 let config = client_config_without_identity(&trust, &[b"my-protocol/1"])?;
 let name = ServerName::try_from("example.com")?.to_owned();
-let (stream, server) = dial_named(Arc::new(config), name, tcp_stream)?;   // server.fingerprint: the leaf's
+let socket = std::net::TcpStream::connect("example.com:443")?;
+let (stream, server) = dial_named(Arc::new(config), name, socket)?;
+# drop((stream, server));
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Roots are a different trust model from pins, not a looser setting: any server one of the
-roots issued a certificate for the dialled name is trusted. The chain, the dates and the name
-are always checked; no option skips the name. `dial` sends `SERVER_NAME`, which no CA
-issues, so a server verified by roots is dialled with `dial_named` (or
-`TlsHandshake::client_named`, `asynch::dial_named`). A wrong name is `Refusal::NameMismatch`,
-an unknown issuer `Refusal::NotTrusted`.
+Roots are a different trust model from pins: any server one of the roots issued a certificate
+for the dialled name is trusted. The chain, the dates and the name are always checked.
+
+## API overview
+
+| Module | Purpose |
+| --- | --- |
+| `coqui_peer_tls` | `Identity`, `PeerIdentity`; `Trust`, `Pins`, `CaPolicy`, `Roots` and their verifiers; `Policy`; the configuration builders and `Built`; `dial`, `accept` and their variants; `Tls` and `TlsHandshake`; pairing over TLS; rotation; `PeerError`, `Refusal`; re-exports of `coqui-peer`'s ids, store and `Weakening`. |
+| `coqui_peer_tls::asynch` | Async dial, accept, pairing and rotation over tokio (`tokio`). |
+| `coqui_peer_tls::pair` | `coqui-peer`'s pairing exchange, re-exported. |
+| `coqui_peer_tls::acl` | `coqui-net-acl`, re-exported (`acl`). |
 
 ## Profiles and policy
 
 `Policy::default()` is strict and works as it is. `Policy::strict()`, `compatible()` and
-`legacy()` are constructors for plain values; start from one, or from a policy of your own,
-and change any public field. `weakened()` lists, as data, every setting looser than strict
-(`weakened_against(&baseline)` compares with a baseline you choose); `client_config_with` and
-`server_config_with` return that list beside the configuration, and
-`server_config_without_client_auth_with` adds `client_auth = none` to it. Nothing is printed.
+`legacy()` are plain values; start from one and change any public field. `weakened()` lists
+every setting looser than strict, as data; `client_config_with` and `server_config_with` return
+that list beside the configuration. Nothing is printed.
 
 | Field | `strict` | `compatible` | `legacy` |
 | --- | --- | --- | --- |
 | `tls_versions` | `1.3` | `1.2`, `1.3` | `1.2`, `1.3` |
-| `cipher_suites` | all the provider has for those versions | same | same |
-| `kx_groups` | all | all | all |
+| `cipher_suites`, `kx_groups` | all the provider has | same | same |
 | `pin_digests` | sha256, sha384, sha512 | same | plus sha1 |
 | `check_validity` | true | true | true |
 | `allow_chain_when_pinned` | false | false | false |
@@ -125,35 +130,30 @@ and change any public field. `weakened()` lists, as data, every setting looser t
 
 Session resumption is off in every preset: rustls does not check the peer's certificate again
 on a resumed session, so a peer removed from the trust store could reconnect on a session it
-held. `allow_resumption = true` turns it back on and is reported by `weakened()`.
+held. TLS 1.0, 1.1 and non-AEAD suites cannot be offered; MD5 pins are never accepted.
 
-rustls offers TLS 1.2 and 1.3 only. TLS 1.0, 1.1 and non-AEAD suites cannot be offered by
-this crate, and asking for them is an error that lists what is supported. MD5 pins are never
-accepted. Cipher suites are chosen by IANA name from `Policy::supported_cipher_suites()`.
+```rust,no_run
+use coqui_peer_tls::{Digest, Identity, Policy, Trust, server_config_with};
 
-Build a policy in code first; this is the whole API:
-
-```rust,ignore
+let identity = Identity::read("identity.pem".as_ref())?.expect("an identity file");
 let mut policy = Policy::compatible();
 policy.pin_digests.push(Digest::Sha1);
 policy.waiting.per_source = 4;
-let built = server_config_with(&identity, &trust, &[b"my-protocol/1"], &policy)?;
-for weaker in &built.weakened { log::warn!("{} = {}", weaker.setting, weaker.value); }
+let built = server_config_with(&identity, &Trust::AnyWithKeyProof, &[b"my-protocol/1"], &policy)?;
+for weaker in &built.weakened {
+    eprintln!("{} = {} (strict: {})", weaker.setting, weaker.value, weaker.strict);
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-With the `serde` feature a `Policy` also reads and writes a versioned text form (version 1).
-The crate parses no format itself: enable `serde` and call your own `toml::from_str` or
-`serde_json::from_str`. The fields are:
+With the `serde` feature a `Policy` also reads and writes a versioned text form (version 1),
+in the format you choose:
 
 ```toml
 policy_version = 1
-profile = "compatible"          # a built-in preset to start from; a name only for your own
+profile = "compatible"          # a built-in preset to start from
 tls_versions = ["1.2", "1.3"]
-cipher_suites = ["TLS13_AES_256_GCM_SHA384"]   # optional
-kx_groups = ["X25519"]                          # optional
 pin_digests = ["sha256", "sha384", "sha512"]
-check_validity = true
-allow_chain_when_pinned = false
 allow_resumption = false
 require_ems = true
 waiting_per_source = 16
@@ -169,54 +169,47 @@ source = "10.9.0.0/16"
 destination = "10.6.20.5"
 ```
 
-Every key is optional; absent keys keep the preset. `Policy::deserialize_over(base, d)` reads
-a document over your own base policy. Committed examples for every preset are in
-`tests/vectors/policy/`.
+Every key is optional; absent keys keep the preset. Committed examples for every preset are in
+the repository's `tests/vectors/policy/`.
 
-## API overview
+## Access control
 
-| Item | Purpose |
-| --- | --- |
-| `Identity`, `PeerIdentity` | This side's certificate and key; the verified other side. |
-| `PeerId`, `Digest` | Certificate hashes and their text forms. |
-| `Trust`, `Pins`, `CaPolicy`, `Roots` | Whom to trust. |
-| `PeerClientVerifier`, `PeerServerVerifier` | The rustls verifiers as values. |
-| `Refusal`, `PeerError::refusal` | Why this side refused a peer's certificate, as a value. |
-| `TrustStore`, `WaitingLimits` | Accepted and waiting peers as files. |
-| `Policy`, `Weakening` | What is allowed, and what is looser than strict. |
-| `client_config(_with)`, `server_config(_with)`, `Built` | TLS configurations, ALPN as a parameter. |
-| `dial`, `dial_named`, `accept`, `asynch::*` | Encrypted streams plus the peer. |
-| `pair_dial`, `pair_accept`, `PairConfig`, `ResponderTrust`, `pair::*` | Pairing over TLS. |
-| `announce`, `receive_announcement`, `Identity::renew_before` | Key rotation. |
+A policy's access control list (feature `acl`) is applied by every server configuration built
+under it: by address when the `ClientHello` arrives, before any certificate is sent, and by the
+client certificate's fingerprint before the trust store is consulted, so a denied client is
+never recorded as waiting. Fingerprint rules may be written in any spelling a `PeerId` parses.
+The refusals are `Refusal::AddressDenied`, `PeerDenied` and `AddressUnknown`. For quinn,
+`server_config_for` and `Trust::client_cert_verifier_for` take one connection's addresses, and
+`Policy::admits_address` decides before the handshake.
 
-## Limits and future work
+## Limits
 
-- A waiting entry is recorded only after the peer proves it holds the certificate's key, with
-  pins alone or beside a CA policy. Each entry stores the address the handshake came from:
-  `accept` takes it from a TCP stream, `accept_from` takes it for any other stream, and the
-  per-source caps (`waiting.per_source`, `waiting.rerecord`) apply per IPv4 address or
-  per IPv6 /64 (`TrustStore::with_ipv6_prefix`).
-- Not provided: a handshake probe (`Unknown | Online | Rejected | Offline`), a helper for
-  reading and writing one connection from two threads, and QUIC with datagrams.
-- `coqui-net-acl` is its own crate, not part of this one: it needs no TLS and is used on
-  plaintext listeners too. A `Policy` carrying one (feature `acl`) applies it in every server
-  configuration: by address when the `ClientHello` arrives, and by the client certificate's
-  fingerprint before the trust store is consulted.
+- A waiting entry is recorded only after the peer proves it holds the certificate's key. Each
+  entry stores the address the handshake came from, and the per-source caps
+  (`waiting.per_source`, `waiting.rerecord`) apply per IPv4 address or per IPv6 /64.
+- Not provided: a handshake probe, a helper for reading and writing one connection from two
+  threads, and QUIC datagrams.
 
 ## Development
 
 ```bash
 cargo fmt --all --check
-cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
+cargo +1.89 clippy --all-targets --all-features -- -D warnings
+cargo test --all-features
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+cargo +nightly-2026-09-21 public-api --all-features -sss --color never | diff -u tools/public-api.txt -
 ```
 
 ### Releasing
 
 This project follows [Semantic Versioning](https://semver.org/) and keeps a
 [`CHANGELOG.md`](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/CHANGELOG.md).
-Pushing a tag matching `v*` triggers the release workflow of the repository.
+Pushing a tag matching `v*` runs the release workflow: the tests and a strict documentation
+build gate a GitHub release, marked as a pre-release when the version has a `-` suffix. The
+crate is published to crates.io with `cargo publish` by a maintainer, after `coqui-net-acl` and
+`coqui-peer`.
 
 ## License
 
-MPL-2.0 — see [LICENSE](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/LICENSE).
+MPL-2.0; see [LICENSE](https://github.com/Boriken-Dev/coqui-peer-tls/blob/main/LICENSE).

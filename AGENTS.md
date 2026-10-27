@@ -5,24 +5,34 @@ contract and gotchas, so the crate can be used without reading its source. It sh
 package and is self-contained. Development documentation lives with the source at
 <https://github.com/Boriken-Dev/coqui-peer-tls>.
 
-| Feature | Adds | Default |
-| --- | --- | --- |
-| `tls12` | rustls `tls12` (needed by `Policy::compatible()` and `legacy()`) | off |
-| `generate` | `rcgen`, `time`: `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
-| `ca` | `x509-parser`, `globset`: `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
-| `tokio` | `tokio` (`net`, `io-util`, `time`), `tokio-rustls`: module `asynch` | off |
-| `pin` | `coqui-peer/pin`: PIN pairing (`Pairing::pin`) | off |
-| `serde` | `serde`, `coqui-peer/serde`: text form of `Policy`, `PeerId` as text; the consumer picks the format | off |
-| `acl` | `coqui-net-acl`: `Policy::acl`, re-exported as `coqui_peer_tls::acl` | off |
-| `platform-roots` | `rustls-platform-verifier`: `Roots::platform` | off |
+| Feature | Adds | Needed for | Default |
+| --- | --- | --- | --- |
+| `tls12` | rustls `tls12` | `Policy::compatible()`, `legacy()`, any policy allowing TLS 1.2 | off |
+| `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
+| `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
+| `tokio` | `tokio` (`net`, `io-util`, `time`), `tokio-rustls`, `coqui-peer/tokio` | module `asynch` | off |
+| `pin` | `coqui-peer/pin` | PIN pairing (`Pairing::pin`) | off |
+| `serde` | `serde`, `coqui-peer/serde`, `coqui-net-acl/serde` | the text form of `Policy`, `PeerId` as text; the consumer picks the format | off |
+| `acl` | `coqui-net-acl` | `Policy::acl` and its enforcement, `coqui_peer_tls::acl` | off |
+| `platform-roots` | `rustls-platform-verifier` | `Roots::platform` | off |
 
-This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sans-IO
-`Handshake`); its API header is in that crate. MSRV Rust 1.89. A default build depends on
-`coqui-peer` and `rustls` (0.23.27 or later, ring provider). No `unsafe` code. Nothing installs a process-wide crypto provider, and
-nothing reads a file or an environment variable unless the caller passes a path. TLS 1.3 is
-the default; TLS 1.2 only when a policy allows it.
+MSRV Rust 1.89. A default build depends on `coqui-peer` and `rustls` (0.23.27 or later, ring
+provider). Version `0.0.0-alpha.0` is a pre-release; the API may change in any release before
+1.0. This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sans-IO
+`Handshake`, `Weakening`); its API header ships in that crate.
 
-## PeerId, Digest (from `coqui-peer`)
+Imports: everything is at the crate root, including re-exports of `coqui-peer`'s `Clock`,
+`Digest`, `Invitation`, `InvitationOptions`, `KeyMaterial`, `PeerId`, `Random`, `ReadTimeout`,
+`RotationEvent`, `RotationOptions`, `TrustStore`, `WaitingEntry`, `WaitingLimits` and
+`Weakening`. Public modules: `asynch` (feature `tokio`), `pair` (`coqui_peer::pair`
+re-exported) and `acl` (`coqui_net_acl` re-exported, feature `acl`).
+
+No `unsafe` code (`#![forbid(unsafe_code)]`). Process-wide state: one thread-local holding the
+addresses of the handshake call in progress (`with_source`, `with_addresses`). Nothing installs
+a process-wide crypto provider, and nothing reads a file or an environment variable unless the
+caller passes a path. TLS 1.3 is the default; TLS 1.2 only when a policy allows it.
+
+## Ids (`coqui_peer_tls::{PeerId, Digest}`, from `coqui-peer`)
 
 ```rust
 pub use coqui_peer::{Digest, PeerId, KeyMaterial, TrustStore, WaitingEntry, WaitingLimits};
@@ -34,7 +44,7 @@ forms, `canonical()`, `hex()`, `to_base32_grouped()` and the parsing rules (`sha
 hex, colon pairs, grouped base32; MD5 is `PeerError::WeakDigest`) are the core crate's. Whether a
 policy lets a pin use a digest is a `Policy` matter.
 
-## Identity (`Identity`, `PeerIdentity`)
+## Identity (`coqui_peer_tls::{Identity, PeerIdentity}`)
 
 ```rust
 pub struct Identity;                       // Clone; Debug shows only the fingerprint
@@ -79,7 +89,7 @@ pub struct PeerIdentity { pub fingerprint: PeerId, pub certificate: Vec<u8> }   
   verifier refuses a certificate with no extensions. Pins name the certificate as made, so
   pinning is unaffected.
 
-## Trust (`Trust`, `Pins`, `CaPolicy`, `Roots`)
+## Trust (`coqui_peer_tls::{Trust, Pins, CaPolicy, Roots}`)
 
 ```rust
 #[non_exhaustive]
@@ -158,7 +168,7 @@ prove its key. Names are not checked on the pinned path; roots always check them
   (server `session_storage = NoServerSessionStorage`, `send_tls13_tickets = 0`; client
   `resumption = Resumption::disabled()`), or a peer that lost trust can resume.
 
-## TrustStore (from `coqui-peer`) and certificates
+## Trust store and certificates (`coqui_peer_tls::{TrustStore, TrustStoreExt}`)
 
 The store, `WaitingEntry { id, source }`, `WaitingLimits`, the pairing flow and the rule that a
 peer is recorded only after it proved its key are `coqui-peer`'s; see its API header. This
@@ -176,12 +186,12 @@ pub trait TrustStoreExt {
 A store-backed `Pins` counts a peer as accepted only when its entry names method `tls`.
 `record_waiting` is bounded as in the core: per source IP, the rerecord interval, a total.
 
-## Policy
+## Policy (`coqui_peer_tls::Policy`)
 
 ```rust
 pub struct Policy {
     pub name: String,                          // informational; "strict", "compatible", "legacy" or your own
-    pub tls_versions: Vec<TlsVersion>,         // V1_2, V1_3
+    pub tls_versions: Vec<TlsVersion>,         // #[non_exhaustive] enum TlsVersion { V1_2, V1_3 }
     pub cipher_suites: Option<Vec<String>>,    // IANA names; None = all for the versions
     pub kx_groups: Option<Vec<String>>,        // e.g. "X25519"; None = all
     pub pin_digests: Vec<Digest>,
@@ -206,6 +216,7 @@ impl Policy {
 }
 pub use coqui_peer::Weakening;    // { setting, value, strict }, Weakening::new; setting: a field, or "client_auth"
 pub const POLICY_VERSION: u32 = 1;
+impl TlsVersion { pub const fn as_str(self) -> &'static str; }   // "1.2", "1.3"; also Display; FromStr refuses others
 ```
 
 | Field | strict | compatible | legacy |
@@ -297,7 +308,7 @@ with an ACL, refuses a denied fingerprint before the pins; it does not apply the
 which `server_config_for` (both) or `Policy::admits_address` (before the handshake) do.
 `client_cert_verifier_with` applies no ACL: it has no addresses.
 
-## Configurations and streams
+## Configurations and streams (`coqui_peer_tls`, `coqui_peer_tls::asynch`)
 
 ```rust
 pub struct Built<T> { pub config: T, pub weakened: Vec<Weakening> }
@@ -366,7 +377,7 @@ certificate, and hosts without an identity of their own.
   configuration they fail with `PeerError::Certificate` after the handshake. `dial` and
   `TlsHandshake::finish` on the client side work as in mutual TLS.
 
-## The method (`Tls`, `TlsHandshake`)
+## The method (`coqui_peer_tls::{Tls, TlsHandshake}`)
 
 ```rust
 pub struct Tls;      // Clone, Default
@@ -395,7 +406,7 @@ drives its handshake with `coqui_peer::complete_stream` / `complete_messages` (o
 `server_config_without_client_auth*` it is always `None`, meaning not authenticated. Before
 completion it is `PeerError::Tls`.
 
-## Pairing and rotation over TLS
+## Pairing and rotation over TLS (`coqui_peer_tls`, `coqui_peer_tls::pair`)
 
 The `coqui-peer` pairing exchange (re-exported as `coqui_peer_tls::pair`; its API header has the
 modes, options, desk, throttles, their costs and the security model) on a connection of its
@@ -409,7 +420,7 @@ pub const PAIR_ALPN: &[u8] = b"coqui-pair/1";
 pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
 pub struct PairConfig { pub policy: Policy, pub alpn: Vec<u8>, pub timeout: Duration }  // strict, PAIR_ALPN, 15 min
 pub use coqui_peer::ReadTimeout;            // fn set_read_timeout(&self, Option<Duration>) -> io::Result<()>; TcpStream
-pub enum ResponderTrust { Unverified, Verified { trust: Box<Trust>, name: Option<ServerName<'static>> } }
+#[non_exhaustive] pub enum ResponderTrust { Unverified, Verified { trust: Box<Trust>, name: Option<ServerName<'static>> } }
 impl ResponderTrust { pub fn pinned(id: PeerId) -> ResponderTrust; }
 pub fn random() -> Random;                   // the TLS provider's secure random source
 pub fn pair_server_config(&Identity, &PairConfig) -> Result<ServerConfig, PeerError>;
@@ -491,6 +502,27 @@ works both ways: a server verifying clients by its store, and a client pinning i
 its store. `take_rotation_events` returns what happened. `Identity::renew_before(margin)` says
 when the certificate ends within `margin` (an unreadable one is due).
 
+## On-disk formats
+
+For peers in other languages. All files are UTF-8 with LF line endings.
+
+- **Identity file** — one PEM file: the leaf's `CERTIFICATE` block, the intermediates'
+  `CERTIFICATE` blocks in order (a chained identity only), then a PKCS#8 `PRIVATE KEY` block;
+  64-character base64 lines. Mode `0600` on Unix. `read` and `open_or_create` read either
+  shape; `from_pem` takes the single-certificate one only.
+- **Certificate id** (`PeerId`) — SHA-256 of the certificate's DER encoding. Canonical text
+  `sha256:<64 lowercase hex>` (`openssl x509 -outform DER | sha256sum` gives the hex).
+  Grouped base32 (RFC 4648 alphabet, no padding, 52 characters, groups of four joined by `-`)
+  is a display form.
+- **Trust store** — `coqui-peer`'s format (see its header): certificates are kept as
+  `peers/{accepted,waiting}/<64 hex>.pem` with header lines `Method: tls` and (waiting)
+  `Source: <ip>:<port>`, then one `CERTIFICATE` block whose DER hashes to the name. The store
+  vectors live in that crate.
+- **Vectors** — `tests/vectors/identity-{a,b}.pem` and `identity-{a,b}.fingerprint` (three
+  lines: canonical, bare hex, grouped base32) are checked by `tests/vectors.rs`; the policy
+  vectors under `tests/vectors/policy/` are byte-exact text forms (TOML and JSON, read in
+  tests through dev-dependencies only).
+
 ## Errors
 
 ```rust
@@ -538,27 +570,6 @@ one: the refused side sees the TLS alert, so its `refusal()` is `None`. A host d
 itself calls `Refusal::from_rustls`. `Display` of `PeerError` names the category only, never key
 material or a path.
 
-## On-disk formats
-
-For peers in other languages. All files are UTF-8 with LF line endings.
-
-- **Identity file** — one PEM file: the leaf's `CERTIFICATE` block, the intermediates'
-  `CERTIFICATE` blocks in order (a chained identity only), then a PKCS#8 `PRIVATE KEY` block;
-  64-character base64 lines. Mode `0600` on Unix. `read` and `open_or_create` read either
-  shape; `from_pem` takes the single-certificate one only.
-- **Certificate id** (`PeerId`) — SHA-256 of the certificate's DER encoding. Canonical text
-  `sha256:<64 lowercase hex>` (`openssl x509 -outform DER | sha256sum` gives the hex).
-  Grouped base32 (RFC 4648 alphabet, no padding, 52 characters, groups of four joined by `-`)
-  is a display form.
-- **Trust store** — `coqui-peer`'s format (see its header): certificates are kept as
-  `peers/{accepted,waiting}/<64 hex>.pem` with header lines `Method: tls` and (waiting)
-  `Source: <ip>:<port>`, then one `CERTIFICATE` block whose DER hashes to the name. The store
-  vectors live in that crate.
-- **Vectors** — `tests/vectors/identity-{a,b}.pem` and `identity-{a,b}.fingerprint` (three
-  lines: canonical, bare hex, grouped base32) are checked by `tests/vectors.rs`; the policy
-  vectors under `tests/vectors/policy/` are byte-exact text forms (TOML and JSON, read in
-  tests through dev-dependencies only).
-
 ## Gotchas
 
 - TLS 1.0 and 1.1 and non-AEAD suites cannot be offered; asking is `PeerError::Policy`.
@@ -569,3 +580,12 @@ For peers in other languages. All files are UTF-8 with LF line endings.
 - A server-TLS server has no client verifier: no pins, no CA, no waiting entries. A client
   pinning its server works the same in both modes.
 - `PeerId` equality is constant time; compare through it, not through `to_string()`.
+- `PeerError`, `Refusal`, `Trust`, `TlsVersion` and `ResponderTrust` are `#[non_exhaustive]`:
+  a `match` needs a `_` arm.
+- With a policy ACL, a connection whose addresses the configuration cannot learn is refused
+  (`Refusal::AddressUnknown`): accept through `accept`, `accept_at`, `TlsHandshake::with_local`
+  or `with_addresses`, or build the configuration for the connection (`server_config_for`). A
+  `PeerAddr` implementation that does not override `local_addr` gives none.
+- `client_cert_verifier_with` applies no ACL; the configurations built here do.
+- Session resumption skips the verifiers and the ACL: leave `allow_resumption` off where a peer
+  or an address can lose its access.
