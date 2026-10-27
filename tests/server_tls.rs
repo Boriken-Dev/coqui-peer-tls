@@ -268,6 +268,23 @@ fn a_chained_identity_keeps_the_leaf_fingerprint_and_its_intermediates() {
 }
 
 #[test]
+fn a_chained_identity_file_reads_back_with_its_chain() {
+    let chain = Chain::new();
+    let identity = Identity::from_pem_chain(&chain.pem()).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("identity.pem");
+    identity.write_new(&path).unwrap();
+    let read = Identity::read(&path).unwrap().unwrap();
+    assert_eq!(read.fingerprint(), identity.fingerprint());
+    let intermediates: Vec<&[u8]> = read.intermediates_der().collect();
+    assert_eq!(intermediates, vec![chain.intermediate.der().as_ref()]);
+    // An existing chained file is opened, not replaced by a generated identity.
+    let opened = Identity::open_or_create(&path).unwrap();
+    assert_eq!(opened.fingerprint(), identity.fingerprint());
+    assert_eq!(opened.intermediates_der().len(), 1);
+}
+
+#[test]
 fn a_chain_whose_first_certificate_is_not_the_keys_is_refused() {
     let chain = Chain::new();
     let other = KeyPair::generate().unwrap();
