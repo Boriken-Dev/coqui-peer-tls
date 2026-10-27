@@ -238,7 +238,7 @@ fn weakening_is_reported_as_plain_data() {
     policy.check_validity = false;
     policy.allow_chain_when_pinned = true;
     policy.allow_resumption = true;
-    policy.waiting_per_source = 64;
+    policy.waiting.per_source = 64;
     let settings: Vec<String> = policy.weakened().into_iter().map(|w| w.setting).collect();
     assert_eq!(
         settings,
@@ -258,7 +258,7 @@ fn weakening_is_reported_as_plain_data() {
     // Fields are plain: stricter-than-default overrides are not weakenings.
     let mut tighter = Policy::strict();
     tighter.pin_digests = vec![Digest::Sha256];
-    tighter.waiting_per_source = 4;
+    tighter.waiting.per_source = 4;
     assert!(tighter.weakened().is_empty());
 }
 

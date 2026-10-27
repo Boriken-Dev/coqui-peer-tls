@@ -287,7 +287,7 @@ impl Trust {
         if let Some(pins) = &pins {
             pins.check_digests(policy)?;
         }
-        let pins = pins.map(|pins| pins.with_limits(policy.waiting_limits()));
+        let pins = pins.map(|pins| pins.with_limits(policy.waiting));
         #[cfg(not(feature = "ca"))]
         let _ = ca;
         Ok(PeerClientVerifier {
