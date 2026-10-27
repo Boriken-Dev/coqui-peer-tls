@@ -1,9 +1,10 @@
 use core::fmt;
 #[cfg(feature = "generate")]
 use core::time::Duration;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::io;
+use std::path::Path;
+#[cfg(feature = "generate")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustls::ServerConfig;
@@ -13,6 +14,8 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use crate::config::crypto_provider;
 use crate::error::PeerError;
 use coqui_peer::PeerId;
+use coqui_peer::file::{self, Access};
+use coqui_peer::pem;
 
 /// A verified peer: the certificate the other side proved it holds the key of.
 ///
@@ -134,11 +137,11 @@ impl Identity {
         let PrivateKeyDer::Pkcs8(key) = &self.key else {
             return Err(PeerError::Certificate);
         };
-        let mut pem = encode_pem("CERTIFICATE", self.certificate.as_ref());
+        let mut pem = pem::encode("CERTIFICATE", self.certificate.as_ref());
         for intermediate in &self.intermediates {
-            pem.push_str(&encode_pem("CERTIFICATE", intermediate.as_ref()));
+            pem.push_str(&pem::encode("CERTIFICATE", intermediate.as_ref()));
         }
-        pem.push_str(&encode_pem("PRIVATE KEY", key.secret_pkcs8_der()));
+        pem.push_str(&pem::encode("PRIVATE KEY", key.secret_pkcs8_der()));
         Ok(pem)
     }
 
@@ -163,26 +166,9 @@ impl Identity {
     ///
     /// [`PeerError::Io`] with kind `AlreadyExists` when `path` exists.
     pub fn write_new(&self, path: &Path) -> Result<(), PeerError> {
-        let parent = path.parent().ok_or(PeerError::Path)?;
-        fs::create_dir_all(parent).map_err(PeerError::Io)?;
+        path.parent().ok_or(PeerError::Path)?;
         let pem = self.to_pem()?;
-        let temporary = temporary_path(path);
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options.open(&temporary).map_err(PeerError::Io)?;
-        let result = file
-            .write_all(pem.as_bytes())
-            .and_then(|()| file.sync_all())
-            // A hard link fails when `path` exists, so an existing identity is never replaced.
-            .and_then(|()| fs::hard_link(&temporary, path));
-        drop(file);
-        let _ = fs::remove_file(&temporary);
-        result.map_err(PeerError::Io)
+        file::write_new(path, pem.as_bytes(), Access::OwnerOnly).map_err(PeerError::Io)
     }
 
     /// The certificate's fingerprint: what a peer pins.
@@ -328,26 +314,6 @@ impl Identity {
 }
 
 /// Encodes DER as a PEM block with 64-character lines and LF line endings.
-pub(crate) fn encode_pem(label: &str, der: &[u8]) -> String {
-    let encoded = data_encoding::BASE64.encode(der);
-    let mut pem = format!("-----BEGIN {label}-----\n");
-    for chunk in encoded.as_bytes().chunks(64) {
-        pem.push_str(core::str::from_utf8(chunk).unwrap_or_default());
-        pem.push('\n');
-    }
-    pem.push_str(&format!("-----END {label}-----\n"));
-    pem
-}
-
-pub(crate) fn temporary_path(path: &Path) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_nanos());
-    let mut name = path.file_name().unwrap_or_default().to_os_string();
-    name.push(format!(".{}.{}.tmp", std::process::id(), nonce));
-    path.with_file_name(name)
-}
-
 #[cfg(all(test, feature = "generate"))]
 mod tests {
     use super::*;
