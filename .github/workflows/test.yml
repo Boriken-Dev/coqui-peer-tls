@@ -31,6 +31,26 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The committed public API, so a change to it is seen in review. Regenerate with:
+  # cargo +nightly-2026-09-21 public-api --all-features -sss --color never > tools/public-api.txt
+  public-api:
+    name: Public API snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      # cargo-public-api 0.52 reads the rustdoc JSON of this nightly.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-09-21
+      - name: Install cargo-public-api
+        run: cargo +stable install cargo-public-api --version 0.52.0 --locked
+      - name: Compare with tools/public-api.txt
+        run: |
+          cargo +nightly-2026-09-21 public-api --all-features -sss --color never > "$RUNNER_TEMP/public-api.txt"
+          diff -u tools/public-api.txt "$RUNNER_TEMP/public-api.txt"
+
   rust:
     name: Rust (${{ matrix.os }}, Rust ${{ matrix.toolchain }})
     runs-on: ${{ matrix.os }}
@@ -69,6 +89,10 @@ jobs:
             flags: "--no-default-features"
           - name: "all"
             flags: "--all-features"
+          - name: "platform-roots"
+            flags: "--no-default-features --features platform-roots"
+          - name: "pin"
+            flags: "--no-default-features --features pin"
           - name: "tls12"
             flags: "--no-default-features --features tls12"
           - name: "acl"
