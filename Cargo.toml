@@ -34,10 +34,14 @@ acl = ["dep:coqui-net-acl"]
 platform-roots = ["dep:rustls-platform-verifier"]
 
 [dependencies]
-coqui-peer = { git = "https://github.com/Boriken-Dev/coqui-peer", rev = "b3aa9bdb5a5534ede66d6fc2122604e72409d93f" }
+# The peer id, trust store, pairing and handshake this crate is the TLS method of. Alpha: the
+# family's crates are released together. The version is what a published package resolves;
+# the revision is the commit with that version, for building from git.
+coqui-peer = { version = "0.0.0-alpha.0", git = "https://github.com/Boriken-Dev/coqui-peer", rev = "2961de356caf2390cffedddf119d22eb403c14f1" }
 data-encoding = { version = "2", default-features = false, features = ["alloc"] }
 rustls = { version = "0.23.27", default-features = false, features = ["std", "ring"] }
-coqui-net-acl = { git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "ef48f2564ab3193d5204f52b8607f25bea1050c5", optional = true }
+# The access control list inside a `Policy`, behind `acl`. Alpha, released with this crate.
+coqui-net-acl = { version = "0.0.0-alpha.0", git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "e0f31323bffeb6ff05c2c3e5c50a7d58e6aafd28", optional = true }
 serde = { version = "1", default-features = false, features = ["derive", "std"], optional = true }
 rcgen = { version = "0.14", optional = true }
 time = { version = "0.3.6", default-features = false, optional = true }
