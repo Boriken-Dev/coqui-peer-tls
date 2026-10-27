@@ -5,8 +5,8 @@
 //! synchronously inside the handshake call that the accept helpers make, on the calling
 //! thread, so the helpers scope the address around exactly those calls.
 
-use std::cell::Cell;
-use std::net::SocketAddr;
+use core::cell::Cell;
+use core::net::SocketAddr;
 
 thread_local! {
     static CURRENT: Cell<Option<SocketAddr>> = const { Cell::new(None) };

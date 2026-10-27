@@ -1,8 +1,8 @@
 //! Server verification by certificate authorities, as a browser does: the web PKI.
 
-use std::fmt;
+use alloc::sync::Arc;
+use core::fmt;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use rustls::client::WebPkiServerVerifier;
 use rustls::client::danger::ServerCertVerifier;

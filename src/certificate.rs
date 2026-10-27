@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use core::net::SocketAddr;
 
 use coqui_peer::{KeyMaterial, PeerId, TrustStore};
 

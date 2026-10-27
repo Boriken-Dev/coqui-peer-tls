@@ -1,7 +1,7 @@
 //! Async dial and accept over `tokio-rustls`, for any `AsyncRead + AsyncWrite` stream.
 
-use std::net::SocketAddr;
-use std::sync::Arc;
+use alloc::sync::Arc;
+use core::net::SocketAddr;
 
 use rustls::pki_types::ServerName;
 use rustls::server::ClientHello;
@@ -9,7 +9,8 @@ use rustls::{ClientConfig, ServerConfig};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::{TlsConnector, client, server};
 
-use std::time::{Duration, Instant};
+use core::time::Duration;
+use std::time::Instant;
 
 use coqui_peer::pair::{
     Paired, Pairing, PairingDesk, PairingJoiner, PairingResponder, Rotation, Shown,
@@ -71,7 +72,7 @@ impl PeerAddr for tokio::net::TcpStream {
 /// run inside the poll.
 async fn sourced<F: Future>(source: Option<SocketAddr>, future: F) -> F::Output {
     let mut future = std::pin::pin!(future);
-    std::future::poll_fn(|context| with_source(source, || future.as_mut().poll(context))).await
+    core::future::poll_fn(|context| with_source(source, || future.as_mut().poll(context))).await
 }
 
 /// Accepts a peer over `io`, completing the handshake before returning.
@@ -126,7 +127,7 @@ where
     Ok((stream, peer))
 }
 
-/// Accepts a peer over `io`, choosing the configuration from the ClientHello (for example
+/// Accepts a peer over `io`, choosing the configuration from the `ClientHello` (for example
 /// by its offered ALPN protocols), so one port can serve peers and other clients.
 ///
 /// # Errors
