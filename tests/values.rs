@@ -86,3 +86,13 @@ fn an_acl_weakening_is_converted_field_for_field() {
         [Weakening::new("acl.default", "permit", "deny")]
     );
 }
+
+#[test]
+fn a_policy_holds_its_waiting_limits_as_one_value() {
+    let mut policy = Policy::strict();
+    assert_eq!(policy.waiting, coqui_peer::WaitingLimits::default());
+    policy.waiting.total = 5_000;
+    policy.waiting.rerecord = core::time::Duration::from_secs(5);
+    let settings: Vec<String> = policy.weakened().into_iter().map(|w| w.setting).collect();
+    assert_eq!(settings, ["waiting_total", "waiting_rerecord_secs"]);
+}

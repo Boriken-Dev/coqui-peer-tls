@@ -185,7 +185,7 @@ pub struct Policy {
     pub allow_chain_when_pinned: bool,
     pub allow_resumption: bool,                // a resumed session skips the verifiers
     pub require_ems: bool,                     // TLS 1.2: the extended master secret (RFC 7627)
-    pub waiting_per_source: usize, pub waiting_total: usize, pub waiting_rerecord_secs: u64,
+    pub waiting: WaitingLimits,                // per_source 16, total 1000, rerecord 60 s
     pub acl: Option<coqui_net_acl::Acl>,       // feature acl; applied by every server configuration
 }
 impl Default for Policy { /* Policy::strict() */ }
@@ -195,7 +195,6 @@ impl Policy {
     pub fn weakened(&self) -> Vec<Weakening>;
     pub fn weakened_against(&self, baseline: &Policy) -> Vec<Weakening>;
     pub fn check_pin(&self, fingerprint: &PeerId) -> Result<(), PeerError>;
-    pub fn waiting_limits(&self) -> WaitingLimits;
     pub fn crypto_provider(&self) -> Result<Arc<CryptoProvider>, PeerError>;
     pub fn supported_cipher_suites() -> Vec<String>;
     pub fn supported_kx_groups() -> Vec<String>;
@@ -213,7 +212,7 @@ pub const POLICY_VERSION: u32 = 1;
 | `allow_chain_when_pinned` | false | false | false |
 | `allow_resumption` | false | false | false |
 | `require_ems` | true | true | true |
-| `waiting_per_source`, `waiting_total`, `waiting_rerecord_secs` | 16, 1000, 60 | same | same |
+| `waiting` (`per_source`, `total`, `rerecord`) | 16, 1000, 60 s | same | same |
 | `cipher_suites`, `kx_groups`, `acl` | none | none | none |
 
 `crypto_provider` narrows the ring provider to the policy's versions, suites and groups; an
@@ -239,7 +238,7 @@ preset name to start from; unknown names are errors; free text when read with
 `deserialize_over`), `tls_versions` (`"1.2"`, `"1.3"`), `cipher_suites`, `kx_groups`,
 `pin_digests` (`"sha256"`, `"sha384"`, `"sha512"`, `"sha1"`), `check_validity`,
 `allow_chain_when_pinned`, `allow_resumption`, `require_ems`, `waiting_per_source`,
-`waiting_total`, `waiting_rerecord_secs`, and
+`waiting_total`, `waiting_rerecord_secs` (the fields of `waiting`, the last in whole seconds), and
 `acl` (see `coqui-net-acl`). Unknown keys are errors; absent keys keep the preset. Writing
 always names every field. `tests/vectors/policy/{strict,compatible,legacy,acl}.{toml,json}`
 are byte-exact.

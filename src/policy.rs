@@ -92,12 +92,11 @@ pub struct Policy {
     /// can use to synchronise two sessions (the triple handshake). Every preset sets it; TLS 1.3
     /// needs nothing like it.
     pub require_ems: bool,
-    /// Waiting entries one source address may hold.
-    pub waiting_per_source: usize,
-    /// Waiting entries the store may hold.
-    pub waiting_total: usize,
-    /// Seconds before the same certificate from the same source is recorded again.
-    pub waiting_rerecord_secs: u64,
+    /// The bounds of a store-backed pin set's waiting queue: entries per source, entries in
+    /// all, and how long before the same certificate from the same source is recorded again.
+    /// In the text form: `waiting_per_source`, `waiting_total` and `waiting_rerecord_secs`
+    /// (whole seconds).
+    pub waiting: WaitingLimits,
     /// An ordered access control list for connecting clients, applied by every server
     /// configuration built under this policy: by address when the `ClientHello` arrives
     /// ([`Refusal::AddressDenied`](crate::Refusal::AddressDenied)) and by the client
@@ -131,9 +130,7 @@ impl Policy {
             allow_chain_when_pinned: false,
             allow_resumption: false,
             require_ems: true,
-            waiting_per_source: 16,
-            waiting_total: 1_000,
-            waiting_rerecord_secs: 60,
+            waiting: WaitingLimits::default(),
             #[cfg(feature = "acl")]
             acl: None,
         }
@@ -237,25 +234,26 @@ impl Policy {
         if !self.require_ems && strict.require_ems {
             note("require_ems", "false".to_owned(), "true".to_owned());
         }
-        if self.waiting_per_source > strict.waiting_per_source {
+        let (waiting, strict_waiting) = (self.waiting, strict.waiting);
+        if waiting.per_source > strict_waiting.per_source {
             note(
                 "waiting_per_source",
-                self.waiting_per_source.to_string(),
-                strict.waiting_per_source.to_string(),
+                waiting.per_source.to_string(),
+                strict_waiting.per_source.to_string(),
             );
         }
-        if self.waiting_total > strict.waiting_total {
+        if waiting.total > strict_waiting.total {
             note(
                 "waiting_total",
-                self.waiting_total.to_string(),
-                strict.waiting_total.to_string(),
+                waiting.total.to_string(),
+                strict_waiting.total.to_string(),
             );
         }
-        if self.waiting_rerecord_secs < strict.waiting_rerecord_secs {
+        if waiting.rerecord < strict_waiting.rerecord {
             note(
                 "waiting_rerecord_secs",
-                self.waiting_rerecord_secs.to_string(),
-                strict.waiting_rerecord_secs.to_string(),
+                waiting.rerecord.as_secs().to_string(),
+                strict_waiting.rerecord.as_secs().to_string(),
             );
         }
         #[cfg(feature = "acl")]
@@ -305,15 +303,6 @@ impl Policy {
         match &self.acl {
             Some(acl) => crate::gate::decide_address(acl, source, local, false),
             None => Ok(()),
-        }
-    }
-
-    /// The limits for a trust store's waiting queue.
-    pub fn waiting_limits(&self) -> WaitingLimits {
-        WaitingLimits {
-            per_source: self.waiting_per_source,
-            total: self.waiting_total,
-            rerecord: core::time::Duration::from_secs(self.waiting_rerecord_secs),
         }
     }
 
@@ -546,9 +535,9 @@ mod text {
                 allow_chain_when_pinned: Some(self.allow_chain_when_pinned),
                 allow_resumption: Some(self.allow_resumption),
                 require_ems: Some(self.require_ems),
-                waiting_per_source: Some(self.waiting_per_source),
-                waiting_total: Some(self.waiting_total),
-                waiting_rerecord_secs: Some(self.waiting_rerecord_secs),
+                waiting_per_source: Some(self.waiting.per_source),
+                waiting_total: Some(self.waiting.total),
+                waiting_rerecord_secs: Some(self.waiting.rerecord.as_secs()),
                 #[cfg(feature = "acl")]
                 acl: self.acl.clone(),
             }
@@ -561,8 +550,7 @@ mod text {
         fn over<E: serde::de::Error>(self, base: Policy) -> Result<Policy, E> {
             if self.policy_version != POLICY_VERSION {
                 return Err(E::custom(format!(
-                    "policy_version {} is not supported; this build reads {POLICY_VERSION}",
-                    self.policy_version
+                    "this policy_version is not supported; this build reads {POLICY_VERSION}"
                 )));
             }
             let mut policy = base;
@@ -594,13 +582,13 @@ mod text {
                 policy.require_ems = value;
             }
             if let Some(value) = self.waiting_per_source {
-                policy.waiting_per_source = value;
+                policy.waiting.per_source = value;
             }
             if let Some(value) = self.waiting_total {
-                policy.waiting_total = value;
+                policy.waiting.total = value;
             }
             if let Some(value) = self.waiting_rerecord_secs {
-                policy.waiting_rerecord_secs = value;
+                policy.waiting.rerecord = core::time::Duration::from_secs(value);
             }
             #[cfg(feature = "acl")]
             if let Some(acl) = self.acl {

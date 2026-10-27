@@ -23,7 +23,7 @@ fn policies() -> Vec<(&'static str, Policy)> {
         "TLS13_CHACHA20_POLY1305_SHA256".to_owned(),
     ]);
     routed.kx_groups = Some(vec!["X25519".to_owned()]);
-    routed.waiting_per_source = 8;
+    routed.waiting.per_source = 8;
     let mut permit = Rule::new(Action::Permit, "10.9.0.0/16".parse::<IpNet>().unwrap());
     permit.destination = Some("10.6.20.5".parse().unwrap());
     permit.port = Some("7000-7100".parse().unwrap());
@@ -134,14 +134,14 @@ fn regenerate() {
 fn a_consumer_reads_a_document_over_its_own_profile() {
     let mut mine = Policy::compatible();
     mine.name = "mine".to_owned();
-    mine.waiting_total = 50;
+    mine.waiting.total = 50;
     let policy = Policy::deserialize_over(
         mine,
         toml::Deserializer::parse("check_validity = false").unwrap(),
     )
     .unwrap();
     assert_eq!(policy.name, "mine");
-    assert_eq!(policy.waiting_total, 50);
+    assert_eq!(policy.waiting.total, 50);
     assert!(!policy.check_validity);
     assert_eq!(policy.tls_versions.len(), 2);
     assert!(Policy::preset("mine").is_err());

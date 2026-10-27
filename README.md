@@ -120,7 +120,7 @@ and change any public field. `weakened()` lists, as data, every setting looser t
 | `allow_chain_when_pinned` | false | false | false |
 | `allow_resumption` | false | false | false |
 | `require_ems` | true | true | true |
-| `waiting_per_source` / `waiting_total` / `waiting_rerecord_secs` | 16 / 1000 / 60 | same | same |
+| `waiting` (`per_source` / `total` / `rerecord`) | 16 / 1000 / 60 s | same | same |
 | `acl` | none | none | none |
 
 Session resumption is off in every preset: rustls does not check the peer's certificate again
@@ -136,7 +136,7 @@ Build a policy in code first; this is the whole API:
 ```rust,ignore
 let mut policy = Policy::compatible();
 policy.pin_digests.push(Digest::Sha1);
-policy.waiting_per_source = 4;
+policy.waiting.per_source = 4;
 let built = server_config_with(&identity, &trust, &[b"my-protocol/1"], &policy)?;
 for weaker in &built.weakened { log::warn!("{} = {}", weaker.setting, weaker.value); }
 ```
@@ -194,7 +194,7 @@ a document over your own base policy. Committed examples for every preset are in
 - A waiting entry is recorded only after the peer proves it holds the certificate's key, with
   pins alone or beside a CA policy. Each entry stores the address the handshake came from:
   `accept` takes it from a TCP stream, `accept_from` takes it for any other stream, and the
-  per-source caps (`waiting_per_source`, `waiting_rerecord_secs`) apply per IPv4 address or
+  per-source caps (`waiting.per_source`, `waiting.rerecord`) apply per IPv4 address or
   per IPv6 /64 (`TrustStore::with_ipv6_prefix`).
 - Not provided: a handshake probe (`Unknown | Online | Rejected | Offline`), a helper for
   reading and writing one connection from two threads, and QUIC with datagrams.
