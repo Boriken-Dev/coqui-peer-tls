@@ -45,6 +45,7 @@ pub use coqui_peer::pair;
 pub use coqui_peer::{
     Clock, Digest, Invitation, InvitationOptions, KeyMaterial, PeerId, Random, ReadTimeout,
     RotationEvent, RotationOptions, TrustStore, WaitingEntry, WaitingLimits, Weakening,
+    WriteTimeout,
 };
 pub use error::{PeerError, Refusal};
 pub use handshake::{Tls, TlsHandshake};

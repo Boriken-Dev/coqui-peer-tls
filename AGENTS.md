@@ -22,7 +22,7 @@ provider). Version `0.0.0-alpha.0` is a pre-release; the API may change in any r
 `Handshake`, `Weakening`); its API header ships in that crate.
 
 Imports: everything is at the crate root, including re-exports of `coqui-peer`'s `Clock`,
-`Digest`, `Invitation`, `InvitationOptions`, `KeyMaterial`, `PeerId`, `Random`, `ReadTimeout`,
+`Digest`, `Invitation`, `InvitationOptions`, `KeyMaterial`, `PeerId`, `Random`, `ReadTimeout`, `WriteTimeout`,
 `RotationEvent`, `RotationOptions`, `TrustStore`, `WaitingEntry`, `WaitingLimits` and
 `Weakening`. Public modules: `asynch` (feature `tokio`), `pair` (`coqui_peer::pair`
 re-exported) and `acl` (`coqui_net_acl` re-exported, feature `acl`).
@@ -461,16 +461,16 @@ pub use coqui_peer::{Clock, Random, Invitation, InvitationOptions, RotationOptio
 pub const PAIR_ALPN: &[u8] = b"coqui-pair/1";
 pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
 pub struct PairConfig { pub policy: Policy, pub alpn: Vec<u8>, pub timeout: Duration }  // strict, PAIR_ALPN, 15 min
-pub use coqui_peer::ReadTimeout;            // fn set_read_timeout(&self, Option<Duration>) -> io::Result<()>; TcpStream
+pub use coqui_peer::{ReadTimeout, WriteTimeout};   // set_read_timeout / set_write_timeout(&self, Option<Duration>); TcpStream, &TcpStream
 #[non_exhaustive] pub enum ResponderTrust { Unverified, Verified { trust: Box<Trust>, name: Option<ServerName<'static>> } }
 impl ResponderTrust { pub fn pinned(id: PeerId) -> ResponderTrust; }
 pub fn random() -> Random;                   // the TLS provider's secure random source
 pub fn pair_server_config(&Identity, &PairConfig) -> Result<ServerConfig, PeerError>;
 pub fn pair_client_config(&Identity, &Pairing, &ResponderTrust, &PairConfig) -> Result<(ClientConfig, ServerName<'static>), PeerError>;
-pub fn pair_dial<S: Read + Write + ReadTimeout>(S, &Identity, Pairing, &ResponderTrust, &PairConfig) -> Result<PairDial<S>, PeerError>;
+pub fn pair_dial<S: Read + Write + ReadTimeout + WriteTimeout>(S, &Identity, Pairing, &ResponderTrust, &PairConfig) -> Result<PairDial<S>, PeerError>;
 impl<S> PairDial<S> { pub fn shown(&self) -> Option<&Shown>; pub fn finish(self, &TrustStore) -> Result<Paired, PeerError>; }
-pub fn pair_accept<S: Read + Write + PeerAddr + ReadTimeout>(S, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
-pub fn pair_accept_from<S: Read + Write + ReadTimeout>(S, SocketAddr, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
+pub fn pair_accept<S: Read + Write + PeerAddr + ReadTimeout + WriteTimeout>(S, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
+pub fn pair_accept_from<S: Read + Write + ReadTimeout + WriteTimeout>(S, SocketAddr, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
 pub fn announce(&mut impl Write, successor: &Identity) -> Result<(), PeerError>;
 pub fn receive_announcement(&mut impl Read, &TrustStore, sender: &PeerIdentity) -> Result<PeerId, PeerError>;
 impl Identity { pub fn renew_before(&self, margin: Duration) -> bool; pub fn renew_before_at(&self, Duration, SystemTime) -> bool; }
@@ -516,9 +516,10 @@ source the desk throttles by (`pair_accept_from` for other streams).
 until the responder's own deadline (`PairingResponder::time_left`: `pin_ttl` or `device_ttl` from
 the joiner's first message); past it the joiner is told `Expired` and its slot, code and pending
 place are freed. A stalled transport ends with `PeerError::Io` (`TimedOut` or `WouldBlock`). The
-blocking forms set the timeouts through `ReadTimeout`, implemented for `TcpStream`; a stream that
-cannot time out implements it as a no-op and is bounded by its caller. The async forms use
-`tokio::time::timeout`. A frame's buffer grows as its bytes arrive, so a declared length (at
+blocking forms set read and write timeouts to what is left through `ReadTimeout` and
+`WriteTimeout`, implemented for `TcpStream` and `&TcpStream`; a stream that cannot time out
+implements them as no-ops and is bounded by its caller. The async forms bound every read and
+write with `tokio::time::timeout`. A frame's buffer grows as its bytes arrive, so a declared length (at
 most `coqui_peer::MAX_MESSAGE`) costs nothing until it is sent.
 
 **What each TLS version gives.** TLS 1.3 (the strict policy): the exporter is unique to the

@@ -271,7 +271,10 @@ async fn join_until<S: AsyncRead + AsyncWrite + Unpin>(
 ) -> Result<(), PeerError> {
     loop {
         while let Some(message) = joiner.transmit() {
-            write_frame(tls, &message).await.map_err(PeerError::Io)?;
+            within(left(until), write_frame(tls, &message))
+                .await
+                .and_then(|written| written)
+                .map_err(PeerError::Io)?;
         }
         if joiner.is_complete() || stop(joiner) {
             return Ok(());
@@ -449,7 +452,10 @@ async fn respond<S: AsyncRead + AsyncWrite + Unpin>(
 ) -> Result<(), PeerError> {
     loop {
         while let Some(message) = responder.transmit() {
-            write_frame(tls, &message).await.map_err(PeerError::Io)?;
+            within(left(until), write_frame(tls, &message))
+                .await
+                .and_then(|written| written)
+                .map_err(PeerError::Io)?;
         }
         if responder.is_complete() {
             return Ok(());
