@@ -17,17 +17,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   configuration of one `ServerConfigs` shares a session cache and ticketer (with
   `allow_resumption` a client resumes across connections), and `ConnectionConfig::refusal`
   gives the typed `Refusal` the handshake ended with, which quinn reports only as an alert.
-
-### Removed
-
-- `server_config_for`: use `ServerConfigs::new(identity, trust, alpn, policy)?
-  .for_connection(source, local)?.config()`.
+- `Policy::check`: the checks a configuration build runs on a policy (versions, suites, groups,
+  and the access control list's fingerprints), without building one.
 
 ### Changed
 
 - `Trust::client_cert_verifier_with` refuses a policy with an access control list
   (`PeerError::Policy`) instead of ignoring the list: a verifier has no addresses to apply it
   with. Pass the policy to a configuration builder, or use `client_cert_verifier_for`.
+
+### Removed
+
+- `server_config_for`: use `ServerConfigs::new(identity, trust, alpn, policy)?
+  .for_connection(source, local)?.config()`.
 
 ### Fixed
 

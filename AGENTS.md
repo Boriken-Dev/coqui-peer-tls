@@ -209,6 +209,7 @@ impl Policy {
     pub fn weakened(&self) -> Vec<Weakening>;
     pub fn weakened_against(&self, baseline: &Policy) -> Vec<Weakening>;
     pub fn check_pin(&self, fingerprint: &PeerId) -> Result<(), PeerError>;
+    pub fn check(&self) -> Result<(), PeerError>;   // what a configuration build checks, without one
     pub fn crypto_provider(&self) -> Result<Arc<CryptoProvider>, PeerError>;
     pub fn supported_cipher_suites() -> Vec<String>;
     pub fn supported_kx_groups() -> Vec<String>;
@@ -229,6 +230,10 @@ impl TlsVersion { pub const fn as_str(self) -> &'static str; }   // "1.2", "1.3"
 | `require_ems` | true | true | true |
 | `waiting` (`per_source`, `total`, `rerecord`) | 16, 1000, 60 s | same | same |
 | `cipher_suites`, `kx_groups`, `acl` | none | none | none |
+
+`check` runs the checks a configuration build runs (versions, suites and groups against the
+provider and this build; with `acl`, that every rule's fingerprint is a SHA-256 peer id) and
+builds nothing: for a host that builds its configurations later, one per connection.
 
 `crypto_provider` narrows the ring provider to the policy's versions, suites and groups; an
 unknown name, or a version left with no suite, is `PeerError::Policy` whose message lists the

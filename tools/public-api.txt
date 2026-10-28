@@ -199,6 +199,7 @@ pub coqui_peer_tls::Policy::waiting: coqui_peer::store::WaitingLimits
 impl coqui_peer_tls::Policy
 pub fn coqui_peer_tls::Policy::admits_address(&self, core::net::socket_addr::SocketAddr, core::net::socket_addr::SocketAddr) -> core::result::Result<(), coqui_peer_tls::Refusal>
 pub fn coqui_peer_tls::Policy::admits_anonymous(&self, core::net::socket_addr::SocketAddr, core::net::socket_addr::SocketAddr) -> core::result::Result<(), coqui_peer_tls::Refusal>
+pub fn coqui_peer_tls::Policy::check(&self) -> core::result::Result<(), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Policy::check_pin(&self, &coqui_peer::id::PeerId) -> core::result::Result<(), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Policy::crypto_provider(&self) -> core::result::Result<alloc::sync::Arc<rustls::crypto::CryptoProvider>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Policy::supported_cipher_suites() -> alloc::vec::Vec<alloc::string::String>

@@ -323,6 +323,26 @@ impl Policy {
         )))
     }
 
+    /// Checks this policy as building a configuration under it does, without building one:
+    /// its versions, cipher suites and key-exchange groups against the provider and this
+    /// build, and, with the `acl` feature, that every fingerprint of its access control list
+    /// is a SHA-256 peer id. A host that builds its configurations later (one per connection)
+    /// checks the policy it read with this.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Policy`] naming the first setting that fails, as a configuration builder
+    /// would report it.
+    pub fn check(&self) -> Result<(), PeerError> {
+        self.protocol_versions()?;
+        self.crypto_provider()?;
+        #[cfg(feature = "acl")]
+        if let Some(acl) = &self.acl {
+            crate::gate::canonical(acl)?;
+        }
+        Ok(())
+    }
+
     /// The protocol versions to build a configuration with.
     pub(crate) fn protocol_versions(
         &self,
