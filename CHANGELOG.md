@@ -19,9 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   gives the typed `Refusal` the handshake ended with, which quinn reports only as an alert.
 - `Policy::check`: the checks a configuration build runs on a policy (versions, suites, groups,
   and the access control list's fingerprints), without building one.
+- `WriteTimeout` re-exported from `coqui-peer`.
 
 ### Changed
 
+- Pairing bounds writes as well as reads: `pair_dial`, `pair_accept` and `pair_accept_from` take
+  a stream that also implements `WriteTimeout` (`TcpStream` and `&TcpStream` do) and set its write
+  timeout to what is left of `PairConfig::timeout`, and the async forms bound every write with
+  the same deadline. A peer that stops reading ends the exchange with `PeerError::Io`
+  (`TimedOut` or `WouldBlock`) instead of holding it.
 - `Trust::client_cert_verifier_with` refuses a policy with an access control list
   (`PeerError::Policy`) instead of ignoring the list: a verifier has no addresses to apply it
   with. Pass the policy to a configuration builder, or use `client_cert_verifier_for`.
