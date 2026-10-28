@@ -118,3 +118,41 @@ fn without_resumption_no_connection_resumes() -> Result<(), PeerError> {
     );
     Ok(())
 }
+
+#[cfg(feature = "acl")]
+#[test]
+fn a_resumed_session_still_meets_the_address_rules() -> Result<(), PeerError> {
+    use coqui_net_acl::{Acl, Action, Rule};
+    use coqui_peer_tls::Refusal;
+
+    let identity = Identity::generate()?;
+    let client = Identity::generate()?;
+    let mut policy = resumable();
+    policy.acl = Some(Acl {
+        rules: vec![Rule::new(
+            Action::Deny,
+            "203.0.113.0/24".parse().expect("a network"),
+        )],
+        default: Action::Permit,
+    });
+    let configs = ServerConfigs::new(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
+    let client_config =
+        Arc::new(client_config_with(&client, &Trust::AnyWithKeyProof, &[ALPN], &policy)?.config);
+    let admitted = configs.for_connection(at("192.0.2.7:4000"), at("198.51.100.1:443"))?;
+    handshake(
+        TlsHandshake::server(admitted.config(), None)?,
+        TlsHandshake::client(Arc::clone(&client_config))?,
+    )?;
+    // The client holds a ticket now; from a denied address it is refused at the hello.
+    let denied = configs.for_connection(at("203.0.113.9:4000"), at("198.51.100.1:443"))?;
+    let refused = handshake(
+        TlsHandshake::server(denied.config(), None)?,
+        TlsHandshake::client(client_config)?,
+    );
+    assert!(refused.is_err());
+    assert_eq!(
+        denied.refusal(),
+        Some(Refusal::AddressDenied { rule: Some(0) })
+    );
+    Ok(())
+}

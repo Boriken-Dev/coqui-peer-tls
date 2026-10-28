@@ -290,8 +290,9 @@ Every server configuration built under a policy with `acl: Some(..)` applies it:
   needs no scope: for quinn, which runs the verifier on its own threads.
 - `Policy::admits_address(source, local)` / `admits_anonymous` give the address decision
   without a handshake, for a host that refuses a connection before it (a quinn `Incoming`).
-- Session resumption skips both checks, as it skips the verifiers: it is off unless
-  `allow_resumption`.
+- Session resumption skips the fingerprint check, as it skips the verifiers; the address check at
+  the `ClientHello` still runs (rustls resolves the certificate before it resumes). Resumption
+  is off unless `allow_resumption`, which `weakened()` reports.
 
 ```rust
 pub fn with_addresses<R>(source: Option<SocketAddr>, local: Option<SocketAddr>, work: impl FnOnce() -> R) -> R;
@@ -603,8 +604,8 @@ before the handshake, to refuse before reading a byte.
 A failed handshake in `dial`, `accept` and `asynch` is `PeerError::Io` wrapping the rustls error;
 `refusal()` digs the `Refusal` out of it (`TlsHandshake` errors too). Only the refusing side has
 one: the refused side sees the TLS alert, so its `refusal()` is `None`. A host driving rustls
-itself calls `Refusal::from_rustls`. `Display` of `PeerError` names the category only, never key
-material or a path.
+itself calls `Refusal::from_rustls`. `Display` of `PeerError` names the category only and never
+key material; only `CaFile` names a path, the file it could not use.
 
 ## Gotchas
 
@@ -628,5 +629,5 @@ material or a path.
 - Under optional client authentication (a host verifier whose `client_auth_mandatory()` is
   false) a client is decided by address as one that proves no identity: a rule naming a
   fingerprint never admits it, even when it then presents that certificate.
-- Session resumption skips the verifiers and the ACL: leave `allow_resumption` off where a peer
-  or an address can lose its access.
+- Session resumption skips the verifiers and the ACL's fingerprint rules (its address rules
+  still apply): leave `allow_resumption` off where a peer can lose its access.
