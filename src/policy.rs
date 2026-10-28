@@ -85,7 +85,8 @@ pub struct Policy {
     pub allow_chain_when_pinned: bool,
     /// Whether TLS sessions may be resumed. A resumed handshake skips the certificate
     /// verifiers, so a peer removed from the trust store or no longer pinned can reconnect
-    /// on a session it already holds. Every preset leaves it off.
+    /// on a session it already holds, and the access control list's fingerprint rules are not
+    /// checked again (its address rules are). Every preset leaves it off; `weakened` reports it.
     pub allow_resumption: bool,
     /// Whether a TLS 1.2 connection must use the extended master secret (RFC 7627). Without it
     /// a TLS 1.2 session's keys and exporter are not bound to its handshake, which an attacker
