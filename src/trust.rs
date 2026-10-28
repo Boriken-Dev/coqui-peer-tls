@@ -235,7 +235,8 @@ impl Trust {
     /// the pins or the store are consulted ([`Refusal::PeerDenied`]), so a denied client is
     /// never recorded as waiting. The list's address rules are not applied here; a host checks
     /// them before the handshake with [`Policy::admits_address`], or uses
-    /// [`server_config_for`](crate::server_config_for), which applies both.
+    /// [`ServerConfigs::for_connection`](crate::ServerConfigs::for_connection), which applies
+    /// both.
     ///
     /// # Errors
     ///
@@ -252,7 +253,11 @@ impl Trust {
             Arc::new(self.client_verifier(policy, Some(source))?);
         #[cfg(feature = "acl")]
         if let Some(acl) = &policy.acl {
-            let gate = crate::gate::Gate::new(crate::gate::canonical(acl)?, Some((source, local)));
+            let gate = crate::gate::Gate::new(
+                Arc::new(crate::gate::canonical(acl)?),
+                Some((source, local)),
+                None,
+            );
             return Ok(Arc::new(crate::gate::PeerGate {
                 inner: verifier,
                 gate,
@@ -291,12 +296,14 @@ impl Trust {
         #[cfg(not(feature = "ca"))]
         let _ = ca;
         Ok(PeerClientVerifier {
-            pins,
-            #[cfg(feature = "ca")]
-            ca,
-            any,
-            checks: PinnedChecks::of(policy),
-            provider,
+            parts: Arc::new(ClientParts {
+                pins,
+                #[cfg(feature = "ca")]
+                ca,
+                any,
+                checks: PinnedChecks::of(policy),
+                provider,
+            }),
             source,
             #[cfg(feature = "ca")]
             ca_trusted: Mutex::default(),
@@ -459,12 +466,7 @@ impl ServerCertVerifier for PeerServerVerifier {
 /// signature verifies, and then refuses the handshake.
 #[derive(Debug)]
 pub struct PeerClientVerifier {
-    pins: Option<Pins>,
-    #[cfg(feature = "ca")]
-    ca: Option<crate::ca::Ca>,
-    any: bool,
-    checks: PinnedChecks,
-    provider: Arc<CryptoProvider>,
+    parts: Arc<ClientParts>,
     /// The source waiting entries are recorded under, for a verifier made for one connection;
     /// `None` reads the scope the accept helpers set.
     source: Option<SocketAddr>,
@@ -475,6 +477,17 @@ pub struct PeerClientVerifier {
     ca_trusted: Mutex<Vec<(PeerId, Instant)>>,
 }
 
+/// What a client verifier decides by, shared by the verifiers made for single connections.
+#[derive(Debug)]
+struct ClientParts {
+    pins: Option<Pins>,
+    #[cfg(feature = "ca")]
+    ca: Option<crate::ca::Ca>,
+    any: bool,
+    checks: PinnedChecks,
+    provider: Arc<CryptoProvider>,
+}
+
 /// How long a CA-trusted certificate waits for its signature before being forgotten.
 #[cfg(feature = "ca")]
 const CA_TRUSTED_TTL: Duration = Duration::from_secs(30);
@@ -483,21 +496,34 @@ const CA_TRUSTED_TTL: Duration = Duration::from_secs(30);
 const CA_TRUSTED_MAX: usize = 4096;
 
 impl PeerClientVerifier {
+    /// The same verifier for one connection, recording waiting entries under `source`.
+    pub(crate) fn for_source(&self, source: SocketAddr) -> Self {
+        Self {
+            parts: Arc::clone(&self.parts),
+            source: Some(source),
+            #[cfg(feature = "ca")]
+            ca_trusted: Mutex::default(),
+        }
+    }
+
     /// Whether unpinned, untrusted certificates are deferred to the signature check.
     fn defers(&self) -> bool {
-        !self.any && self.pins.as_ref().is_some_and(Pins::records_waiting)
+        !self.parts.any && self.parts.pins.as_ref().is_some_and(Pins::records_waiting)
     }
 
     fn pinned(&self, der: &[u8]) -> bool {
-        self.pins.as_ref().is_some_and(|pins| pins.matches(der))
+        self.parts
+            .pins
+            .as_ref()
+            .is_some_and(|pins| pins.matches(der))
     }
 
     /// Why a certificate that is neither pinned nor CA-trusted is refused.
     fn refusal(&self) -> Refusal {
-        match &self.pins {
+        match &self.parts.pins {
             Some(pins) if pins.records_waiting() => Refusal::NotAccepted,
             #[cfg(feature = "ca")]
-            _ if self.ca.is_some() => Refusal::NotTrusted,
+            _ if self.parts.ca.is_some() => Refusal::NotTrusted,
             Some(pins) => pins.refusal(),
             None => Refusal::NotPinned,
         }
@@ -553,7 +579,7 @@ impl PeerClientVerifier {
         if trusted || self.pinned(certificate.as_ref()) {
             return Ok(verified);
         }
-        if let Some(pins) = &self.pins
+        if let Some(pins) = &self.parts.pins
             && pins.pending_successor(certificate.as_ref())
         {
             // Announced by an accepted peer, and now proven: promoted, or recorded as proven
@@ -563,7 +589,7 @@ impl PeerClientVerifier {
                 .then_some(verified)
                 .ok_or_else(|| self.refusal().into_rustls());
         }
-        if let Some(pins) = &self.pins {
+        if let Some(pins) = &self.parts.pins {
             pins.record_waiting(
                 certificate.as_ref(),
                 self.source.or_else(crate::source::current),
@@ -576,7 +602,7 @@ impl PeerClientVerifier {
 impl ClientCertVerifier for PeerClientVerifier {
     fn root_hint_subjects(&self) -> &[DistinguishedName] {
         #[cfg(feature = "ca")]
-        if let Some(ca) = &self.ca {
+        if let Some(ca) = &self.parts.ca {
             return ca.root_hint_subjects();
         }
         &[]
@@ -588,24 +614,25 @@ impl ClientCertVerifier for PeerClientVerifier {
         intermediates: &[CertificateDer<'_>],
         now: UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
-        if self.any {
+        if self.parts.any {
             return Ok(ClientCertVerified::assertion());
         }
         if self.pinned(certificate.as_ref()) {
-            check_pinned(certificate, intermediates, now, self.checks)?;
+            check_pinned(certificate, intermediates, now, self.parts.checks)?;
             return Ok(ClientCertVerified::assertion());
         }
         if self
+            .parts
             .pins
             .as_ref()
             .is_some_and(|pins| pins.pending_successor(certificate.as_ref()))
         {
             // Settled in `settle`, once the signature proves the client holds its key.
-            check_pinned(certificate, intermediates, now, self.checks)?;
+            check_pinned(certificate, intermediates, now, self.parts.checks)?;
             return Ok(ClientCertVerified::assertion());
         }
         #[cfg(feature = "ca")]
-        if let Some(ca) = &self.ca
+        if let Some(ca) = &self.parts.ca
             && ca.trusts(certificate, intermediates, now)?
         {
             if self.defers() {
@@ -628,7 +655,7 @@ impl ClientCertVerifier for PeerClientVerifier {
         certificate: &CertificateDer<'_>,
         signed: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        let algorithms = &self.provider.signature_verification_algorithms;
+        let algorithms = &self.parts.provider.signature_verification_algorithms;
         let verified = verify_tls12_signature(message, certificate, signed, algorithms);
         self.settle(certificate, verified)
     }
@@ -639,13 +666,14 @@ impl ClientCertVerifier for PeerClientVerifier {
         certificate: &CertificateDer<'_>,
         signed: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
-        let algorithms = &self.provider.signature_verification_algorithms;
+        let algorithms = &self.parts.provider.signature_verification_algorithms;
         let verified = verify_tls13_signature(message, certificate, signed, algorithms);
         self.settle(certificate, verified)
     }
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        self.provider
+        self.parts
+            .provider
             .signature_verification_algorithms
             .supported_schemes()
     }

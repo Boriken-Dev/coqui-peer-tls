@@ -104,7 +104,7 @@ for the dialled name is trusted. The chain, the dates and the name are always ch
 
 | Module | Purpose |
 | --- | --- |
-| `coqui_peer_tls` | `Identity`, `PeerIdentity`; `Trust`, `Pins`, `CaPolicy`, `Roots` and their verifiers; `Policy`; the configuration builders and `Built`; `dial`, `accept` and their variants; `Tls` and `TlsHandshake`; pairing over TLS; rotation; `PeerError`, `Refusal`; re-exports of `coqui-peer`'s ids, store and `Weakening`. |
+| `coqui_peer_tls` | `Identity`, `PeerIdentity`; `Trust`, `Pins`, `CaPolicy`, `Roots` and their verifiers; `Policy`; the configuration builders, `Built`, and `ServerConfigs` / `ConnectionConfig` for a configuration per connection; `dial`, `accept` and their variants; `Tls` and `TlsHandshake`; pairing over TLS; rotation; `PeerError`, `Refusal`; re-exports of `coqui-peer`'s ids, store and `Weakening`. |
 | `coqui_peer_tls::asynch` | Async dial, accept, pairing and rotation over tokio (`tokio`). |
 | `coqui_peer_tls::pair` | `coqui-peer`'s pairing exchange, re-exported. |
 | `coqui_peer_tls::acl` | `coqui-net-acl`, re-exported (`acl`). |
@@ -179,7 +179,9 @@ under it: by address when the `ClientHello` arrives, before any certificate is s
 client certificate's fingerprint before the trust store is consulted, so a denied client is
 never recorded as waiting. Fingerprint rules may be written in any spelling a `PeerId` parses.
 The refusals are `Refusal::AddressDenied`, `PeerDenied` and `AddressUnknown`. For quinn,
-`server_config_for` and `Trust::client_cert_verifier_for` take one connection's addresses, and
+`ServerConfigs` builds a configuration per connection from its addresses, sharing one session
+cache, and keeps the refusal its handshake ended with (`ConnectionConfig::refusal`), since
+quinn reports only the alert; `Trust::client_cert_verifier_for` is the verifier alone, and
 `Policy::admits_address` decides before the handshake.
 
 ## Limits

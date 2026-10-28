@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `ServerConfigs` and `ConnectionConfig`: server configurations built per connection from one
+  listener's identity, ALPN list and policy (`new`, `with_verifier`, `without_client_auth`,
+  then `for_connection(source, local)`), for hosts such as quinn that take a configuration per
+  incoming connection. Waiting entries are recorded under the connection's source, the policy's
+  access control list is decided from its addresses with no thread-local scope, every
+  configuration of one `ServerConfigs` shares a session cache and ticketer (with
+  `allow_resumption` a client resumes across connections), and `ConnectionConfig::refusal`
+  gives the typed `Refusal` the handshake ended with, which quinn reports only as an alert.
+
+### Removed
+
+- `server_config_for`: use `ServerConfigs::new(identity, trust, alpn, policy)?
+  .for_connection(source, local)?.config()`.
+
 ## [0.0.0-alpha.0] - 2026-10-27
 
 The first pre-release, published to crates.io after `coqui-net-acl` and `coqui-peer`

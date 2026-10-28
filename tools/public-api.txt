@@ -122,6 +122,10 @@ pub struct coqui_peer_tls::CaPolicy
 pub coqui_peer_tls::CaPolicy::ca_file: std::path::PathBuf
 pub coqui_peer_tls::CaPolicy::san: alloc::vec::Vec<alloc::string::String>
 pub coqui_peer_tls::CaPolicy::subject: alloc::vec::Vec<alloc::string::String>
+pub struct coqui_peer_tls::ConnectionConfig
+impl coqui_peer_tls::ConnectionConfig
+pub fn coqui_peer_tls::ConnectionConfig::config(&self) -> alloc::sync::Arc<rustls::server::server_conn::ServerConfig>
+pub fn coqui_peer_tls::ConnectionConfig::refusal(&self) -> core::option::Option<coqui_peer_tls::Refusal>
 pub struct coqui_peer_tls::Identity
 impl coqui_peer_tls::Identity
 pub fn coqui_peer_tls::Identity::certificate_chain(&self) -> alloc::vec::Vec<rustls_pki_types::CertificateDer<'static>>
@@ -221,6 +225,15 @@ pub fn coqui_peer_tls::Roots::bundle_pem(impl core::convert::Into<alloc::string:
 pub fn coqui_peer_tls::Roots::platform() -> Self
 impl core::fmt::Debug for coqui_peer_tls::Roots
 pub fn coqui_peer_tls::Roots::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+pub struct coqui_peer_tls::ServerConfigs
+impl coqui_peer_tls::ServerConfigs
+pub fn coqui_peer_tls::ServerConfigs::for_connection(&self, core::net::socket_addr::SocketAddr, core::net::socket_addr::SocketAddr) -> core::result::Result<coqui_peer_tls::ConnectionConfig, coqui_peer_tls::PeerError>
+pub fn coqui_peer_tls::ServerConfigs::new(&coqui_peer_tls::Identity, &coqui_peer_tls::Trust, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<Self, coqui_peer_tls::PeerError>
+pub fn coqui_peer_tls::ServerConfigs::weakened(&self) -> &[coqui_peer::weakening::Weakening]
+pub fn coqui_peer_tls::ServerConfigs::with_verifier(&coqui_peer_tls::Identity, alloc::sync::Arc<dyn rustls::verify::ClientCertVerifier>, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<Self, coqui_peer_tls::PeerError>
+pub fn coqui_peer_tls::ServerConfigs::without_client_auth(&coqui_peer_tls::Identity, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<Self, coqui_peer_tls::PeerError>
+impl core::fmt::Debug for coqui_peer_tls::ServerConfigs
+pub fn coqui_peer_tls::ServerConfigs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct coqui_peer_tls::Tls
 impl coqui_peer_tls::Tls
 pub fn coqui_peer_tls::Tls::new() -> Self
@@ -289,7 +302,6 @@ pub fn coqui_peer_tls::pair_server_config(&coqui_peer_tls::Identity, &coqui_peer
 pub fn coqui_peer_tls::random() -> coqui_peer::random::Random
 pub fn coqui_peer_tls::receive_announcement(&mut impl alloc::io::read::Read, &coqui_peer::store::TrustStore, &coqui_peer_tls::PeerIdentity) -> core::result::Result<coqui_peer::id::PeerId, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::server_config(&coqui_peer_tls::Identity, &coqui_peer_tls::Trust, &[&[u8]]) -> core::result::Result<rustls::server::server_conn::ServerConfig, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::server_config_for(&coqui_peer_tls::Identity, &coqui_peer_tls::Trust, &[&[u8]], &coqui_peer_tls::Policy, core::net::socket_addr::SocketAddr, core::net::socket_addr::SocketAddr) -> core::result::Result<coqui_peer_tls::Built<rustls::server::server_conn::ServerConfig>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::server_config_with(&coqui_peer_tls::Identity, &coqui_peer_tls::Trust, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<coqui_peer_tls::Built<rustls::server::server_conn::ServerConfig>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::server_config_with_verifier(&coqui_peer_tls::Identity, alloc::sync::Arc<dyn rustls::verify::ClientCertVerifier>, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<coqui_peer_tls::Built<rustls::server::server_conn::ServerConfig>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::server_config_without_client_auth(&coqui_peer_tls::Identity, &[&[u8]]) -> core::result::Result<rustls::server::server_conn::ServerConfig, coqui_peer_tls::PeerError>

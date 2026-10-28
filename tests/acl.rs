@@ -10,8 +10,8 @@ use std::thread::{self, JoinHandle};
 use coqui_net_acl::{Acl, Action, IpNet, Rule};
 use coqui_peer::Handshake;
 use coqui_peer_tls::{
-    Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal, TlsHandshake, Trust,
-    TrustStore, accept, accept_from, client_config, dial, server_config_for, server_config_with,
+    Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal, ServerConfigs, TlsHandshake,
+    Trust, TrustStore, accept, accept_from, client_config, dial, server_config_with,
 };
 use rustls::{AlertDescription, ServerConfig};
 
@@ -229,16 +229,10 @@ fn a_configuration_for_one_connection_decides_without_a_scope() -> Result<(), Pe
     let source: SocketAddr = "192.0.2.7:4000".parse().expect("an address");
     let local: SocketAddr = "198.51.100.1:443".parse().expect("an address");
     assert_eq!(policy.admits_address(source, local), Ok(()));
-    let config = server_config_for(
-        &identity,
-        &Trust::AnyWithKeyProof,
-        &[ALPN],
-        &policy,
-        source,
-        local,
-    )?;
+    let configs = ServerConfigs::new(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
+    let config = configs.for_connection(source, local)?;
     let client_config = client_config(&client, &Trust::AnyWithKeyProof, &[ALPN])?;
-    let mut server = TlsHandshake::server(Arc::new(config.config), None)?;
+    let mut server = TlsHandshake::server(config.config(), None)?;
     let mut dialer = TlsHandshake::client(Arc::new(client_config))?;
     let refused = 'pump: loop {
         while let Some(bytes) = dialer.transmit()? {
@@ -256,6 +250,10 @@ fn a_configuration_for_one_connection_decides_without_a_scope() -> Result<(), Pe
     let refused = refused.expect("the peer is denied from that source");
     assert_eq!(
         refused.refusal(),
+        Some(Refusal::PeerDenied { rule: Some(0) })
+    );
+    assert_eq!(
+        config.refusal(),
         Some(Refusal::PeerDenied { rule: Some(0) })
     );
     Ok(())

@@ -262,7 +262,7 @@ are byte-exact.
 
 Every server configuration built under a policy with `acl: Some(..)` applies it:
 `server_config(_with)`, `server_config_with_verifier`, `server_config_without_client_auth_with`,
-`server_config_for` and `pair_server_config`.
+`ServerConfigs::for_connection` and `pair_server_config`.
 
 - **By address, at the `ClientHello`**: the certificate resolver is wrapped and answers only an
   admitted connection. With client certificates, `Acl::decide` (a rule naming a fingerprint
@@ -282,8 +282,8 @@ Every server configuration built under a policy with `acl: Some(..)` applies it:
   driving rustls itself. Without a source, or without a local address when a rule names a
   destination or port, the connection is refused (`Refusal::AddressUnknown`); a missing local
   address is fine when no rule reads it. A configuration for one connection
-  (`server_config_for`, `Trust::client_cert_verifier_for`) holds its addresses and needs no
-  scope: for quinn, which runs the verifier on its own threads.
+  (`ServerConfigs::for_connection`, `Trust::client_cert_verifier_for`) holds its addresses and
+  needs no scope: for quinn, which runs the verifier on its own threads.
 - `Policy::admits_address(source, local)` / `admits_anonymous` give the address decision
   without a handshake, for a host that refuses a connection before it (a quinn `Incoming`).
 - Session resumption skips both checks, as it skips the verifiers: it is off unless
@@ -295,7 +295,6 @@ pub trait PeerAddr { fn peer_addr(&self) -> Option<SocketAddr>; fn local_addr(&s
 pub fn accept_at<S: Read + Write>(Arc<ServerConfig>, S, source: SocketAddr, local: SocketAddr) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;
 // feature tokio: asynch::accept_at(Arc<ServerConfig>, S, SocketAddr, SocketAddr), async
 impl TlsHandshake { pub fn with_local(self, local: SocketAddr) -> TlsHandshake; }
-pub fn server_config_for(&Identity, &Trust, alpn: &[&[u8]], &Policy, source: SocketAddr, local: SocketAddr) -> Result<Built<ServerConfig>, PeerError>;
 impl Trust { pub fn client_cert_verifier_for(&self, &Policy, source: SocketAddr, local: SocketAddr) -> Result<Arc<dyn ClientCertVerifier>, PeerError>; }
 impl Policy {   // feature acl
     pub fn admits_address(&self, source: SocketAddr, local: SocketAddr) -> Result<(), Refusal>;
@@ -305,8 +304,40 @@ impl Policy {   // feature acl
 
 `client_cert_verifier_for` records waiting entries under its `source` (no scope needed) and,
 with an ACL, refuses a denied fingerprint before the pins; it does not apply the address rules,
-which `server_config_for` (both) or `Policy::admits_address` (before the handshake) do.
-`client_cert_verifier_with` applies no ACL: it has no addresses.
+which `ServerConfigs::for_connection` (both) or `Policy::admits_address` (before the handshake)
+do. `client_cert_verifier_with` applies no ACL: it has no addresses.
+
+### Configurations per connection (`coqui_peer_tls::{ServerConfigs, ConnectionConfig}`)
+
+```rust
+pub struct ServerConfigs;   // Clone (shares the session state), Debug
+impl ServerConfigs {
+    pub fn new(&Identity, &Trust, alpn: &[&[u8]], &Policy) -> Result<ServerConfigs, PeerError>;
+    pub fn with_verifier(&Identity, Arc<dyn ClientCertVerifier>, alpn: &[&[u8]], &Policy) -> Result<ServerConfigs, PeerError>;
+    pub fn without_client_auth(&Identity, alpn: &[&[u8]], &Policy) -> Result<ServerConfigs, PeerError>;
+    pub fn weakened(&self) -> &[Weakening];
+    pub fn for_connection(&self, source: SocketAddr, local: SocketAddr) -> Result<ConnectionConfig, PeerError>;
+}
+pub struct ConnectionConfig;   // Clone, Debug
+impl ConnectionConfig {
+    pub fn config(&self) -> Arc<ServerConfig>;   // quinn: QuicServerConfig::try_from(config)
+    pub fn refusal(&self) -> Option<Refusal>;    // the first refusal of this connection's handshake
+}
+```
+
+For a host that builds a configuration per connection (quinn's `Incoming::accept_with`). The
+three constructors build what `server_config_with`, `server_config_with_verifier` and
+`server_config_without_client_auth_with` build, and check the identity and policy once (their
+errors are those functions'); `weakened` is what `Built::weakened` would hold.
+`for_connection` then gives one connection's configuration: waiting entries recorded under
+`source`, the ACL decided from `source` and `local` (by address at the `ClientHello`, by
+fingerprint before the store), and every configuration from one `ServerConfigs` sharing one
+session cache and ticketer, so with `allow_resumption` a client resumes across connections
+(separate `ServerConfigs` never share sessions). quinn reports a failed server handshake only by
+its alert; `refusal()` gives this side's typed reason: `AddressDenied` / `AddressUnknown` at the
+hello, `PeerDenied` and every trust refusal in the verifier (a host verifier's too, when it
+returns a `Refusal`). Check `Policy::admits_address` before `accept_with` to refuse without a
+handshake.
 
 ## Configurations and streams (`coqui_peer_tls`, `coqui_peer_tls::asynch`)
 
@@ -554,15 +585,15 @@ What each refusal looks like (server side unless stated; the refused side never 
 | `AddressUnknown`, in a verifier | in the client verifier | as `PeerDenied` | `certificate_unknown` | as `PeerDenied` |
 | `NotPinned`, `NotAccepted`, `NotTrusted`, `ChainWhenPinned` | in the verifier | as `PeerDenied` | `certificate_unknown` | as `PeerDenied` |
 | `NameMismatch` (a client refusing a server) | in the client's server verifier | the client: as `PeerDenied` | `certificate_unknown` | the server: `AlertReceived(CertificateUnknown)` |
-| `PeerDenied`, `AddressUnknown` with `server_config_for` / `client_cert_verifier_for` (quinn) | in the verifier, from the addresses the configuration or verifier holds | the host's rustls error `InvalidCertificate(CertificateError::Other(..))`; `Refusal::from_rustls` is it | `certificate_unknown` | as `PeerDenied` |
-| `AddressDenied` with `server_config_for` | at the `ClientHello`, from the configuration's addresses | rustls's own `Error::General`; check `Policy::admits_address` first | `access_denied` | as `AddressDenied` |
+| `PeerDenied`, `AddressUnknown` with `ServerConfigs::for_connection` / `client_cert_verifier_for` (quinn) | in the verifier, from the addresses the configuration or verifier holds | the host's rustls error `InvalidCertificate(CertificateError::Other(..))`; `Refusal::from_rustls` is it, and `ConnectionConfig::refusal()` | `certificate_unknown` | as `PeerDenied` |
+| `AddressDenied` with `ServerConfigs::for_connection` | at the `ClientHello`, from the configuration's addresses | rustls's own `Error::General`; `ConnectionConfig::refusal()` is it; check `Policy::admits_address` first | `access_denied` | as `AddressDenied` |
 | no `Refusal`: an unusable CA or roots file | when the configuration or verifier is built, before any connection | `PeerError::CaFile { path, certificate, read }` | none | nothing |
 
-A host driving rustls or quinn itself with `server_config_for` or `server_config_with_verifier`
-sees the verifier's refusals as rustls errors (`Refusal::from_rustls` takes them out), and an
-address refusal at the hello as rustls's own `Error::General` with `access_denied` sent: it
-checks `Policy::admits_address` before the handshake to tell, and to refuse before reading a
-byte.
+A host driving rustls or quinn itself sees the verifier's refusals as rustls errors
+(`Refusal::from_rustls` takes them out), and an address refusal at the hello as rustls's own
+`Error::General` with `access_denied` sent. With `ServerConfigs::for_connection`,
+`ConnectionConfig::refusal()` gives either; a host can also check `Policy::admits_address`
+before the handshake, to refuse before reading a byte.
 
 A failed handshake in `dial`, `accept` and `asynch` is `PeerError::Io` wrapping the rustls error;
 `refusal()` digs the `Refusal` out of it (`TlsHandshake` errors too). Only the refusing side has
@@ -584,8 +615,9 @@ material or a path.
   a `match` needs a `_` arm.
 - With a policy ACL, a connection whose addresses the configuration cannot learn is refused
   (`Refusal::AddressUnknown`): accept through `accept`, `accept_at`, `TlsHandshake::with_local`
-  or `with_addresses`, or build the configuration for the connection (`server_config_for`). A
-  `PeerAddr` implementation that does not override `local_addr` gives none.
+  or `with_addresses`, or build the configuration for the connection
+  (`ServerConfigs::for_connection`). A `PeerAddr` implementation that does not override
+  `local_addr` gives none.
 - `client_cert_verifier_with` applies no ACL; the configurations built here do.
 - Session resumption skips the verifiers and the ACL: leave `allow_resumption` off where a peer
   or an address can lose its access.
