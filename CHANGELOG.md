@@ -23,6 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `server_config_for`: use `ServerConfigs::new(identity, trust, alpn, policy)?
   .for_connection(source, local)?.config()`.
 
+### Fixed
+
+- A server configuration around a host verifier whose client authentication is optional
+  (`client_auth_mandatory()` false) let a client that sent no certificate through an access
+  control list whose rule names a fingerprint: the address check deferred to a certificate
+  check that never ran. Such a configuration now decides by address as for a client that proves
+  no identity, so a fingerprint rule never admits a client there.
+
 ## [0.0.0-alpha.0] - 2026-10-27
 
 The first pre-release, published to crates.io after `coqui-net-acl` and `coqui-peer`

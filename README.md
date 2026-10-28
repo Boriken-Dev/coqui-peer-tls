@@ -182,7 +182,8 @@ The refusals are `Refusal::AddressDenied`, `PeerDenied` and `AddressUnknown`. Fo
 `ServerConfigs` builds a configuration per connection from its addresses, sharing one session
 cache, and keeps the refusal its handshake ended with (`ConnectionConfig::refusal`), since
 quinn reports only the alert; `Trust::client_cert_verifier_for` is the verifier alone, and
-`Policy::admits_address` decides before the handshake.
+`Policy::admits_address` decides before the handshake. Under optional client authentication a
+rule naming a fingerprint never admits a client.
 
 ## Limits
 
