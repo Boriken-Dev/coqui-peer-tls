@@ -212,17 +212,31 @@ impl Trust {
 
     /// The verifier a server uses for client certificates.
     ///
+    /// It has no connection's addresses, so it cannot apply a policy's access control list:
+    /// a policy with one is refused rather than ignored. Hand the policy to a configuration
+    /// builder ([`server_config_with`](crate::server_config_with),
+    /// [`ServerConfigs`](crate::ServerConfigs)), which applies it, or use
+    /// [`client_cert_verifier_for`](Trust::client_cert_verifier_for).
+    ///
     /// # Errors
     ///
     /// [`PeerError::Unsupported`] for [`Roots`](Trust::Roots) and
     /// [`PinnedOrRoots`](Trust::PinnedOrRoots), which only clients apply;
-    /// [`PeerError::Certificate`] / [`PeerError::TrustPattern`] when the CA file or globs
-    /// are unusable; [`PeerError::Policy`] when a pin uses a digest the policy refuses or
-    /// the policy cannot build a crypto provider.
+    /// [`PeerError::CaFile`] / [`PeerError::TrustPattern`] when the CA file or globs
+    /// are unusable; [`PeerError::Policy`] when a pin uses a digest the policy refuses, the
+    /// policy cannot build a crypto provider, or the policy has an access control list.
     pub fn client_cert_verifier_with(
         &self,
         policy: &Policy,
     ) -> Result<Arc<PeerClientVerifier>, PeerError> {
+        #[cfg(feature = "acl")]
+        if policy.acl.is_some() {
+            return Err(PeerError::Policy(
+                "a client verifier without addresses cannot apply the policy's acl; build a \
+                 server configuration or use client_cert_verifier_for"
+                    .to_owned(),
+            ));
+        }
         self.client_verifier(policy, None).map(Arc::new)
     }
 

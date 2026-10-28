@@ -443,3 +443,13 @@ fn a_rule_naming_a_fingerprint_never_admits_a_client_without_a_certificate() -> 
     );
     Ok(())
 }
+
+#[test]
+fn a_verifier_without_addresses_refuses_a_policy_with_a_list() -> Result<(), PeerError> {
+    let policy = policy(vec![rule(Action::Permit, "10.0.0.0/8")], Action::Deny);
+    let refused = Trust::AnyWithKeyProof
+        .client_cert_verifier_with(&policy)
+        .expect_err("the list cannot be applied there");
+    assert!(matches!(refused, PeerError::Policy(_)), "{refused:?}");
+    Ok(())
+}

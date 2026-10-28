@@ -106,7 +106,7 @@ impl Roots {
 }
 impl Trust {
     pub fn client_cert_verifier(&self) -> Result<Arc<PeerClientVerifier>, PeerError>;           // strict policy
-    pub fn client_cert_verifier_with(&self, &Policy) -> Result<Arc<PeerClientVerifier>, PeerError>;
+    pub fn client_cert_verifier_with(&self, &Policy) -> Result<Arc<PeerClientVerifier>, PeerError>;  // a policy with an acl: PeerError::Policy
     pub fn server_cert_verifier(&self) -> Result<Arc<PeerServerVerifier>, PeerError>;
     pub fn server_cert_verifier_with(&self, &Policy) -> Result<Arc<PeerServerVerifier>, PeerError>;
 }
@@ -309,7 +309,8 @@ impl Policy {   // feature acl
 `client_cert_verifier_for` records waiting entries under its `source` (no scope needed) and,
 with an ACL, refuses a denied fingerprint before the pins; it does not apply the address rules,
 which `ServerConfigs::for_connection` (both) or `Policy::admits_address` (before the handshake)
-do. `client_cert_verifier_with` applies no ACL: it has no addresses.
+do. `client_cert_verifier_with` has no addresses, so it refuses a policy with an ACL
+(`PeerError::Policy`) rather than ignore it.
 
 ### Configurations per connection (`coqui_peer_tls::{ServerConfigs, ConnectionConfig}`)
 
@@ -622,7 +623,8 @@ material or a path.
   or `with_addresses`, or build the configuration for the connection
   (`ServerConfigs::for_connection`). A `PeerAddr` implementation that does not override
   `local_addr` gives none.
-- `client_cert_verifier_with` applies no ACL; the configurations built here do.
+- `client_cert_verifier_with` refuses a policy with an ACL; the configurations built here apply
+  it.
 - Under optional client authentication (a host verifier whose `client_auth_mandatory()` is
   false) a client is decided by address as one that proves no identity: a rule naming a
   fingerprint never admits it, even when it then presents that certificate.
