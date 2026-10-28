@@ -201,7 +201,7 @@ impl PinnedChecks {
 }
 
 impl Trust {
-    /// The verifier a server uses for client certificates, under the strict policy.
+    /// The verifier a server uses for client certificates, under the default policy.
     ///
     /// # Errors
     ///
@@ -324,7 +324,7 @@ impl Trust {
         })
     }
 
-    /// The verifier a client uses for the server certificate, under the strict policy.
+    /// The verifier a client uses for the server certificate, under the default policy.
     ///
     /// # Errors
     ///

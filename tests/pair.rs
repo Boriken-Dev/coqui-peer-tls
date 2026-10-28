@@ -267,12 +267,11 @@ fn a_wrong_pin_is_refused_and_burns_the_pin() {
     assert!(!client.store.is_accepted(&server.identity.fingerprint()));
 }
 
-#[cfg(feature = "tls12")]
 #[test]
 fn pairing_runs_under_the_devices_own_tls_1_2_policy() {
     let hand = Hand::new();
     let (server, client, desk) = (device(&hand), device(&hand), desk(&hand));
-    let mut policy = coqui_peer_tls::Policy::compatible();
+    let mut policy = coqui_peer_tls::Policy::intermediate();
     policy.tls_versions = vec![coqui_peer_tls::TlsVersion::V1_2];
     let config = PairConfig {
         policy,

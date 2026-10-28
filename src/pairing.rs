@@ -36,7 +36,7 @@ pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
 /// connection. Nothing here sets a TLS version or suite; the policy does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PairConfig {
-    /// The policy both pairing configurations are built with. Default strict.
+    /// The policy both pairing configurations are built with. Default [`Policy::default`].
     pub policy: Policy,
     /// The pairing ALPN; only a connection that negotiated it carries a pairing exchange, and
     /// only the configurations built here admit a key-proven certificate nobody trusts yet.
@@ -51,7 +51,7 @@ pub struct PairConfig {
 impl Default for PairConfig {
     fn default() -> Self {
         Self {
-            policy: Policy::strict(),
+            policy: Policy::default(),
             alpn: PAIR_ALPN.to_vec(),
             timeout: Duration::from_secs(15 * 60),
         }

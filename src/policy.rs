@@ -57,16 +57,17 @@ impl FromStr for TlsVersion {
 
 /// What a TLS configuration and a trust decision are allowed to do.
 ///
-/// Start from [`Policy::strict`], [`Policy::compatible`], [`Policy::legacy`] or a policy of
-/// your own, then change any field. [`Default`] is strict. Nothing is silently weakened: [`weakened`](Policy::weakened) lists every setting
-/// looser than strict, and the configuration builders return that list.
+/// Start from [`Policy::modern`], [`Policy::intermediate`], [`Policy::legacy`] or a policy of
+/// your own, then change any field. [`Default`] is intermediate (TLS 1.2 and 1.3). Nothing is
+/// silently weakened: [`weakened`](Policy::weakened) lists every setting looser than the
+/// default, and the configuration builders return that list.
 ///
 /// With the `serde` feature a policy reads and writes the versioned form documented in the
 /// crate README (`policy_version = 1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Policy {
-    /// A name for this policy, such as the preset it started from. Informational: it
-    /// changes nothing, and a consumer may name its own.
+    /// A name for this policy, such as the preset it started from (`modern`, `intermediate`,
+    /// `legacy`). Informational: it changes nothing, and a consumer may name its own.
     pub name: String,
     /// TLS versions offered and accepted. Non-empty.
     pub tls_versions: Vec<TlsVersion>,
@@ -90,8 +91,9 @@ pub struct Policy {
     pub allow_resumption: bool,
     /// Whether a TLS 1.2 connection must use the extended master secret (RFC 7627). Without it
     /// a TLS 1.2 session's keys and exporter are not bound to its handshake, which an attacker
-    /// can use to synchronise two sessions (the triple handshake). Every preset sets it; TLS 1.3
-    /// needs nothing like it.
+    /// can use to synchronise two sessions (the triple handshake). `modern` and `intermediate`
+    /// set it; `legacy` does not, for TLS 1.2 stacks older than RFC 7627. TLS 1.3 needs nothing
+    /// like it.
     pub require_ems: bool,
     /// The bounds of a store-backed pin set's waiting queue: entries per source, entries in
     /// all, and how long before the same certificate from the same source is recorded again.
@@ -112,18 +114,22 @@ pub struct Policy {
 
 impl Default for Policy {
     fn default() -> Self {
-        Self::strict()
+        Self::intermediate()
     }
 }
 
 impl Policy {
-    /// The strict preset: TLS 1.3 only; pins SHA-256, SHA-384 or SHA-512; validity dates
-    /// checked; no chain on a pinned path; no session resumption; waiting queues capped. The
-    /// default.
-    pub fn strict() -> Self {
+    /// The intermediate preset, the default: TLS 1.2 and 1.3 (TLS 1.2 with ECDHE, AEAD suites
+    /// and the extended master secret); pins SHA-256, SHA-384 or SHA-512; validity dates
+    /// checked; no chain on a pinned path; no session resumption; waiting queues capped.
+    ///
+    /// Two peers that both allow TLS 1.3 negotiate it, and the TLS 1.3 downgrade protection
+    /// keeps an attacker from forcing 1.2 between them; allowing 1.2 only admits peers that
+    /// cannot speak 1.3.
+    pub fn intermediate() -> Self {
         Self {
-            name: "strict".to_owned(),
-            tls_versions: vec![TlsVersion::V1_3],
+            name: "intermediate".to_owned(),
+            tls_versions: vec![TlsVersion::V1_2, TlsVersion::V1_3],
             cipher_suites: None,
             kx_groups: None,
             pin_digests: vec![Digest::Sha256, Digest::Sha384, Digest::Sha512],
@@ -137,35 +143,41 @@ impl Policy {
         }
     }
 
-    /// Strict, and TLS 1.2 with ECDHE and AEAD suites as well.
-    pub fn compatible() -> Self {
+    /// The modern preset: intermediate with TLS 1.3 only. A choice, never required: it
+    /// refuses peers that speak only TLS 1.2, and keeps client certificates from passive
+    /// observers when such peers would otherwise be served (TLS 1.2 sends the client's
+    /// certificate unencrypted).
+    pub fn modern() -> Self {
         Self {
-            name: "compatible".to_owned(),
-            tls_versions: vec![TlsVersion::V1_2, TlsVersion::V1_3],
-            ..Self::strict()
+            name: "modern".to_owned(),
+            tls_versions: vec![TlsVersion::V1_3],
+            ..Self::intermediate()
         }
     }
 
-    /// Compatible, and SHA-1 pins accepted, for interoperability with old peers only.
+    /// The legacy preset: intermediate, and SHA-1 pins and TLS 1.2 without the extended master
+    /// secret accepted, for interoperability with old peers only. A peer that cannot take a
+    /// TLS 1.3 `ClientHello` at all is served by setting `tls_versions` to TLS 1.2 alone.
     pub fn legacy() -> Self {
-        let mut policy = Self::compatible();
+        let mut policy = Self::intermediate();
         policy.name = "legacy".to_owned();
         policy.pin_digests.push(Digest::Sha1);
+        policy.require_ems = false;
         policy
     }
 
-    /// The built-in preset called `name`: `strict`, `compatible` or `legacy`.
+    /// The built-in preset called `name`: `modern`, `intermediate` or `legacy`.
     ///
     /// # Errors
     ///
     /// [`PeerError::Policy`] for any other name.
     pub fn preset(name: &str) -> Result<Self, PeerError> {
         match name.trim() {
-            "strict" => Ok(Self::strict()),
-            "compatible" => Ok(Self::compatible()),
+            "modern" => Ok(Self::modern()),
+            "intermediate" => Ok(Self::intermediate()),
             "legacy" => Ok(Self::legacy()),
             _ => Err(PeerError::Policy(
-                "unknown profile; built in: strict, compatible, legacy".to_owned(),
+                "unknown profile; built in: modern, intermediate, legacy".to_owned(),
             )),
         }
     }
@@ -180,13 +192,14 @@ fn list<T: fmt::Display>(items: &[T]) -> String {
 }
 
 impl Policy {
-    /// Every setting looser than the strict preset, as plain data. Empty for strict.
+    /// Every setting looser than the default (intermediate) preset, as plain data. Empty for
+    /// `intermediate` and `modern`; `legacy` reports `pin_digests` and `require_ems`.
     pub fn weakened(&self) -> Vec<Weakening> {
-        self.weakened_against(&Self::strict())
+        self.weakened_against(&Self::default())
     }
 
-    /// Every setting looser than `baseline`, as plain data, for a consumer whose own default
-    /// is not strict.
+    /// Every setting looser than `baseline`, as plain data, for a consumer whose own baseline
+    /// is stricter than the default (`weakened_against(&Policy::modern())` reports TLS 1.2).
     pub fn weakened_against(&self, baseline: &Self) -> Vec<Weakening> {
         let strict = baseline;
         let mut found = Vec::new();
@@ -353,14 +366,10 @@ impl Policy {
         self.tls_versions
             .iter()
             .map(|version| match version {
-                TlsVersion::V1_3 => Ok(&rustls::version::TLS13),
-                #[cfg(feature = "tls12")]
-                TlsVersion::V1_2 => Ok(&rustls::version::TLS12),
-                #[cfg(not(feature = "tls12"))]
-                TlsVersion::V1_2 => Err(PeerError::Policy(
-                    "TLS 1.2 was requested but this build lacks the `tls12` feature".to_owned(),
-                )),
+                TlsVersion::V1_3 => &rustls::version::TLS13,
+                TlsVersion::V1_2 => &rustls::version::TLS12,
             })
+            .map(Ok)
             .collect()
     }
 
@@ -404,9 +413,7 @@ impl Policy {
             .filter(|suite| {
                 let version = match suite {
                     rustls::SupportedCipherSuite::Tls13(_) => TlsVersion::V1_3,
-                    // Without the `tls12` feature rustls has no TLS 1.2 variant to match.
-                    #[allow(unreachable_patterns)]
-                    _ => TlsVersion::V1_2,
+                    rustls::SupportedCipherSuite::Tls12(_) => TlsVersion::V1_2,
                 };
                 self.tls_versions.contains(&version)
                     && self
@@ -419,9 +426,7 @@ impl Policy {
         for version in &self.tls_versions {
             let present = cipher_suites.iter().any(|suite| match suite {
                 rustls::SupportedCipherSuite::Tls13(_) => *version == TlsVersion::V1_3,
-                // Without the `tls12` feature rustls has no TLS 1.2 variant to match.
-                #[allow(unreachable_patterns)]
-                _ => *version == TlsVersion::V1_2,
+                rustls::SupportedCipherSuite::Tls12(_) => *version == TlsVersion::V1_2,
             });
             if !present {
                 return Err(PeerError::Policy(format!(
@@ -504,7 +509,7 @@ mod text {
     as_text!(TlsVersion);
 
     /// The serialized form, version 1. On reading, every field but `policy_version` is
-    /// optional and starts from the named `profile` (strict when absent).
+    /// optional and starts from the named `profile` (the default when absent).
     #[derive(Serialize, Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Document {
@@ -637,12 +642,12 @@ mod text {
     }
 
     impl<'de> Deserialize<'de> for Policy {
-        /// Starts from the built-in preset the `profile` key names (strict when absent).
+        /// Starts from the built-in preset the `profile` key names (the default when absent).
         fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
             let document = Document::deserialize(deserializer)?;
             let base = match &document.profile {
                 Some(name) => Policy::preset(name).map_err(D::Error::custom)?,
-                None => Policy::strict(),
+                None => Policy::default(),
             };
             document.over(base)
         }

@@ -1,6 +1,6 @@
 //! Configurations around a verifier of the host's own: the policy's versions apply, the whole
 //! chain is presented, and the identity's key is available to build them.
-#![cfg(all(feature = "generate", feature = "tls12"))]
+#![cfg(feature = "generate")]
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -107,7 +107,7 @@ fn a_custom_verifier_under_a_tls12_policy_negotiates_tls12_and_presents_the_chai
     let (pem, presented) = chain();
     let server_identity = Identity::from_pem_chain(&pem)?;
     let client_identity = Identity::generate()?;
-    let mut policy = Policy::compatible();
+    let mut policy = Policy::intermediate();
     policy.tls_versions = vec![TlsVersion::V1_2];
     policy.allow_chain_when_pinned = true;
 
@@ -117,7 +117,12 @@ fn a_custom_verifier_under_a_tls12_policy_negotiates_tls12_and_presents_the_chai
         seen: Arc::clone(&seen),
     });
     let server = server_config_with_verifier(&server_identity, verifier, &[ALPN], &policy)?;
-    assert!(server.weakened.iter().any(|w| w.setting == "tls_versions"));
+    assert!(
+        server
+            .weakened
+            .iter()
+            .any(|w| w.setting == "allow_chain_when_pinned")
+    );
     let client = client_config_with_verifier(
         Some(&client_identity),
         Trust::AnyWithKeyProof.server_cert_verifier_with(&policy)?,

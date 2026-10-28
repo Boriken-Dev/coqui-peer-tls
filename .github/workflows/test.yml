@@ -93,8 +93,6 @@ jobs:
             flags: "--no-default-features --features platform-roots"
           - name: "pin"
             flags: "--no-default-features --features pin"
-          - name: "tls12"
-            flags: "--no-default-features --features tls12"
           - name: "acl"
             flags: "--no-default-features --features acl"
           - name: "generate"

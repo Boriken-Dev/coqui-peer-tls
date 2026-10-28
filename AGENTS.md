@@ -7,7 +7,6 @@ package and is self-contained. Development documentation lives with the source a
 
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
-| `tls12` | rustls `tls12` | `Policy::compatible()`, `legacy()`, any policy allowing TLS 1.2 | off |
 | `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
 | `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio` (`net`, `io-util`, `time`), `tokio-rustls`, `coqui-peer/tokio` | module `asynch` | off |
@@ -30,7 +29,9 @@ re-exported) and `acl` (`coqui_net_acl` re-exported, feature `acl`).
 No `unsafe` code (`#![forbid(unsafe_code)]`). Process-wide state: one thread-local holding the
 addresses of the handshake call in progress (`with_source`, `with_addresses`). Nothing installs
 a process-wide crypto provider, and nothing reads a file or an environment variable unless the
-caller passes a path. TLS 1.3 is the default; TLS 1.2 only when a policy allows it.
+caller passes a path. The default policy offers TLS 1.2 and 1.3 (two peers that both speak 1.3
+negotiate it); `Policy::modern()` offers 1.3 only. TLS 1.2 is always compiled in (rustls's own
+code, no dependency): a policy chooses whether it is offered.
 
 ## Ids (`coqui_peer_tls::{PeerId, Digest}`, from `coqui-peer`)
 
@@ -105,7 +106,7 @@ impl Roots {
     pub fn platform() -> Roots;                              // feature platform-roots
 }
 impl Trust {
-    pub fn client_cert_verifier(&self) -> Result<Arc<PeerClientVerifier>, PeerError>;           // strict policy
+    pub fn client_cert_verifier(&self) -> Result<Arc<PeerClientVerifier>, PeerError>;           // default policy
     pub fn client_cert_verifier_with(&self, &Policy) -> Result<Arc<PeerClientVerifier>, PeerError>;  // a policy with an acl: PeerError::Policy
     pub fn server_cert_verifier(&self) -> Result<Arc<PeerServerVerifier>, PeerError>;
     pub fn server_cert_verifier_with(&self, &Policy) -> Result<Arc<PeerServerVerifier>, PeerError>;
@@ -190,7 +191,7 @@ A store-backed `Pins` counts a peer as accepted only when its entry names method
 
 ```rust
 pub struct Policy {
-    pub name: String,                          // informational; "strict", "compatible", "legacy" or your own
+    pub name: String,                          // informational; "modern", "intermediate", "legacy" or your own
     pub tls_versions: Vec<TlsVersion>,         // #[non_exhaustive] enum TlsVersion { V1_2, V1_3 }
     pub cipher_suites: Option<Vec<String>>,    // IANA names; None = all for the versions
     pub kx_groups: Option<Vec<String>>,        // e.g. "X25519"; None = all
@@ -202,9 +203,9 @@ pub struct Policy {
     pub waiting: WaitingLimits,                // per_source 16, total 1000, rerecord 60 s
     pub acl: Option<coqui_net_acl::Acl>,       // feature acl; applied by every server configuration
 }
-impl Default for Policy { /* Policy::strict() */ }
+impl Default for Policy { /* Policy::intermediate() */ }
 impl Policy {
-    pub fn strict() -> Policy;  pub fn compatible() -> Policy;  pub fn legacy() -> Policy;
+    pub fn modern() -> Policy;  pub fn intermediate() -> Policy;  pub fn legacy() -> Policy;
     pub fn preset(name: &str) -> Result<Policy, PeerError>;
     pub fn weakened(&self) -> Vec<Weakening>;
     pub fn weakened_against(&self, baseline: &Policy) -> Vec<Weakening>;
@@ -215,19 +216,19 @@ impl Policy {
     pub fn supported_kx_groups() -> Vec<String>;
     pub fn deserialize_over<'de, D: Deserializer<'de>>(base: Policy, d: D) -> Result<Policy, D::Error>;  // feature serde
 }
-pub use coqui_peer::Weakening;    // { setting, value, strict }, Weakening::new; setting: a field, or "client_auth"
+pub use coqui_peer::Weakening;    // { setting, value, strict }, Weakening::new; setting: a field, or "client_auth"; strict = the baseline's value
 pub const POLICY_VERSION: u32 = 1;
 impl TlsVersion { pub const fn as_str(self) -> &'static str; }   // "1.2", "1.3"; also Display; FromStr refuses others
 ```
 
-| Field | strict | compatible | legacy |
+| Field | modern | intermediate (default) | legacy |
 | --- | --- | --- | --- |
 | `tls_versions` | 1.3 | 1.2, 1.3 | 1.2, 1.3 |
 | `pin_digests` | sha256, sha384, sha512 | same | plus sha1 |
 | `check_validity` | true | true | true |
 | `allow_chain_when_pinned` | false | false | false |
 | `allow_resumption` | false | false | false |
-| `require_ems` | true | true | true |
+| `require_ems` | true | true | false |
 | `waiting` (`per_source`, `total`, `rerecord`) | 16, 1000, 60 s | same | same |
 | `cipher_suites`, `kx_groups`, `acl` | none | none | none |
 
@@ -237,10 +238,13 @@ builds nothing: for a host that builds its configurations later, one per connect
 
 `crypto_provider` narrows the ring provider to the policy's versions, suites and groups; an
 unknown name, or a version left with no suite, is `PeerError::Policy` whose message lists the
-supported names. `weakened` reports `tls_versions` including 1.2, `pin_digests` beyond
-sha256/384/512, `check_validity` false, `allow_chain_when_pinned` true, `allow_resumption`
-true, `require_ems` false, larger waiting caps or a shorter rerecord time, and an ACL with a
-`permit` default.
+supported names. `preset` takes `modern`, `intermediate` or `legacy`. `weakened` compares with
+`Policy::default()` (intermediate) and reports `tls_versions` beyond 1.2/1.3 (none exist),
+`pin_digests` beyond sha256/384/512, `check_validity` false, `allow_chain_when_pinned` true,
+`allow_resumption` true, `require_ems` false, larger waiting caps or a shorter rerecord time,
+and an ACL with a `permit` default: empty for `modern` and `intermediate`, `pin_digests` and
+`require_ems` for `legacy`. `weakened_against(&Policy::modern())` is for a consumer whose own
+baseline is TLS 1.3 only: it reports TLS 1.2.
 
 `allow_resumption` false (every preset) builds configurations with resumption off at both ends:
 the server keeps no session cache and sends no TLS 1.3 tickets, the client keeps no sessions, so
@@ -253,14 +257,14 @@ tickets) and lets a peer that lost trust reconnect on a session it holds.
 Build a `Policy` in code (constructors and public fields); the text form is optional. The crate
 parses no format itself: with `serde` the consumer reads it with its own `toml` or `serde_json`.
 
-TOML or JSON object. Keys: `policy_version` (must be 1 when present), `profile` (a built-in
+TOML or JSON object. Keys: `policy_version` (must be 1 when present), `profile` (`modern`, `intermediate` or `legacy`, the built-in
 preset name to start from; unknown names are errors; free text when read with
 `deserialize_over`), `tls_versions` (`"1.2"`, `"1.3"`), `cipher_suites`, `kx_groups`,
 `pin_digests` (`"sha256"`, `"sha384"`, `"sha512"`, `"sha1"`), `check_validity`,
 `allow_chain_when_pinned`, `allow_resumption`, `require_ems`, `waiting_per_source`,
 `waiting_total`, `waiting_rerecord_secs` (the fields of `waiting`, the last in whole seconds), and
 `acl` (see `coqui-net-acl`). Unknown keys are errors; absent keys keep the preset. Writing
-always names every field. `tests/vectors/policy/{strict,compatible,legacy,acl}.{toml,json}`
+always names every field. `tests/vectors/policy/{modern,intermediate,legacy,acl}.{toml,json}`
 are byte-exact.
 
 ## Access control (`Policy::acl`, feature `acl`)
@@ -460,7 +464,7 @@ pub use coqui_peer::pair;                    // Pairing, PairingDesk, PairingOpt
 pub use coqui_peer::{Clock, Random, Invitation, InvitationOptions, RotationOptions, RotationEvent};
 pub const PAIR_ALPN: &[u8] = b"coqui-pair/1";
 pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
-pub struct PairConfig { pub policy: Policy, pub alpn: Vec<u8>, pub timeout: Duration }  // strict, PAIR_ALPN, 15 min
+pub struct PairConfig { pub policy: Policy, pub alpn: Vec<u8>, pub timeout: Duration }  // Policy::default(), PAIR_ALPN, 15 min
 pub use coqui_peer::{ReadTimeout, WriteTimeout};   // set_read_timeout / set_write_timeout(&self, Option<Duration>); TcpStream, &TcpStream
 #[non_exhaustive] pub enum ResponderTrust { Unverified, Verified { trust: Box<Trust>, name: Option<ServerName<'static>> } }
 impl ResponderTrust { pub fn pinned(id: PeerId) -> ResponderTrust; }
@@ -522,11 +526,12 @@ implements them as no-ops and is bounded by its caller. The async forms bound ev
 write with `tokio::time::timeout`. A frame's buffer grows as its bytes arrive, so a declared length (at
 most `coqui_peer::MAX_MESSAGE`) costs nothing until it is sent.
 
-**What each TLS version gives.** TLS 1.3 (the strict policy): the exporter is unique to the
-connection, so a relay between two connections fails the PIN confirmation. TLS 1.2 (a policy
-that allows it, feature `tls12`): the exporter is unique only with the extended master secret,
-which every preset requires (`Policy::require_ems`, applied to every configuration built here,
-pairing's included); a policy that turns it off is reported by `weakened()`, and then the
+**What each TLS version gives.** TLS 1.3 (what two default peers negotiate, and all `modern`
+allows): the exporter is unique to the connection, so a relay between two connections fails the
+PIN confirmation. TLS 1.2 (a policy that allows it): the exporter is unique only with the
+extended master secret, which `modern` and `intermediate` require (`Policy::require_ems`,
+applied to every configuration built here, pairing's included); a policy that turns it off
+(`legacy` does) is reported by `weakened()`, and then the
 confirmation still covers both certificates, which a relay cannot replace with its own without
 failing it.
 

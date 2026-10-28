@@ -4,13 +4,7 @@ use coqui_peer_tls::{PeerError, Policy};
 
 #[test]
 fn every_preset_passes_its_check() -> Result<(), PeerError> {
-    // TLS 1.2 needs the `tls12` feature, which the other presets allow.
-    let names: &[&str] = if cfg!(feature = "tls12") {
-        &["strict", "compatible", "legacy"]
-    } else {
-        &["strict"]
-    };
-    for name in names {
+    for name in ["modern", "intermediate", "legacy"] {
         Policy::preset(name)?.check()?;
     }
     Ok(())

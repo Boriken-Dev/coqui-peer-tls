@@ -25,7 +25,6 @@ without tracking down every past contributor. You keep the copyright in everythi
 cargo fmt --all --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo clippy --no-default-features -- -D warnings
-cargo clippy --no-default-features --features tls12 -- -D warnings
 cargo clippy --no-default-features --features acl -- -D warnings
 cargo test --all-features
 cargo test --no-default-features

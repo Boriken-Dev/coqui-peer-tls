@@ -39,12 +39,12 @@ fn a_refused_policy_name_is_not_quoted_back() {
         assert!(matches!(error, PeerError::Policy(_)));
         assert!(!error.to_string().contains(secret), "{error}");
     }
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.cipher_suites = Some(vec![secret.to_owned()]);
     let error = policy.crypto_provider().expect_err("not a suite");
     assert!(error.to_string().contains("cipher_suites[0]"), "{error}");
     assert!(!error.to_string().contains(secret), "{error}");
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.kx_groups = Some(vec![secret.to_owned()]);
     let error = policy.crypto_provider().expect_err("not a group");
     assert!(!error.to_string().contains(secret), "{error}");
@@ -60,7 +60,7 @@ fn the_default_server_name_is_server_name() {
 
 #[test]
 fn a_policy_reports_weakenings_with_coqui_peers_type() {
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.allow_resumption = true;
     let weakened: Vec<coqui_peer::Weakening> = policy.weakened();
     assert_eq!(
@@ -76,7 +76,7 @@ fn a_policy_reports_weakenings_with_coqui_peers_type() {
 #[cfg(feature = "acl")]
 #[test]
 fn an_acl_weakening_is_converted_field_for_field() {
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.acl = Some(coqui_net_acl::Acl {
         rules: Vec::new(),
         default: coqui_net_acl::Action::Permit,
@@ -89,7 +89,7 @@ fn an_acl_weakening_is_converted_field_for_field() {
 
 #[test]
 fn a_policy_holds_its_waiting_limits_as_one_value() {
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     assert_eq!(policy.waiting, coqui_peer::WaitingLimits::default());
     policy.waiting.total = 5_000;
     policy.waiting.rerecord = core::time::Duration::from_secs(5);

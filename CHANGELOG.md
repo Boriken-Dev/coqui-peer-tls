@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- The `Policy` presets are `modern` (TLS 1.3 only, the former `strict`), `intermediate` (TLS
+  1.2 and 1.3, the former `compatible`) and `legacy` (intermediate, SHA-1 pins and, new,
+  `require_ems = false`). `Policy::default()` is `intermediate`: two peers that both speak TLS
+  1.3 still negotiate it. Rename `Policy::strict()` to `modern()` to keep TLS 1.3 only, and
+  `compatible()` to `intermediate()`; `Policy::preset` and the text key `profile` take the new
+  names (`strict` and `compatible` are refused), and a document without `profile` starts from
+  the default. The default configuration builders (`client_config`, `server_config`, ...) and
+  `PairConfig::default()` offer TLS 1.2 as well.
+- `weakened()` compares with `Policy::default()`: TLS 1.2 is no longer reported, `modern` and
+  `intermediate` report nothing, `legacy` reports `pin_digests` and `require_ems`. A consumer
+  whose baseline is TLS 1.3 only calls `weakened_against(&Policy::modern())`.
+- The policy vectors are `tests/vectors/policy/{modern,intermediate,legacy,acl}.{toml,json}`.
 - Pairing bounds writes as well as reads: `pair_dial`, `pair_accept` and `pair_accept_from` take
   a stream that also implements `WriteTimeout` (`TcpStream` and `&TcpStream` do) and set its write
   timeout to what is left of `PairConfig::timeout`, and the async forms bound every write with
@@ -34,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- The `tls12` feature. TLS 1.2 is always compiled in (rustls's `tls12`, which adds no
+  dependency) and a policy chooses whether it is offered; remove `"tls12"` from your feature
+  list.
 - `server_config_for`: use `ServerConfigs::new(identity, trust, alpn, policy)?
   .for_connection(source, local)?.config()`.
 

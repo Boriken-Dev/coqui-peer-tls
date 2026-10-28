@@ -29,7 +29,7 @@ fn named(action: Action, source: &str, fingerprint: String) -> Rule {
 }
 
 fn policy(rules: Vec<Rule>, default: Action) -> Policy {
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.acl = Some(Acl { rules, default });
     policy
 }
@@ -79,7 +79,7 @@ fn server(identity: &Identity, policy: &Policy) -> Result<ServerConfig, PeerErro
 #[test]
 fn without_a_list_every_client_is_admitted() -> Result<(), PeerError> {
     let identity = Identity::generate()?;
-    let (address, served) = serve(server(&identity, &Policy::strict())?);
+    let (address, served) = serve(server(&identity, &Policy::modern())?);
     ping(address, &Identity::generate()?)?;
     served.join().expect("no panic")?;
     Ok(())
@@ -282,7 +282,7 @@ fn a_policy_checks_an_address_before_any_handshake() {
         Err(Refusal::AddressDenied { rule: None })
     );
     assert_eq!(
-        Policy::strict().admits_anonymous(at("10.1.1.1:1"), local),
+        Policy::modern().admits_anonymous(at("10.1.1.1:1"), local),
         Ok(())
     );
     let _ = IpNet::Any;
@@ -298,12 +298,12 @@ fn a_verifier_for_one_connection_records_waiting_entries_under_its_source() -> R
     let source: SocketAddr = "192.0.2.7:4000".parse().expect("an address");
     let local: SocketAddr = "198.51.100.1:443".parse().expect("an address");
     let trust = Trust::Pinned(Pins::store(store.clone()));
-    let verifier = trust.client_cert_verifier_for(&Policy::strict(), source, local)?;
+    let verifier = trust.client_cert_verifier_for(&Policy::modern(), source, local)?;
     let config = coqui_peer_tls::server_config_with_verifier(
         &identity,
         verifier,
         &[ALPN],
-        &Policy::strict(),
+        &Policy::modern(),
     )?;
     let mut server = TlsHandshake::server(Arc::new(config.config), None)?;
     let mut dialer = TlsHandshake::client(Arc::new(client_config(
@@ -429,7 +429,7 @@ fn a_rule_naming_a_fingerprint_never_admits_a_client_without_a_certificate() -> 
         )],
         Action::Deny,
     );
-    let inner = Trust::AnyWithKeyProof.client_cert_verifier_with(&Policy::strict())?;
+    let inner = Trust::AnyWithKeyProof.client_cert_verifier_with(&Policy::modern())?;
     let verifier = Arc::new(Optional(inner));
     let config = server_config_with_verifier(&identity, verifier, &[ALPN], &policy)?;
     let source: SocketAddr = "192.0.2.7:4000".parse().expect("an address");

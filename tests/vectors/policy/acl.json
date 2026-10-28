@@ -1,6 +1,6 @@
 {
   "policy_version": 1,
-  "profile": "compatible",
+  "profile": "intermediate",
   "tls_versions": [
     "1.2",
     "1.3"

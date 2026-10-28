@@ -208,12 +208,12 @@ pub fn coqui_peer_tls::Policy::supported_kx_groups() -> alloc::vec::Vec<alloc::s
 pub fn coqui_peer_tls::Policy::weakened(&self) -> alloc::vec::Vec<coqui_peer::weakening::Weakening>
 pub fn coqui_peer_tls::Policy::weakened_against(&self, &Self) -> alloc::vec::Vec<coqui_peer::weakening::Weakening>
 impl coqui_peer_tls::Policy
-pub fn coqui_peer_tls::Policy::compatible() -> Self
-pub fn coqui_peer_tls::Policy::legacy() -> Self
-pub fn coqui_peer_tls::Policy::preset(&str) -> core::result::Result<Self, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::Policy::strict() -> Self
-impl coqui_peer_tls::Policy
 pub fn coqui_peer_tls::Policy::deserialize_over<'de, D: serde_core::de::Deserializer<'de>>(coqui_peer_tls::Policy, D) -> core::result::Result<coqui_peer_tls::Policy, <D as serde_core::de::Deserializer>::Error>
+impl coqui_peer_tls::Policy
+pub fn coqui_peer_tls::Policy::intermediate() -> Self
+pub fn coqui_peer_tls::Policy::legacy() -> Self
+pub fn coqui_peer_tls::Policy::modern() -> Self
+pub fn coqui_peer_tls::Policy::preset(&str) -> core::result::Result<Self, coqui_peer_tls::PeerError>
 impl core::default::Default for coqui_peer_tls::Policy
 pub fn coqui_peer_tls::Policy::default() -> Self
 impl serde_core::ser::Serialize for coqui_peer_tls::Policy
