@@ -40,7 +40,7 @@ platform-roots = ["dep:rustls-platform-verifier"]
 # The peer id, trust store, pairing and handshake this crate is the TLS method of. Alpha: the
 # family's crates are released together. The version is what a published package resolves;
 # the revision is the commit with that version, for building from git.
-coqui-peer = { version = "0.0.0-alpha.0", git = "https://github.com/Boriken-Dev/coqui-peer", rev = "2961de356caf2390cffedddf119d22eb403c14f1" }
+coqui-peer = { version = "=0.0.0-alpha.1", git = "https://github.com/Boriken-Dev/coqui-peer", rev = "e8b7f30854b1b8fbbf81db9bee92ffad63901990" }
 # TLS. Pre-1.0: rustls's current release line; the ring provider is passed explicitly.
 rustls = { version = "0.23.27", default-features = false, features = ["std", "ring"] }
 # The access control list inside a `Policy`, behind `acl`. Alpha, released with this crate.
