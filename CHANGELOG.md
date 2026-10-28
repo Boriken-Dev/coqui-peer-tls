@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `server_config_for`: use `ServerConfigs::new(identity, trust, alpn, policy)?
   .for_connection(source, local)?.config()`.
 
+### Changed
+
+- `Trust::client_cert_verifier_with` refuses a policy with an access control list
+  (`PeerError::Policy`) instead of ignoring the list: a verifier has no addresses to apply it
+  with. Pass the policy to a configuration builder, or use `client_cert_verifier_for`.
+
 ### Fixed
 
 - A server configuration around a host verifier whose client authentication is optional
