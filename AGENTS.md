@@ -265,9 +265,13 @@ Every server configuration built under a policy with `acl: Some(..)` applies it:
 `ServerConfigs::for_connection` and `pair_server_config`.
 
 - **By address, at the `ClientHello`**: the certificate resolver is wrapped and answers only an
-  admitted connection. With client certificates, `Acl::decide` (a rule naming a fingerprint
-  defers to the certificate); without (`server_config_without_client_auth_with`),
-  `Acl::decide_anonymous`. A denial is `Refusal::AddressDenied` and no certificate is sent.
+  admitted connection. When every client must present a certificate, `Acl::decide` (a rule
+  naming a fingerprint defers to the certificate); otherwise `Acl::decide_anonymous`: server TLS
+  (`server_config_without_client_auth_with`), and a host verifier whose
+  `client_auth_mandatory()` is false, since its client may send no certificate and the
+  fingerprint check would never run. So under optional client authentication a rule naming a
+  fingerprint never admits a client. A denial is `Refusal::AddressDenied` and no certificate is
+  sent.
 - **By fingerprint, in the client verifier**: `Acl::decide_peer` with the certificate's
   canonical `sha256:<hex>`, before pins, CA policy or trust store are consulted, so a denied
   client is never recorded as waiting. A denial is `Refusal::PeerDenied`.
@@ -619,5 +623,8 @@ material or a path.
   (`ServerConfigs::for_connection`). A `PeerAddr` implementation that does not override
   `local_addr` gives none.
 - `client_cert_verifier_with` applies no ACL; the configurations built here do.
+- Under optional client authentication (a host verifier whose `client_auth_mandatory()` is
+  false) a client is decided by address as one that proves no identity: a rule naming a
+  fingerprint never admits it, even when it then presents that certificate.
 - Session resumption skips the verifiers and the ACL: leave `allow_resumption` off where a peer
   or an address can lose its access.

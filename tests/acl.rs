@@ -11,7 +11,8 @@ use coqui_net_acl::{Acl, Action, IpNet, Rule};
 use coqui_peer::Handshake;
 use coqui_peer_tls::{
     Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal, ServerConfigs, TlsHandshake,
-    Trust, TrustStore, accept, accept_from, client_config, dial, server_config_with,
+    Trust, TrustStore, accept, accept_from, client_config, client_config_without_identity, dial,
+    server_config_with, server_config_with_verifier,
 };
 use rustls::{AlertDescription, ServerConfig};
 
@@ -344,5 +345,101 @@ fn a_policy_read_from_text_holds_canonical_fingerprints() -> Result<(), PeerErro
     .expect_err("not an id");
     assert!(refused.to_string().contains("acl rule 0"), "{refused}");
     assert!(!refused.to_string().contains("secret-text"), "{refused}");
+    Ok(())
+}
+
+/// A verifier that lets a client present no certificate, as a host's own may.
+#[derive(Debug)]
+struct Optional(Arc<dyn rustls::server::danger::ClientCertVerifier>);
+
+impl rustls::server::danger::ClientCertVerifier for Optional {
+    fn client_auth_mandatory(&self) -> bool {
+        false
+    }
+
+    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
+        self.0.root_hint_subjects()
+    }
+
+    fn verify_client_cert(
+        &self,
+        certificate: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
+        self.0.verify_client_cert(certificate, intermediates, now)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        certificate: &rustls::pki_types::CertificateDer<'_>,
+        signed: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.0.verify_tls12_signature(message, certificate, signed)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        certificate: &rustls::pki_types::CertificateDer<'_>,
+        signed: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.0.verify_tls13_signature(message, certificate, signed)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.supported_verify_schemes()
+    }
+}
+
+/// Runs a server and a client handshake against each other in memory: the server's error, if
+/// it refused.
+fn pump(
+    server: &mut TlsHandshake,
+    dialer: &mut TlsHandshake,
+) -> Result<Option<PeerError>, PeerError> {
+    for _ in 0..16 {
+        while let Some(bytes) = dialer.transmit()? {
+            if let Err(error) = server.receive(&bytes) {
+                return Ok(Some(error));
+            }
+        }
+        while let Some(bytes) = server.transmit()? {
+            let _ = dialer.receive(&bytes);
+        }
+        if server.is_complete() && dialer.is_complete() {
+            return Ok(None);
+        }
+    }
+    Ok(None)
+}
+
+#[test]
+fn a_rule_naming_a_fingerprint_never_admits_a_client_without_a_certificate() -> Result<(), PeerError>
+{
+    let identity = Identity::generate()?;
+    let allowed = Identity::generate()?;
+    // Only the holder of `allowed` may connect.
+    let policy = policy(
+        vec![named(
+            Action::Permit,
+            "0.0.0.0/0",
+            allowed.fingerprint().to_string(),
+        )],
+        Action::Deny,
+    );
+    let inner = Trust::AnyWithKeyProof.client_cert_verifier_with(&Policy::strict())?;
+    let verifier = Arc::new(Optional(inner));
+    let config = server_config_with_verifier(&identity, verifier, &[ALPN], &policy)?;
+    let source: SocketAddr = "192.0.2.7:4000".parse().expect("an address");
+    let mut server = TlsHandshake::server(Arc::new(config.config), Some(source))?;
+    let anonymous = client_config_without_identity(&Trust::AnyWithKeyProof, &[ALPN])?;
+    let mut dialer = TlsHandshake::client(Arc::new(anonymous))?;
+    let refused = pump(&mut server, &mut dialer)?.expect("an anonymous client is refused");
+    assert_eq!(
+        refused.refusal(),
+        Some(Refusal::AddressDenied { rule: None })
+    );
     Ok(())
 }

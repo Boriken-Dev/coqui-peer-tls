@@ -149,7 +149,9 @@ pub(crate) fn decide_address(
 pub(crate) struct AddressGate {
     pub(crate) inner: Arc<dyn ResolvesServerCert>,
     pub(crate) gate: Gate,
-    /// Whether clients present a certificate (mutual TLS).
+    /// Whether every client must present a certificate. Rules naming a fingerprint defer to
+    /// the certificate only then: under optional client authentication a client may send
+    /// none, and the certificate check would never run.
     pub(crate) identified: bool,
 }
 

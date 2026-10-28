@@ -255,6 +255,11 @@ pub fn server_config_without_client_auth_with(
 /// intermediates, and handles versions, suites, groups, the extended master secret, ALPN,
 /// resumption and the access control list as [`server_config_with`] does.
 ///
+/// A verifier whose client authentication is optional
+/// (`ClientCertVerifier::client_auth_mandatory` is false) admits a client without a
+/// certificate; under an access control list such a client is decided by address alone, as
+/// one that proves no identity, so a rule naming a fingerprint never admits it.
+///
 /// # Errors
 ///
 /// [`PeerError::Policy`] when the policy asks for something the ring provider or this build
@@ -372,7 +377,9 @@ impl Base {
             (_, verifier) => verifier,
         };
         #[cfg(feature = "acl")]
-        let identified = verifier.is_some();
+        let identified = verifier
+            .as_ref()
+            .is_some_and(|verifier| verifier.client_auth_mandatory());
         let builder = ServerConfig::builder_with_provider(Arc::clone(&self.provider))
             .with_protocol_versions(&self.versions)
             .map_err(|_| PeerError::Tls)?;
