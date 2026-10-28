@@ -1,6 +1,6 @@
 //! Profiles and policy: what each preset negotiates, what overrides restrict, and what is
 //! reported as weaker. Run with `--all-features`.
-#![cfg(all(feature = "generate", feature = "tokio", feature = "tls12"))]
+#![cfg(all(feature = "generate", feature = "tokio"))]
 
 use std::sync::Arc;
 
@@ -90,12 +90,12 @@ async fn connect(
 #[tokio::test]
 async fn each_profile_builds_a_working_pair() {
     // A consumer's own profile is just a function returning a policy.
-    let mut mine = Policy::strict();
+    let mut mine = Policy::modern();
     mine.name = "mine".to_owned();
     mine.pin_digests = vec![Digest::Sha256];
     for policy in [
-        Policy::strict(),
-        Policy::compatible(),
+        Policy::modern(),
+        Policy::intermediate(),
         Policy::legacy(),
         mine,
     ] {
@@ -107,28 +107,32 @@ async fn each_profile_builds_a_working_pair() {
 }
 
 #[tokio::test]
-async fn strict_is_tls13_only_and_compatible_also_speaks_tls12() {
-    let strict = Policy::default();
-    let compatible = Policy::compatible();
-    let mut only_12 = compatible.clone();
+async fn modern_is_tls13_only_and_the_default_also_speaks_tls12() {
+    let modern = Policy::modern();
+    let default = Policy::default();
+    assert_eq!(default.tls_versions, [TlsVersion::V1_2, TlsVersion::V1_3]);
+    let mut only_12 = default.clone();
     only_12.tls_versions = vec![TlsVersion::V1_2];
-    // A client limited to 1.2 reaches a compatible server, over 1.2 and an AEAD suite.
-    let (version, suite) = connect(&compatible, &only_12).await.expect("1.2 works");
+    // A client limited to 1.2 reaches a default server, over 1.2 and an AEAD suite.
+    let (version, suite) = connect(&default, &only_12).await.expect("1.2 works");
     assert_eq!(version, rustls::ProtocolVersion::TLSv1_2);
     assert!(
         suite.contains("GCM") || suite.contains("CHACHA20"),
         "{suite}"
     );
-    // A strict server refuses it.
-    assert!(connect(&strict, &only_12).await.is_none());
-    // And a strict client cannot reach a server that only speaks 1.2.
-    assert!(connect(&only_12, &strict).await.is_none());
+    // Two default peers negotiate 1.3.
+    let (version, _) = connect(&default, &default).await.expect("1.3 works");
+    assert_eq!(version, rustls::ProtocolVersion::TLSv1_3);
+    // A modern server refuses a 1.2-only client.
+    assert!(connect(&modern, &only_12).await.is_none());
+    // And a modern client cannot reach a server that only speaks 1.2.
+    assert!(connect(&only_12, &modern).await.is_none());
 }
 
 #[tokio::test]
 async fn cipher_suites_can_be_restricted_and_a_mismatch_fails() {
     let with = |suite: &str| {
-        let mut policy = Policy::strict();
+        let mut policy = Policy::modern();
         policy.cipher_suites = Some(vec![suite.to_owned()]);
         policy
     };
@@ -143,7 +147,7 @@ async fn cipher_suites_can_be_restricted_and_a_mismatch_fails() {
 
 #[test]
 fn unknown_suites_groups_and_versions_are_clear_errors_that_list_what_is_supported() {
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.cipher_suites = Some(vec!["TLS_RSA_WITH_RC4_128_SHA".to_owned()]);
     let Err(PeerError::Policy(message)) = policy.crypto_provider() else {
         panic!("an unknown suite must be an error");
@@ -156,19 +160,19 @@ fn unknown_suites_groups_and_versions_are_clear_errors_that_list_what_is_support
     );
     assert!(Policy::supported_cipher_suites().contains(&"TLS13_AES_256_GCM_SHA384".to_owned()));
 
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.kx_groups = Some(vec!["nonsense".to_owned()]);
     assert!(matches!(
         policy.crypto_provider(),
         Err(PeerError::Policy(_))
     ));
     assert!(Policy::supported_kx_groups().contains(&"X25519".to_owned()));
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.kx_groups = Some(vec!["X25519".to_owned()]);
     assert!(policy.crypto_provider().is_ok());
 
     // TLS 1.2 allowed but every allowed suite is a 1.3 one.
-    let mut policy = Policy::compatible();
+    let mut policy = Policy::intermediate();
     policy.cipher_suites = Some(vec!["TLS13_AES_128_GCM_SHA256".to_owned()]);
     assert!(matches!(
         policy.crypto_provider(),
@@ -180,7 +184,7 @@ fn unknown_suites_groups_and_versions_are_clear_errors_that_list_what_is_support
     };
     assert!(message.contains("only TLS 1.2 and 1.3"));
     assert!("1.0".parse::<TlsVersion>().is_err());
-    let mut empty = Policy::strict();
+    let mut empty = Policy::modern();
     empty.tls_versions.clear();
     assert!(empty.crypto_provider().is_ok());
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
@@ -203,7 +207,13 @@ async fn a_sha1_pin_is_accepted_only_when_the_policy_allows_it() {
     assert!(message.contains("sha1") && message.contains("sha256"));
     // Compatible refuses too; legacy accepts, and the handshake works.
     assert!(
-        server_config_with(&server, &sha1_pin(&client), &[ALPN], &Policy::compatible()).is_err()
+        server_config_with(
+            &server,
+            &sha1_pin(&client),
+            &[ALPN],
+            &Policy::intermediate()
+        )
+        .is_err()
     );
     let legacy = Policy::legacy();
     let Built {
@@ -224,13 +234,22 @@ async fn a_sha1_pin_is_accepted_only_when_the_policy_allows_it() {
 #[test]
 fn weakening_is_reported_as_plain_data() {
     assert!(Policy::default().weakened().is_empty());
-    let compatible = Policy::compatible().weakened();
-    assert_eq!(compatible.len(), 1);
+    assert!(Policy::intermediate().weakened().is_empty());
+    assert!(Policy::modern().weakened().is_empty());
+    let legacy: Vec<String> = Policy::legacy()
+        .weakened()
+        .into_iter()
+        .map(|w| w.setting)
+        .collect();
+    assert_eq!(legacy, ["pin_digests", "require_ems"]);
+    // Against a stricter baseline of the consumer's own, TLS 1.2 is reported.
+    let against_modern = Policy::default().weakened_against(&Policy::modern());
+    assert_eq!(against_modern.len(), 1);
     assert_eq!(
         (
-            compatible[0].setting.as_str(),
-            compatible[0].value.as_str(),
-            compatible[0].strict.as_str()
+            against_modern[0].setting.as_str(),
+            against_modern[0].value.as_str(),
+            against_modern[0].strict.as_str()
         ),
         ("tls_versions", "1.2,1.3", "1.3")
     );
@@ -243,11 +262,11 @@ fn weakening_is_reported_as_plain_data() {
     assert_eq!(
         settings,
         [
-            "tls_versions",
             "pin_digests",
             "check_validity",
             "allow_chain_when_pinned",
             "allow_resumption",
+            "require_ems",
             "waiting_per_source"
         ]
     );
@@ -256,7 +275,7 @@ fn weakening_is_reported_as_plain_data() {
     let built = client_config_with(&client, &pinned(&server), &[ALPN], &policy).unwrap();
     assert_eq!(built.weakened, policy.weakened());
     // Fields are plain: stricter-than-default overrides are not weakenings.
-    let mut tighter = Policy::strict();
+    let mut tighter = Policy::modern();
     tighter.pin_digests = vec![Digest::Sha256];
     tighter.waiting.per_source = 4;
     assert!(tighter.weakened().is_empty());
@@ -285,14 +304,15 @@ async fn validity_checking_can_be_switched_off_by_policy() {
         }
     };
     assert!(!run(Policy::default()).await);
-    let mut lax = Policy::strict();
+    let mut lax = Policy::modern();
     lax.check_validity = false;
     assert!(run(lax).await);
 }
 
 #[test]
 fn the_extended_master_secret_is_required_unless_the_policy_says_otherwise() {
-    for preset in [Policy::strict(), Policy::compatible(), Policy::legacy()] {
+    assert!(!Policy::legacy().require_ems);
+    for preset in [Policy::modern(), Policy::intermediate()] {
         assert!(preset.require_ems, "{}", preset.name);
         assert!(
             !preset
@@ -301,7 +321,7 @@ fn the_extended_master_secret_is_required_unless_the_policy_says_otherwise() {
                 .any(|weakening| weakening.setting == "require_ems")
         );
     }
-    let mut loose = Policy::compatible();
+    let mut loose = Policy::intermediate();
     loose.require_ems = false;
     assert!(
         loose
@@ -311,7 +331,7 @@ fn the_extended_master_secret_is_required_unless_the_policy_says_otherwise() {
     );
     let identity = Identity::generate().unwrap();
     let trust = pinned(&identity);
-    for policy in [Policy::compatible(), loose] {
+    for policy in [Policy::intermediate(), loose] {
         let client = client_config_with(&identity, &trust, &[b"x"], &policy).unwrap();
         let server = server_config_with(&identity, &trust, &[b"x"], &policy).unwrap();
         assert_eq!(client.config.require_ems, policy.require_ems);

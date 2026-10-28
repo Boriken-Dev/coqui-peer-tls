@@ -163,16 +163,14 @@ fn a_ca_trusted_client_beside_pins_connects_and_is_not_recorded() {
     assert!(store.waiting().unwrap().is_empty());
 }
 
-#[cfg(feature = "tls12")]
 #[test]
 fn a_stolen_certificate_is_refused_and_not_recorded_over_tls12() {
-    stolen_certificate_is_not_recorded(&Policy::compatible(), &[&rustls::version::TLS12]);
+    stolen_certificate_is_not_recorded(&Policy::intermediate(), &[&rustls::version::TLS12]);
 }
 
-#[cfg(feature = "tls12")]
 #[test]
 fn a_genuine_unknown_client_is_recorded_over_tls12() {
-    let mut policy = Policy::compatible();
+    let mut policy = Policy::intermediate();
     policy.tls_versions = vec![coqui_peer_tls::TlsVersion::V1_2];
     genuine_unknown_client_is_recorded(&policy);
 }

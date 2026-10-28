@@ -185,7 +185,7 @@ fn an_expired_server_certificate_is_refused() {
     assert!(served.join().unwrap()[0].is_err());
 
     // Dates are checked whatever the policy says about pinned certificates.
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.check_validity = false;
     let (address, served) = serve(server_config_without_client_auth(&expired, &[]).unwrap(), 1);
     let config = client_config_without_identity_with(&Trust::Roots(ca.roots()), &[], &policy)
@@ -198,7 +198,7 @@ fn an_expired_server_certificate_is_refused() {
 #[test]
 fn a_verified_server_is_verified_again_on_every_connection() {
     let ca = Ca::new("test root");
-    let mut lenient = Policy::strict();
+    let mut lenient = Policy::modern();
     lenient.allow_resumption = true;
     let server = server_config_without_client_auth_with(&ca.leaf(), &[], &lenient)
         .unwrap()

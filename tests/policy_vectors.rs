@@ -17,7 +17,7 @@ fn directory() -> PathBuf {
 
 /// The policies the vectors hold: each preset, and one with an ACL.
 fn policies() -> Vec<(&'static str, Policy)> {
-    let mut routed = Policy::compatible();
+    let mut routed = Policy::intermediate();
     routed.cipher_suites = Some(vec![
         "TLS13_AES_256_GCM_SHA384".to_owned(),
         "TLS13_CHACHA20_POLY1305_SHA256".to_owned(),
@@ -35,8 +35,8 @@ fn policies() -> Vec<(&'static str, Policy)> {
         default: Action::Deny,
     });
     vec![
-        ("strict", Policy::strict()),
-        ("compatible", Policy::compatible()),
+        ("modern", Policy::modern()),
+        ("intermediate", Policy::intermediate()),
         ("legacy", Policy::legacy()),
         ("acl", routed),
     ]
@@ -83,11 +83,11 @@ fn each_vector_reads_back_to_its_policy_in_both_encodings_byte_for_byte() {
 #[test]
 fn a_document_may_name_a_profile_and_override_fields_and_nothing_else() {
     let policy: Policy = toml::from_str(
-        "profile = \"compatible\"\ncheck_validity = false\npin_digests = [\"sha256\"]\n\
+        "profile = \"intermediate\"\ncheck_validity = false\npin_digests = [\"sha256\"]\n\
          allow_resumption = true\n",
     )
     .unwrap();
-    assert_eq!(policy.name, "compatible");
+    assert_eq!(policy.name, "intermediate");
     assert!(!policy.check_validity);
     assert!(policy.allow_resumption);
     assert_eq!(policy.tls_versions.len(), 2);
@@ -97,6 +97,8 @@ fn a_document_may_name_a_profile_and_override_fields_and_nothing_else() {
         "policy_version = 2",
         "surprise = 1",
         "profile = \"lax\"",
+        "profile = \"strict\"",
+        "profile = \"compatible\"",
         "tls_versions = [\"1.1\"]",
         "pin_digests = [\"md5\"]",
         "[acl]\ndefault = \"maybe\"",
@@ -132,7 +134,7 @@ fn regenerate() {
 
 #[test]
 fn a_consumer_reads_a_document_over_its_own_profile() {
-    let mut mine = Policy::compatible();
+    let mut mine = Policy::intermediate();
     mine.name = "mine".to_owned();
     mine.waiting.total = 50;
     let policy = Policy::deserialize_over(

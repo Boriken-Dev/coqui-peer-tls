@@ -1,6 +1,6 @@
 //! A peer that lost trust is refused at its next connection: TLS session resumption, which
 //! would skip the certificate check, is off unless the policy allows it.
-#![cfg(all(feature = "generate", feature = "tokio", feature = "tls12"))]
+#![cfg(all(feature = "generate", feature = "tokio"))]
 
 use std::sync::Arc;
 
@@ -44,7 +44,7 @@ async fn link(
 }
 
 fn policy(version: TlsVersion) -> Policy {
-    let mut policy = Policy::compatible();
+    let mut policy = Policy::intermediate();
     policy.tls_versions = vec![version];
     policy
 }
@@ -148,7 +148,7 @@ async fn resumption_is_an_opt_in_reported_as_a_weakening() {
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     let server_pin = Trust::Pinned(Pins::fixed([server.fingerprint()]));
     let client_pin = Trust::Pinned(Pins::fixed([client.fingerprint()]));
-    for policy in [Policy::strict(), Policy::compatible(), Policy::legacy()] {
+    for policy in [Policy::modern(), Policy::intermediate(), Policy::legacy()] {
         assert!(!policy.allow_resumption);
         let built = server_config_with(&server, &client_pin, &[ALPN], &policy).unwrap();
         let server_config = Arc::new(built.config);
@@ -164,7 +164,7 @@ async fn resumption_is_an_opt_in_reported_as_a_weakening() {
         }
     }
 
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.allow_resumption = true;
     let built = server_config_with(&server, &client_pin, &[ALPN], &policy).unwrap();
     assert_eq!(built.weakened.len(), 1);
@@ -215,8 +215,8 @@ async fn server_tls_configurations_resume_only_when_allowed() {
     let server = Identity::generate().unwrap();
     let server_pin = Trust::Pinned(Pins::fixed([server.fingerprint()]));
     let presets = [
-        Policy::strict(),
-        Policy::compatible(),
+        Policy::modern(),
+        Policy::intermediate(),
         Policy::legacy(),
         policy(TlsVersion::V1_2),
     ];
@@ -239,7 +239,7 @@ async fn server_tls_configurations_resume_only_when_allowed() {
         }
     }
 
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.allow_resumption = true;
     let built = server_config_without_client_auth_with(&server, &[ALPN], &policy).unwrap();
     let settings: Vec<&str> = built

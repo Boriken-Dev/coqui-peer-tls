@@ -18,9 +18,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = []
-# TLS 1.2 support in rustls, needed by the `compatible` and `legacy` profiles. It adds only
-# code to rustls; without it a policy that asks for TLS 1.2 is a clear error.
-tls12 = ["rustls/tls12", "tokio-rustls?/tls12"]
 # Generate self-signed identities (rcgen; `time`, which rcgen already uses, for validity dates).
 generate = ["dep:rcgen", "dep:time"]
 # Trust certificates signed by a CA file and matching subject and SAN globs.
@@ -41,8 +38,9 @@ platform-roots = ["dep:rustls-platform-verifier"]
 # family's crates are released together. The version is what a published package resolves;
 # the revision is the commit with that version, for building from git.
 coqui-peer = { version = "=0.0.0-alpha.1", git = "https://github.com/Boriken-Dev/coqui-peer", rev = "e8b7f30854b1b8fbbf81db9bee92ffad63901990" }
-# TLS. Pre-1.0: rustls's current release line; the ring provider is passed explicitly.
-rustls = { version = "0.23.27", default-features = false, features = ["std", "ring"] }
+# TLS. Pre-1.0: rustls's current release line; the ring provider is passed explicitly. TLS 1.2
+# is rustls's own code (no dependency); a policy chooses whether it is offered.
+rustls = { version = "0.23.27", default-features = false, features = ["std", "ring", "tls12"] }
 # The access control list inside a `Policy`, behind `acl`. Alpha, released with this crate.
 coqui-net-acl = { version = "0.0.0-alpha.0", git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "e0f31323bffeb6ff05c2c3e5c50a7d58e6aafd28", optional = true }
 # The text form of `Policy`, behind `serde`.
@@ -55,7 +53,7 @@ x509-parser = { version = "0.18", default-features = false, optional = true }
 globset = { version = "0.4", default-features = false, optional = true }
 # Async streams, behind `tokio`. Pre-1.0: tokio-rustls's release line for rustls 0.23.
 tokio = { version = "1", default-features = false, features = ["net", "io-util", "time"], optional = true }
-tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"], optional = true }
 # The operating system's verifier, behind `platform-roots`. Pre-1.0: its current release line.
 rustls-platform-verifier = { version = "0.7.1", default-features = false, optional = true }
 

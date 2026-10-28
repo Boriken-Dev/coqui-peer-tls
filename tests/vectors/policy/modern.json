@@ -1,6 +1,6 @@
 {
   "policy_version": 1,
-  "profile": "strict",
+  "profile": "modern",
   "tls_versions": [
     "1.3"
   ],

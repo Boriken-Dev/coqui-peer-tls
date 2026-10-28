@@ -101,7 +101,7 @@ fn ping(
 fn a_client_without_identity_reaches_a_server_tls_server_that_reports_no_peer() {
     let server = Identity::generate().unwrap();
     let built =
-        server_config_without_client_auth_with(&server, &[ALPN], &Policy::strict()).unwrap();
+        server_config_without_client_auth_with(&server, &[ALPN], &Policy::modern()).unwrap();
     assert_eq!(built.weakened.len(), 1);
     assert_eq!(built.weakened[0].setting, CLIENT_AUTH_SETTING);
     assert_eq!(built.weakened[0].value, "none");
@@ -344,7 +344,7 @@ fn a_pinning_client_refuses_a_chain_unless_its_policy_allows_one() {
     assert_eq!(refused.refusal(), Some(Refusal::ChainWhenPinned));
     assert!(served.join().unwrap().is_err());
 
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.allow_chain_when_pinned = true;
     let built = client_config_without_identity_with(&trust, &[], &policy).unwrap();
     assert_eq!(built.weakened.len(), 1);

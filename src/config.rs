@@ -26,17 +26,18 @@ pub fn crypto_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-/// A built configuration and the settings of its [`Policy`] that are looser than strict, so
-/// a host can surface them. Nothing is printed by this crate.
+/// A built configuration and the settings of its [`Policy`] that are looser than the default
+/// policy's, so a host can surface them. Nothing is printed by this crate.
 #[derive(Debug)]
 pub struct Built<T> {
     /// The configuration.
     pub config: T,
-    /// Every setting looser than strict; empty under the strict profile with mutual TLS.
+    /// Every setting looser than the default policy's; empty under the default and `modern`
+    /// profiles with mutual TLS.
     pub weakened: Vec<Weakening>,
 }
 
-/// A client configuration under the strict policy (TLS 1.3 only) that presents `identity`
+/// A client configuration under the default policy (TLS 1.2 and 1.3) that presents `identity`
 /// and verifies the server by `trust`: pinned, by [`Roots`](crate::Roots) for the name
 /// dialled ([`dial_named`](crate::dial_named)), pinned or roots, or any certificate with key
 /// proof.
@@ -73,7 +74,7 @@ pub fn client_config_with(
     build_client(Some(identity), trust, alpn, policy)
 }
 
-/// A client configuration under the strict policy that presents no certificate, for a
+/// A client configuration under the default policy that presents no certificate, for a
 /// server built with [`server_config_without_client_auth`]. The server is verified by
 /// `trust` exactly as in [`client_config`]; this side proves itself, if at all, inside the
 /// encrypted channel. A server that requires a client certificate refuses it.
@@ -153,11 +154,7 @@ fn build_client_with(
         None => builder.with_no_client_auth(),
     };
     config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
-    // rustls has the setting only where it can offer TLS 1.2.
-    #[cfg(feature = "tls12")]
-    {
-        config.require_ems = policy.require_ems;
-    }
+    config.require_ems = policy.require_ems;
     if !policy.allow_resumption {
         config.resumption = Resumption::disabled();
     }
@@ -296,7 +293,6 @@ pub(crate) struct Base {
     provider: Arc<CryptoProvider>,
     resolver: Arc<dyn ResolvesServerCert>,
     alpn: Vec<Vec<u8>>,
-    #[cfg(feature = "tls12")]
     require_ems: bool,
     resumption: bool,
     session_storage: Arc<dyn StoresServerSessions>,
@@ -332,7 +328,6 @@ impl Base {
             provider,
             resolver: template.cert_resolver,
             alpn: alpn.iter().map(|protocol| protocol.to_vec()).collect(),
-            #[cfg(feature = "tls12")]
             require_ems: policy.require_ems,
             resumption: policy.allow_resumption,
             session_storage,
@@ -389,11 +384,7 @@ impl Base {
         };
         let mut config = builder.with_cert_resolver(Arc::clone(&self.resolver));
         config.alpn_protocols.clone_from(&self.alpn);
-        // rustls has the setting only where it can offer TLS 1.2.
-        #[cfg(feature = "tls12")]
-        {
-            config.require_ems = self.require_ems;
-        }
+        config.require_ems = self.require_ems;
         config.session_storage = Arc::clone(&self.session_storage);
         config.ticketer = Arc::clone(&self.ticketer);
         if !self.resumption {

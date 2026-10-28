@@ -1,5 +1,5 @@
 policy_version = 1
-profile = "compatible"
+profile = "intermediate"
 tls_versions = ["1.2", "1.3"]
 pin_digests = ["sha256", "sha384", "sha512"]
 check_validity = true

@@ -1,5 +1,5 @@
 policy_version = 1
-profile = "strict"
+profile = "modern"
 tls_versions = ["1.3"]
 pin_digests = ["sha256", "sha384", "sha512"]
 check_validity = true

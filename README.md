@@ -28,8 +28,8 @@ and the sans-IO handshake trait; this crate adds X.509 and rustls. See the
   device flow on a connection of their own, bound to it by the TLS exporter.
 - **Key rotation**: a peer announces its successor certificate; store-backed pins promote it
   once proven and retire the old one after a window you choose.
-- **Policy**: strict by default (TLS 1.3 only), with `compatible` and `legacy` presets; looser
-  settings are reported as data, never refused. A policy can carry an access control list,
+- **Policy**: `intermediate` by default (TLS 1.2 and 1.3), with `modern` (TLS 1.3 only) and
+  `legacy` presets; settings looser than the default are reported as data, never refused. A policy can carry an access control list,
   applied by address at the `ClientHello` and by fingerprint before the trust store.
 - **Your own stack**: the rustls verifiers as values, configurations around a verifier of your
   own, per-connection configurations for quinn, and the identity's chain and key.
@@ -49,7 +49,6 @@ cargo add coqui-peer-tls@0.0.0-alpha.0
 
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
-| `tls12` | rustls `tls12` | the `compatible` and `legacy` presets | off |
 | `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
 | `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio`, `tokio-rustls`, `coqui-peer/tokio` | module `asynch`: async dial, accept, pairing and rotation | off |
@@ -73,7 +72,7 @@ let me = Identity::read("identity.pem".as_ref())?.expect("an identity file");
 let trust = Trust::Pinned(Pins::fixed([
     "sha256:630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd".parse()?,
 ]));
-let config = client_config(&me, &trust, &[b"my-protocol/1"])?; // strict: TLS 1.3 only
+let config = client_config(&me, &trust, &[b"my-protocol/1"])?; // default: TLS 1.2 and 1.3
 let socket = std::net::TcpStream::connect("192.0.2.7:7000")?;
 let (stream, peer) = dial(Arc::new(config), socket)?;
 println!("connected to {}", peer.fingerprint);
@@ -111,12 +110,12 @@ for the dialled name is trusted. The chain, the dates and the name are always ch
 
 ## Profiles and policy
 
-`Policy::default()` is strict and works as it is. `Policy::strict()`, `compatible()` and
-`legacy()` are plain values; start from one and change any public field. `weakened()` lists
-every setting looser than strict, as data; `client_config_with` and `server_config_with` return
-that list beside the configuration. Nothing is printed.
+`Policy::default()` is `intermediate` and works as it is. `Policy::modern()`, `intermediate()`
+and `legacy()` are plain values; start from one and change any public field. `weakened()` lists
+every setting looser than the default, as data; `client_config_with` and `server_config_with`
+return that list beside the configuration. Nothing is printed.
 
-| Field | `strict` | `compatible` | `legacy` |
+| Field | `modern` | `intermediate` (default) | `legacy` |
 | --- | --- | --- | --- |
 | `tls_versions` | `1.3` | `1.2`, `1.3` | `1.2`, `1.3` |
 | `cipher_suites`, `kx_groups` | all the provider has | same | same |
@@ -124,9 +123,17 @@ that list beside the configuration. Nothing is printed.
 | `check_validity` | true | true | true |
 | `allow_chain_when_pinned` | false | false | false |
 | `allow_resumption` | false | false | false |
-| `require_ems` | true | true | true |
+| `require_ems` | true | true | false |
 | `waiting` (`per_source` / `total` / `rerecord`) | 16 / 1000 / 60 s | same | same |
 | `acl` | none | none | none |
+
+Allowing TLS 1.2 costs nothing between peers that speak 1.3: they negotiate 1.3, and TLS 1.3's
+downgrade protection keeps an attacker from forcing 1.2; every 1.2 suite offered is ECDHE with
+an AEAD cipher, and the extended master secret is required. `modern` refuses peers that speak
+only 1.2; choose it to keep client certificates from passive observers (TLS 1.2 sends them
+unencrypted) when such peers exist. `legacy` adds SHA-1 pins and TLS 1.2 without the extended
+master secret; a peer that cannot take a TLS 1.3 `ClientHello` at all is served by
+`tls_versions = ["1.2"]`.
 
 Session resumption is off in every preset: rustls does not check the peer's certificate again
 on a resumed session, so a peer removed from the trust store could reconnect on a session it
@@ -136,12 +143,12 @@ held. TLS 1.0, 1.1 and non-AEAD suites cannot be offered; MD5 pins are never acc
 use coqui_peer_tls::{Digest, Identity, Policy, Trust, server_config_with};
 
 let identity = Identity::read("identity.pem".as_ref())?.expect("an identity file");
-let mut policy = Policy::compatible();
+let mut policy = Policy::default();
 policy.pin_digests.push(Digest::Sha1);
 policy.waiting.per_source = 4;
 let built = server_config_with(&identity, &Trust::AnyWithKeyProof, &[b"my-protocol/1"], &policy)?;
 for weaker in &built.weakened {
-    eprintln!("{} = {} (strict: {})", weaker.setting, weaker.value, weaker.strict);
+    eprintln!("{} = {} (default: {})", weaker.setting, weaker.value, weaker.strict);
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -151,7 +158,7 @@ in the format you choose:
 
 ```toml
 policy_version = 1
-profile = "compatible"          # a built-in preset to start from
+profile = "intermediate"        # a built-in preset to start from
 tls_versions = ["1.2", "1.3"]
 pin_digests = ["sha256", "sha384", "sha512"]
 allow_resumption = false

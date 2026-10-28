@@ -14,7 +14,7 @@ use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 const ALPN: &[u8] = b"quinn-test/1";
 
 fn policy(rules: Vec<Rule>, default: Action) -> Policy {
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.acl = Some(Acl { rules, default });
     policy
 }

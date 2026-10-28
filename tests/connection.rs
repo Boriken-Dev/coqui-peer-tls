@@ -36,7 +36,7 @@ fn handshake(mut server: TlsHandshake, mut dialer: TlsHandshake) -> Result<Conne
 }
 
 fn resumable() -> Policy {
-    let mut policy = Policy::strict();
+    let mut policy = Policy::modern();
     policy.allow_resumption = true;
     policy
 }
@@ -98,7 +98,7 @@ fn without_resumption_no_connection_resumes() -> Result<(), PeerError> {
         &identity,
         &Trust::AnyWithKeyProof,
         &[ALPN],
-        &Policy::strict(),
+        &Policy::modern(),
     )?;
     let client_config = Arc::new(
         client_config_with(&client, &Trust::AnyWithKeyProof, &[ALPN], &resumable())?.config,
