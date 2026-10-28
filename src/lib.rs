@@ -17,6 +17,7 @@ pub mod asynch;
 mod ca;
 mod certificate;
 mod config;
+mod connection;
 mod error;
 #[cfg(feature = "acl")]
 mod gate;
@@ -34,9 +35,10 @@ pub use certificate::{METHOD, TrustStoreExt, certificate_key};
 pub use config::{
     Built, CLIENT_AUTH_SETTING, client_config, client_config_with, client_config_with_verifier,
     client_config_without_identity, client_config_without_identity_with, crypto_provider,
-    server_config, server_config_for, server_config_with, server_config_with_verifier,
+    server_config, server_config_with, server_config_with_verifier,
     server_config_without_client_auth, server_config_without_client_auth_with,
 };
+pub use connection::{ConnectionConfig, ServerConfigs};
 #[cfg(feature = "acl")]
 pub use coqui_net_acl as acl;
 pub use coqui_peer::pair;

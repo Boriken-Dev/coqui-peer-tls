@@ -15,6 +15,7 @@ use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 
+use crate::connection::Slot;
 use crate::error::{PeerError, Refusal};
 
 /// `acl` with every rule's fingerprint in canonical `sha256:<hex>` text, the form a verified
@@ -42,18 +43,33 @@ pub(crate) fn canonical(acl: &Acl) -> Result<Acl, PeerError> {
 
 /// A canonical access control list, and the connection's addresses when they are known when
 /// it is built (a configuration or verifier made for one connection); otherwise they are read
-/// from the scope the accept helpers set (`with_addresses`).
+/// from the scope the accept helpers set (`with_addresses`). A refusal at the `ClientHello`
+/// goes to `refused` when given, and to that scope otherwise.
 #[derive(Debug, Clone)]
 pub(crate) struct Gate {
     acl: Arc<Acl>,
     addresses: Option<(SocketAddr, SocketAddr)>,
+    refused: Option<Arc<Slot>>,
 }
 
 impl Gate {
-    pub(crate) fn new(acl: Acl, addresses: Option<(SocketAddr, SocketAddr)>) -> Self {
+    pub(crate) fn new(
+        acl: Arc<Acl>,
+        addresses: Option<(SocketAddr, SocketAddr)>,
+        refused: Option<Arc<Slot>>,
+    ) -> Self {
         Self {
-            acl: Arc::new(acl),
+            acl,
             addresses,
+            refused,
+        }
+    }
+
+    /// Keeps `refusal` where this gate reports to.
+    fn refuse(&self, refusal: Refusal) {
+        match &self.refused {
+            Some(slot) => slot.keep(refusal),
+            None => crate::source::refuse(refusal),
         }
     }
 
@@ -142,7 +158,7 @@ impl ResolvesServerCert for AddressGate {
         match self.gate.check_address(self.identified) {
             Ok(()) => self.inner.resolve(client_hello),
             Err(refusal) => {
-                crate::source::refuse(refusal);
+                self.gate.refuse(refusal);
                 None
             }
         }

@@ -69,4 +69,6 @@ serde_json = "1"
 toml = "0.9"
 # Reads the extensions of generated certificates in tests.
 x509-parser = "0.18"
-tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "io-util"] }
+tokio = { version = "1", default-features = false, features = ["macros", "net", "rt", "io-util", "time"] }
+# A QUIC host, which takes a server configuration per connection.
+quinn = { version = "0.11.9", default-features = false, features = ["rustls-ring", "runtime-tokio"] }

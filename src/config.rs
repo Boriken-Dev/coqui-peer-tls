@@ -4,10 +4,13 @@ use core::net::SocketAddr;
 use rustls::client::Resumption;
 use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::CryptoProvider;
-use rustls::server::NoServerSessionStorage;
 use rustls::server::danger::ClientCertVerifier;
-use rustls::{ClientConfig, ServerConfig};
+use rustls::server::{
+    NoServerSessionStorage, ProducesTickets, ResolvesServerCert, StoresServerSessions,
+};
+use rustls::{ClientConfig, ServerConfig, SupportedProtocolVersion};
 
+use crate::connection::{Keeping, Slot};
 use crate::error::PeerError;
 use crate::identity::Identity;
 use crate::policy::Policy;
@@ -164,7 +167,7 @@ fn build_client_with(
     })
 }
 
-/// A server configuration under the strict policy that presents `identity` and requires a
+/// A server configuration under the default policy that presents `identity` and requires a
 /// client certificate trusted by `trust`. Session resumption is off: every connection
 /// verifies the client's certificate.
 ///
@@ -179,57 +182,34 @@ pub fn server_config(
     server_config_with(identity, trust, alpn, &Policy::default()).map(|built| built.config)
 }
 
-/// A server configuration under `policy`. Session resumption is off unless
-/// [`Policy::allow_resumption`] is set, which then keeps rustls's default session cache and
-/// TLS 1.3 tickets.
+/// A server configuration under `policy`, shared by every connection it accepts. Session
+/// resumption is off unless [`Policy::allow_resumption`] is set, which then keeps rustls's
+/// default session cache and TLS 1.3 tickets.
+///
+/// A policy's access control list reads each connection's addresses from the scope this
+/// crate's accept helpers set ([`accept`](crate::accept), [`with_addresses`](crate::with_addresses)).
+/// A host whose connections reach rustls another way (quinn) builds a configuration per
+/// connection with [`ServerConfigs`](crate::ServerConfigs).
 ///
 /// # Errors
 ///
-/// [`PeerError::Certificate`], [`PeerError::TrustPattern`], [`PeerError::Policy`] or
-/// [`PeerError::Tls`] when the configuration cannot be built.
+/// [`PeerError::Certificate`], [`PeerError::TrustPattern`], [`PeerError::CaFile`],
+/// [`PeerError::Policy`] or [`PeerError::Tls`] when the configuration cannot be built.
 pub fn server_config_with(
     identity: &Identity,
     trust: &Trust,
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    let verifier = trust.client_cert_verifier_with(policy)?;
-    build_server(identity, Some(verifier), alpn, policy, None)
+    let verifier: Arc<dyn ClientCertVerifier> = Arc::new(trust.client_verifier(policy, None)?);
+    let base = Base::new(identity, alpn, policy)?;
+    Ok(Built {
+        config: base.config(Some(verifier), None, None)?,
+        weakened: policy.weakened(),
+    })
 }
 
-/// [`server_config_with`] for one connection, from `source` to `local`: for a host whose
-/// connections reach rustls without this crate's accept helpers, such as quinn, which runs the
-/// verifier on threads of its own and takes a configuration per incoming connection.
-///
-/// Waiting entries are recorded under `source`, and a policy's access control list (feature
-/// `acl`) is decided from these addresses: by address when the `ClientHello` arrives, and by
-/// the certificate's fingerprint before the trust store is consulted. A host that can refuse a
-/// connection before its handshake (a quinn `Incoming`) checks
-/// [`Policy::admits_address`](crate::Policy::admits_address) first: a refusal inside the
-/// handshake reaches it as rustls's own error.
-///
-/// # Errors
-///
-/// As [`server_config_with`].
-pub fn server_config_for(
-    identity: &Identity,
-    trust: &Trust,
-    alpn: &[&[u8]],
-    policy: &Policy,
-    source: SocketAddr,
-    local: SocketAddr,
-) -> Result<Built<ServerConfig>, PeerError> {
-    let verifier = Arc::new(trust.client_verifier(policy, Some(source))?);
-    build_server(
-        identity,
-        Some(verifier),
-        alpn,
-        policy,
-        Some((source, local)),
-    )
-}
-
-/// A server configuration under the strict policy that presents `identity` and asks for no
+/// A server configuration under the default policy that presents `identity` and asks for no
 /// client certificate: the server proves itself, the client does not at the TLS layer.
 ///
 /// **The application must authenticate the client inside the encrypted channel** (a key
@@ -263,19 +243,17 @@ pub fn server_config_without_client_auth_with(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    let mut built = build_server(identity, None, alpn, policy, None)?;
-    built.weakened.push(Weakening {
-        setting: CLIENT_AUTH_SETTING.to_owned(),
-        value: "none".to_owned(),
-        strict: "certificate".to_owned(),
-    });
-    Ok(built)
+    let base = Base::new(identity, alpn, policy)?;
+    Ok(Built {
+        config: base.config(None, None, None)?,
+        weakened: without_client_auth(policy.weakened()),
+    })
 }
 
 /// A server configuration under `policy` that verifies clients with `verifier`, a verifier of
 /// the host's own (one of this crate's wrapped, for example). It presents `identity` and its
-/// intermediates, and handles versions, suites, groups, the extended master secret, ALPN and
-/// resumption as [`server_config_with`] does.
+/// intermediates, and handles versions, suites, groups, the extended master secret, ALPN,
+/// resumption and the access control list as [`server_config_with`] does.
 ///
 /// # Errors
 ///
@@ -288,72 +266,140 @@ pub fn server_config_with_verifier(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    build_server(identity, Some(verifier), alpn, policy, None)
-}
-
-/// A server configuration; with a policy access control list, `verifier` is wrapped to decide
-/// each certificate and the certificate resolver to decide each `ClientHello`, from
-/// `addresses`, or from the scope the accept helpers set when `None`.
-fn build_server(
-    identity: &Identity,
-    verifier: Option<Arc<dyn ClientCertVerifier>>,
-    alpn: &[&[u8]],
-    policy: &Policy,
-    addresses: Option<(SocketAddr, SocketAddr)>,
-) -> Result<Built<ServerConfig>, PeerError> {
-    #[cfg(feature = "acl")]
-    let gate = match &policy.acl {
-        Some(acl) => Some(crate::gate::Gate::new(
-            crate::gate::canonical(acl)?,
-            addresses,
-        )),
-        None => None,
-    };
-    #[cfg(not(feature = "acl"))]
-    let _ = addresses;
-    #[cfg(feature = "acl")]
-    let verifier = match (&gate, verifier) {
-        (Some(gate), Some(inner)) => Some(Arc::new(crate::gate::PeerGate {
-            inner,
-            gate: gate.clone(),
-        }) as Arc<dyn ClientCertVerifier>),
-        (_, verifier) => verifier,
-    };
-    #[cfg(feature = "acl")]
-    let identified = verifier.is_some();
-    let versions = policy.protocol_versions()?;
-    let builder = ServerConfig::builder_with_provider(policy.crypto_provider()?)
-        .with_protocol_versions(&versions)
-        .map_err(|_| PeerError::Tls)?;
-    let builder = match verifier {
-        Some(verifier) => builder.with_client_cert_verifier(verifier),
-        None => builder.with_no_client_auth(),
-    };
-    let mut config = builder
-        .with_single_cert(identity.certificate_chain(), identity.private_key_der())
-        .map_err(|_| PeerError::Certificate)?;
-    config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
-    // rustls has the setting only where it can offer TLS 1.2.
-    #[cfg(feature = "tls12")]
-    {
-        config.require_ems = policy.require_ems;
-    }
-    if !policy.allow_resumption {
-        // No session cache for TLS 1.2 session ids or TLS 1.3 stateful tickets, and no
-        // tickets sent; the builder's ticketer already produces none.
-        config.session_storage = Arc::new(NoServerSessionStorage {});
-        config.send_tls13_tickets = 0;
-    }
-    #[cfg(feature = "acl")]
-    if let Some(gate) = gate {
-        config.cert_resolver = Arc::new(crate::gate::AddressGate {
-            inner: Arc::clone(&config.cert_resolver),
-            gate,
-            identified,
-        });
-    }
+    let base = Base::new(identity, alpn, policy)?;
     Ok(Built {
-        config,
+        config: base.config(Some(verifier), None, None)?,
         weakened: policy.weakened(),
     })
+}
+
+/// `weakened` with the server-TLS entry after it.
+pub(crate) fn without_client_auth(mut weakened: Vec<Weakening>) -> Vec<Weakening> {
+    weakened.push(Weakening {
+        setting: CLIENT_AUTH_SETTING.to_owned(),
+        value: "none".to_owned(),
+        strict: "certificate".to_owned(),
+    });
+    weakened
+}
+
+/// What every server configuration under one identity, ALPN list and policy shares: built and
+/// checked once, then a configuration per call, all sharing one session cache and ticketer.
+#[derive(Debug, Clone)]
+pub(crate) struct Base {
+    versions: Vec<&'static SupportedProtocolVersion>,
+    provider: Arc<CryptoProvider>,
+    resolver: Arc<dyn ResolvesServerCert>,
+    alpn: Vec<Vec<u8>>,
+    #[cfg(feature = "tls12")]
+    require_ems: bool,
+    resumption: bool,
+    session_storage: Arc<dyn StoresServerSessions>,
+    ticketer: Arc<dyn ProducesTickets>,
+    #[cfg(feature = "acl")]
+    acl: Option<Arc<coqui_net_acl::Acl>>,
+}
+
+impl Base {
+    pub(crate) fn new(
+        identity: &Identity,
+        alpn: &[&[u8]],
+        policy: &Policy,
+    ) -> Result<Self, PeerError> {
+        let versions = policy.protocol_versions()?;
+        let provider = policy.crypto_provider()?;
+        // Built once to check the key against the certificate and to take the resolver and
+        // rustls's session state from.
+        let template = ServerConfig::builder_with_provider(Arc::clone(&provider))
+            .with_protocol_versions(&versions)
+            .map_err(|_| PeerError::Tls)?
+            .with_no_client_auth()
+            .with_single_cert(identity.certificate_chain(), identity.private_key_der())
+            .map_err(|_| PeerError::Certificate)?;
+        let session_storage: Arc<dyn StoresServerSessions> = if policy.allow_resumption {
+            template.session_storage
+        } else {
+            // No cache for TLS 1.2 session ids or TLS 1.3 stateful tickets.
+            Arc::new(NoServerSessionStorage {})
+        };
+        Ok(Self {
+            versions,
+            provider,
+            resolver: template.cert_resolver,
+            alpn: alpn.iter().map(|protocol| protocol.to_vec()).collect(),
+            #[cfg(feature = "tls12")]
+            require_ems: policy.require_ems,
+            resumption: policy.allow_resumption,
+            session_storage,
+            ticketer: template.ticketer,
+            #[cfg(feature = "acl")]
+            acl: match &policy.acl {
+                Some(acl) => Some(Arc::new(crate::gate::canonical(acl)?)),
+                None => None,
+            },
+        })
+    }
+
+    /// A configuration around `verifier` (none: server TLS). With an access control list,
+    /// `verifier` is wrapped to decide each certificate and the certificate resolver to decide
+    /// each `ClientHello`, from `addresses`, or from the accept helpers' scope when `None`;
+    /// a refusal at the `ClientHello` goes to `refused` when given.
+    pub(crate) fn config(
+        &self,
+        verifier: Option<Arc<dyn ClientCertVerifier>>,
+        addresses: Option<(SocketAddr, SocketAddr)>,
+        refused: Option<Arc<Slot>>,
+    ) -> Result<ServerConfig, PeerError> {
+        #[cfg(feature = "acl")]
+        let gate = self
+            .acl
+            .as_ref()
+            .map(|acl| crate::gate::Gate::new(Arc::clone(acl), addresses, refused.clone()));
+        #[cfg(not(feature = "acl"))]
+        let _ = addresses;
+        #[cfg(feature = "acl")]
+        let verifier = match (&gate, verifier) {
+            (Some(gate), Some(inner)) => Some(Arc::new(crate::gate::PeerGate {
+                inner,
+                gate: gate.clone(),
+            }) as Arc<dyn ClientCertVerifier>),
+            (_, verifier) => verifier,
+        };
+        let verifier = match (refused, verifier) {
+            (Some(slot), Some(inner)) => {
+                Some(Arc::new(Keeping { inner, slot }) as Arc<dyn ClientCertVerifier>)
+            }
+            (_, verifier) => verifier,
+        };
+        #[cfg(feature = "acl")]
+        let identified = verifier.is_some();
+        let builder = ServerConfig::builder_with_provider(Arc::clone(&self.provider))
+            .with_protocol_versions(&self.versions)
+            .map_err(|_| PeerError::Tls)?;
+        let builder = match verifier {
+            Some(verifier) => builder.with_client_cert_verifier(verifier),
+            None => builder.with_no_client_auth(),
+        };
+        let mut config = builder.with_cert_resolver(Arc::clone(&self.resolver));
+        config.alpn_protocols.clone_from(&self.alpn);
+        // rustls has the setting only where it can offer TLS 1.2.
+        #[cfg(feature = "tls12")]
+        {
+            config.require_ems = self.require_ems;
+        }
+        config.session_storage = Arc::clone(&self.session_storage);
+        config.ticketer = Arc::clone(&self.ticketer);
+        if !self.resumption {
+            config.send_tls13_tickets = 0;
+        }
+        #[cfg(feature = "acl")]
+        if let Some(gate) = gate {
+            config.cert_resolver = Arc::new(crate::gate::AddressGate {
+                inner: Arc::clone(&config.cert_resolver),
+                gate,
+                identified,
+            });
+        }
+        Ok(config)
+    }
 }
