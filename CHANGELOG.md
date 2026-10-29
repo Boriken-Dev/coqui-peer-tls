@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.0.0-alpha.1] - 2026-10-29
+
 ### Added
 
 - `ServerConfigs` and `ConnectionConfig`: server configurations built per connection from one
@@ -164,5 +166,6 @@ The first pre-release, published to crates.io after `coqui-net-acl` and `coqui-p
   admit a pending successor and promote it once its handshake signature verifies (or refuse it
   until approved under `RotationOptions::require_approval`); `Identity::renew_before`.
 
-[Unreleased]: https://github.com/Boriken-Dev/coqui-peer-tls/compare/v0.0.0-alpha.0...HEAD
+[Unreleased]: https://github.com/Boriken-Dev/coqui-peer-tls/compare/v0.0.0-alpha.1...HEAD
+[0.0.0-alpha.1]: https://github.com/Boriken-Dev/coqui-peer-tls/compare/v0.0.0-alpha.0...v0.0.0-alpha.1
 [0.0.0-alpha.0]: https://github.com/Boriken-Dev/coqui-peer-tls/releases/tag/v0.0.0-alpha.0
