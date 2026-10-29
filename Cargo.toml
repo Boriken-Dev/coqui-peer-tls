@@ -1,6 +1,6 @@
 [package]
 name = "coqui-peer-tls"
-version = "0.0.0-alpha.0"
+version = "0.0.0-alpha.1"
 description = "The TLS method of coqui-peer: mutual-TLS identity with pinned, CA and key-proof trust, policy profiles and encrypted streams"
 readme = "README.md"
 edition = "2024"

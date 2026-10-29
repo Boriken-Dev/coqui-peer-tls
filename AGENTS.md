@@ -19,14 +19,14 @@ package and is self-contained. Development documentation lives with the source a
 | `fips` | `aws-lc`, rustls `fips` (AWS-LC's FIPS module; global, see Gotchas) | `CipherProfile::Fips1403Validated` | off |
 
 MSRV Rust 1.89. A default build depends on `coqui-peer`, `rustls` (0.23.27 or later, ring
-provider, `tls12`) and `rustls-webpki` (which rustls already uses). Version `0.0.0-alpha.0` is a pre-release; the API may change in any release before
-1.0. This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sans-IO
+provider, `tls12`) and `rustls-webpki` (which rustls already uses). Version `0.0.0-alpha.1` is
+a pre-release; the API may change in any release before 1.0. This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sans-IO
 `Handshake`, `Weakening`); its API header ships in that crate.
 
 Imports: everything is at the crate root, including re-exports of `coqui-peer`'s `Clock`,
-`Digest`, `Invitation`, `InvitationOptions`, `KeyMaterial`, `PeerId`, `Random`, `ReadTimeout`, `WriteTimeout`,
-`RotationEvent`, `RotationOptions`, `TrustStore`, `WaitingEntry`, `WaitingLimits` and
-`Weakening`. Public modules: `asynch` (feature `tokio`), `pair` (`coqui_peer::pair`
+`Digest`, `Invitation`, `InvitationOptions`, `KeyMaterial`, `PeerId`, `Random`,
+`ReadTimeout`, `WriteTimeout`, `RotationEvent`, `RotationOptions`, `TrustStore`,
+`WaitingEntry`, `WaitingLimits` and `Weakening`. Public modules: `asynch` (feature `tokio`), `pair` (`coqui_peer::pair`
 re-exported) and `acl` (`coqui_net_acl` re-exported, feature `acl`).
 
 No `unsafe` code (`#![forbid(unsafe_code)]`). Process-wide state: one thread-local holding the

@@ -13,7 +13,7 @@ byte stream and the verified peer. This is the TLS method of
 and the sans-IO handshake trait; this crate adds X.509 and rustls. See the
 [documentation](https://boriken-dev.github.io/coqui-peer-tls/).
 
-> **Status: alpha.** `0.0.0-alpha.0` is a pre-release: the API may change in any release
+> **Status: alpha.** `0.0.0-alpha.1` is a pre-release: the API may change in any release
 > before 1.0.
 
 ## Features
@@ -44,7 +44,7 @@ and the sans-IO handshake trait; this crate adds X.509 and rustls. See the
 ## Installation
 
 ```bash
-cargo add coqui-peer-tls@0.0.0-alpha.0
+cargo add coqui-peer-tls@0.0.0-alpha.1
 ```
 
 | Feature | Adds | Needed for | Default |
