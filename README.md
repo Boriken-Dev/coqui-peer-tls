@@ -56,9 +56,11 @@ cargo add coqui-peer-tls@0.0.0-alpha.0
 | `serde` | `serde`, `coqui-peer/serde`, `coqui-net-acl/serde` | reading and writing a `Policy` and `PeerId` as text | off |
 | `acl` | `coqui-net-acl` | an access control list inside a `Policy` | off |
 | `platform-roots` | `rustls-platform-verifier` | `Roots::platform`: servers verified by the operating system | off |
+| `aws-lc` | rustls's aws-lc-rs provider (AWS-LC, built from C) | `crypto = "aws-lc"`: ML-KEM key exchange, ML-DSA, the `cnsa-2.0` profile | off |
+| `fips` | `aws-lc` and rustls's `fips` (AWS-LC's FIPS module) | the `fips-140-3-validated` profile; global, see Development | off |
 
-Rust 1.89 or later. A default build depends on `coqui-peer` and `rustls` (0.23.27 or later,
-ring provider).
+Rust 1.89 or later. A default build depends on `coqui-peer`, `rustls` (0.23.27 or later, ring
+provider) and `rustls-webpki`, which rustls already uses.
 
 ## Quick start
 
@@ -135,6 +137,28 @@ unencrypted) when such peers exist. `legacy` adds SHA-1 pins and TLS 1.2 without
 master secret; a peer that cannot take a TLS 1.3 `ClientHello` at all is served by
 `tls_versions = ["1.2"]`.
 
+### Cipher profiles
+
+Apart from the versions, a policy lists the algorithm profiles it allows
+(`cipher_profiles`, default `["mozilla"]`) and the provider that runs them (`crypto`, `ring` or,
+with the `aws-lc` feature, `aws-lc`). What is offered is the union of the allowed profiles in
+the order of the first listed, narrowed to the versions, the provider and any `cipher_suites` /
+`kx_groups` list; a version left with no suite is dropped. Each profile is named for exactly
+what it claims:
+
+| Profile | What it is |
+| --- | --- |
+| `mozilla` | Mozilla's server-side TLS guideline 6.0, intermediate. The default. |
+| `fips-140-3-compliant` | FIPS 140-3 approved algorithm selection; not a validated module. |
+| `fips-140-2-compliant` | The same without the ML-KEM groups, which only a 140-3 module can have approved; not a validated module. Every FIPS 140-2 certificate is on the CMVP Historical List since September 2026. |
+| `fips-140-3-validated` | AWS-LC's FIPS module; validated only as its CMVP certificate and tested operating environments state. Needs the `fips` feature; a configuration rustls does not report FIPS is refused. |
+| `cnsa-1.0` | CNSSP 15 / RFC 9151 as far as rustls goes: AES-256-GCM, P-384, SHA-384. |
+| `cnsa-2.0` | CNSA 2.0 (ML-KEM-1024, ML-DSA-87, AES-256) in the shape of draft-becker-cnsa2-tls-profile-05; needs `crypto = "aws-lc"`. |
+
+The CNSA profiles need an identity of your own (P-384 or RSA 3072+, or ML-DSA-87): generated
+identities are P-256. The crate's API header lists every algorithm and what each profile does
+not meet.
+
 Session resumption is off in every preset: rustls does not check the peer's certificate again
 on a resumed session, so a peer removed from the trust store could reconnect on a session it
 held. TLS 1.0, 1.1 and non-AEAD suites cannot be offered; MD5 pins are never accepted.
@@ -160,6 +184,8 @@ in the format you choose:
 policy_version = 1
 profile = "intermediate"        # a built-in preset to start from
 tls_versions = ["1.2", "1.3"]
+cipher_profiles = ["mozilla"]   # allowed algorithm profiles
+crypto = "ring"                 # or "aws-lc", with the `aws-lc` feature
 pin_digests = ["sha256", "sha384", "sha512"]
 allow_resumption = false
 require_ems = true
@@ -203,13 +229,22 @@ rule naming a fingerprint never admits a client.
 ## Development
 
 ```bash
+ALL=generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc   # every feature but fips
 cargo fmt --all --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo +1.89 clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
-cargo +nightly-2026-09-21 public-api --all-features -sss --color never | diff -u tools/public-api.txt -
+cargo clippy --all-targets --features $ALL -- -D warnings
+cargo +1.89 clippy --all-targets --features $ALL -- -D warnings
+cargo test --features $ALL
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features $ALL
+cargo +nightly-2026-09-21 public-api --features $ALL -sss --color never | diff -u tools/public-api.txt -
+cargo test --features fips          # needs CMake and Go
 ```
+
+`aws-lc` builds AWS-LC from C (a C compiler; clang on Windows ARM64). `fips` builds AWS-LC's
+FIPS module (aws-lc-fips-sys: CMake and Go, and on Windows bindgen with libclang, NASM and
+Ninja) and has global effect: rustls's `fips` feature changes defaults for every crate in the
+build. If bindgen fails with `ParseQuote is not implemented for syn::File`, cargo paired bindgen
+0.73 with prettyplease 0.3; `cargo update -p prettyplease --precise 0.2.37` fixes the lockfile.
+The `fips` feature adds no item to the API, so the snapshot is taken without it.
 
 ### Releasing
 

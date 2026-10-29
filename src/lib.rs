@@ -25,6 +25,7 @@ mod handshake;
 mod identity;
 mod pairing;
 mod policy;
+mod profiles;
 mod roots;
 mod source;
 mod stream;
@@ -56,6 +57,7 @@ pub use pairing::{
     receive_announcement,
 };
 pub use policy::{POLICY_VERSION, Policy, TlsVersion};
+pub use profiles::{CipherProfile, Crypto};
 pub use roots::Roots;
 pub use source::{with_addresses, with_source};
 pub use stream::{

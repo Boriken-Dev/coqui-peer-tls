@@ -13,7 +13,8 @@ categories = ["cryptography", "network-programming", "authentication"]
 exclude = [".*", "*.local.*", "/tools/"]
 
 [package.metadata.docs.rs]
-all-features = true
+# Every feature but `fips`, which adds no item and whose FIPS module needs Go to build.
+features = ["generate", "ca", "tokio", "pin", "serde", "acl", "platform-roots", "aws-lc"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
@@ -32,6 +33,13 @@ serde = ["dep:serde", "coqui-peer/serde", "coqui-net-acl?/serde"]
 acl = ["dep:coqui-net-acl"]
 # Verify servers against the operating system's roots and verifier (`Roots::platform`).
 platform-roots = ["dep:rustls-platform-verifier"]
+# The aws-lc-rs crypto provider (`Policy::crypto = Crypto::AwsLc`): post-quantum key exchange
+# (ML-KEM) and ML-DSA signatures. Builds AWS-LC from C: needs a C compiler (clang on Windows ARM64).
+aws-lc = ["rustls/aws_lc_rs", "webpki/aws-lc-rs"]
+# AWS-LC's FIPS module (the `fips-140-3-validated` cipher profile). Global: rustls's `fips` changes
+# defaults for every crate in the build. Builds aws-lc-fips-sys: needs CMake and Go, and on
+# Windows bindgen (libclang), NASM and Ninja.
+fips = ["aws-lc", "rustls/fips"]
 
 [dependencies]
 # The peer id, trust store, pairing and handshake this crate is the TLS method of. Alpha: the
@@ -41,6 +49,8 @@ coqui-peer = { version = "=0.0.0-alpha.1", git = "https://github.com/Boriken-Dev
 # TLS. Pre-1.0: rustls's current release line; the ring provider is passed explicitly. TLS 1.2
 # is rustls's own code (no dependency); a policy chooses whether it is offered.
 rustls = { version = "0.23.27", default-features = false, features = ["std", "ring", "tls12"] }
+# The signature verification algorithms the cipher profiles name; already a dependency of rustls.
+webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["ring"] }
 # The access control list inside a `Policy`, behind `acl`. Alpha, released with this crate.
 coqui-net-acl = { version = "0.0.0-alpha.0", git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "e0f31323bffeb6ff05c2c3e5c50a7d58e6aafd28", optional = true }
 # The text form of `Policy`, behind `serde`.

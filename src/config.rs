@@ -20,8 +20,9 @@ use coqui_peer::Weakening;
 /// The [`Weakening::setting`] a server configuration without client authentication reports.
 pub const CLIENT_AUTH_SETTING: &str = "client_auth";
 
-/// The default ring crypto provider, passed explicitly to every configuration built here.
-/// Nothing in this crate installs a process-wide default.
+/// rustls's ring provider with its defaults. The configurations built here take the provider a
+/// [`Policy`] selects ([`Policy::crypto_provider`]); nothing in this crate installs a
+/// process-wide default.
 pub fn crypto_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
@@ -141,9 +142,9 @@ fn build_client_with(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ClientConfig>, PeerError> {
-    let versions = policy.protocol_versions()?;
-    let builder = ClientConfig::builder_with_provider(policy.crypto_provider()?)
-        .with_protocol_versions(&versions)
+    let selection = policy.selection()?;
+    let builder = ClientConfig::builder_with_provider(Arc::clone(&selection.provider))
+        .with_protocol_versions(&selection.versions)
         .map_err(|_| PeerError::Tls)?
         .dangerous()
         .with_custom_certificate_verifier(verifier);
@@ -158,6 +159,7 @@ fn build_client_with(
     if !policy.allow_resumption {
         config.resumption = Resumption::disabled();
     }
+    crate::profiles::require_fips(&selection, config.fips())?;
     Ok(Built {
         config,
         weakened: policy.weakened(),
@@ -307,16 +309,18 @@ impl Base {
         alpn: &[&[u8]],
         policy: &Policy,
     ) -> Result<Self, PeerError> {
-        let versions = policy.protocol_versions()?;
-        let provider = policy.crypto_provider()?;
+        let selection = policy.selection()?;
+        let (versions, provider) = (selection.versions.clone(), Arc::clone(&selection.provider));
         // Built once to check the key against the certificate and to take the resolver and
         // rustls's session state from.
-        let template = ServerConfig::builder_with_provider(Arc::clone(&provider))
+        let mut template = ServerConfig::builder_with_provider(Arc::clone(&provider))
             .with_protocol_versions(&versions)
             .map_err(|_| PeerError::Tls)?
             .with_no_client_auth()
             .with_single_cert(identity.certificate_chain(), identity.private_key_der())
             .map_err(|_| PeerError::Certificate)?;
+        template.require_ems = policy.require_ems;
+        crate::profiles::require_fips(&selection, template.fips())?;
         let session_storage: Arc<dyn StoresServerSessions> = if policy.allow_resumption {
             template.session_storage
         } else {

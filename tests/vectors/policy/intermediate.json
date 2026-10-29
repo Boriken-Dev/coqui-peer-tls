@@ -5,6 +5,10 @@
     "1.2",
     "1.3"
   ],
+  "cipher_profiles": [
+    "mozilla"
+  ],
+  "crypto": "ring",
   "pin_digests": [
     "sha256",
     "sha384",

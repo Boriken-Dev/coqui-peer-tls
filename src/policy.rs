@@ -2,10 +2,10 @@ use alloc::sync::Arc;
 use core::fmt;
 use core::str::FromStr;
 
-use rustls::SupportedProtocolVersion;
 use rustls::crypto::CryptoProvider;
 
 use crate::error::PeerError;
+use crate::profiles::{CipherProfile, Crypto};
 use coqui_peer::{Digest, PeerId, WaitingLimits, Weakening};
 
 /// The version of the serialized form of [`Policy`] (`policy_version`).
@@ -72,12 +72,19 @@ pub struct Policy {
     /// TLS versions offered and accepted. Non-empty.
     pub tls_versions: Vec<TlsVersion>,
     /// An allow-list of cipher suites by IANA name, for example `TLS13_AES_256_GCM_SHA384`.
-    /// `None` allows every suite the ring provider has for [`tls_versions`](Self::tls_versions).
+    /// `None` allows every suite the cipher profiles give for [`tls_versions`](Self::tls_versions).
     /// An unknown name is an error that lists the supported ones.
     pub cipher_suites: Option<Vec<String>>,
     /// An allow-list of key-exchange groups by name, for example `X25519`; `None` allows all
-    /// the provider has.
+    /// the cipher profiles give.
     pub kx_groups: Option<Vec<String>>,
+    /// The algorithm profiles allowed; what is offered is their union, in the order of the
+    /// first listed, narrowed by the versions, the provider, [`cipher_suites`](Self::cipher_suites)
+    /// and [`kx_groups`](Self::kx_groups). Every preset allows `[CipherProfile::Mozilla]`. Text
+    /// key `cipher_profiles`.
+    pub cipher_profiles: Vec<CipherProfile>,
+    /// The crypto provider; `Crypto::Ring` in every preset. Text key `crypto`.
+    pub crypto: Crypto,
     /// Digests a pin may use. Pins are compared in constant time whatever their digest.
     pub pin_digests: Vec<Digest>,
     /// Whether a pinned certificate must be inside its validity dates.
@@ -132,6 +139,8 @@ impl Policy {
             tls_versions: vec![TlsVersion::V1_2, TlsVersion::V1_3],
             cipher_suites: None,
             kx_groups: None,
+            cipher_profiles: vec![CipherProfile::Mozilla],
+            crypto: Crypto::Ring,
             pin_digests: vec![Digest::Sha256, Digest::Sha384, Digest::Sha512],
             check_validity: true,
             allow_chain_when_pinned: false,
@@ -337,18 +346,17 @@ impl Policy {
     }
 
     /// Checks this policy as building a configuration under it does, without building one:
-    /// its versions, cipher suites and key-exchange groups against the provider and this
-    /// build, and, with the `acl` feature, that every fingerprint of its access control list
-    /// is a SHA-256 peer id. A host that builds its configurations later (one per connection)
-    /// checks the policy it read with this.
+    /// its versions, cipher profiles, cipher suites and key-exchange groups against the crypto
+    /// provider and this build, and, with the `acl` feature, that every fingerprint of its
+    /// access control list is a SHA-256 peer id. A host that builds its configurations later
+    /// (one per connection) checks the policy it read with this.
     ///
     /// # Errors
     ///
     /// [`PeerError::Policy`] naming the first setting that fails, as a configuration builder
     /// would report it.
     pub fn check(&self) -> Result<(), PeerError> {
-        self.protocol_versions()?;
-        self.crypto_provider()?;
+        crate::profiles::select(self)?;
         #[cfg(feature = "acl")]
         if let Some(acl) = &self.acl {
             crate::gate::canonical(acl)?;
@@ -356,129 +364,41 @@ impl Policy {
         Ok(())
     }
 
-    /// The protocol versions to build a configuration with.
-    pub(crate) fn protocol_versions(
-        &self,
-    ) -> Result<Vec<&'static SupportedProtocolVersion>, PeerError> {
-        if self.tls_versions.is_empty() {
-            return Err(PeerError::Policy("tls_versions is empty".to_owned()));
-        }
-        self.tls_versions
-            .iter()
-            .map(|version| match version {
-                TlsVersion::V1_3 => &rustls::version::TLS13,
-                TlsVersion::V1_2 => &rustls::version::TLS12,
-            })
-            .map(Ok)
-            .collect()
+    /// The provider, versions and FIPS requirement to build a configuration with.
+    pub(crate) fn selection(&self) -> Result<crate::profiles::Selection, PeerError> {
+        crate::profiles::select(self)
     }
 
-    /// The ring provider narrowed to this policy's versions, suites and groups.
+    /// The crypto provider ([`crypto`](Self::crypto)) narrowed to what this policy offers: the
+    /// union of its [`cipher_profiles`](Self::cipher_profiles), its versions, and its
+    /// [`cipher_suites`](Self::cipher_suites) and [`kx_groups`](Self::kx_groups) when set.
     ///
     /// # Errors
     ///
-    /// [`PeerError::Policy`] for an unknown suite or group name (listing the supported ones),
-    /// or when a selected version is left with no suite.
+    /// [`PeerError::Policy`] for an unknown suite or group name (listing the supported ones), a
+    /// provider or profile this build lacks, or when no suite or no group is left.
     pub fn crypto_provider(&self) -> Result<Arc<CryptoProvider>, PeerError> {
-        let ring = rustls::crypto::ring::default_provider();
-        let suite_name = |suite: &rustls::SupportedCipherSuite| {
-            suite
-                .suite()
-                .as_str()
-                .map_or_else(|| format!("{:?}", suite.suite()), str::to_owned)
-        };
-        let group_name =
-            |group: &&'static dyn rustls::crypto::SupportedKxGroup| format!("{:?}", group.name());
-        if let Some(wanted) = &self.cipher_suites {
-            let known: Vec<String> = ring.cipher_suites.iter().map(suite_name).collect();
-            if let Some(position) = wanted.iter().position(|name| !known.contains(name)) {
-                return Err(PeerError::Policy(format!(
-                    "cipher_suites[{position}] is not a supported cipher suite; supported: {}",
-                    known.join(", ")
-                )));
-            }
-        }
-        if let Some(wanted) = &self.kx_groups {
-            let known: Vec<String> = ring.kx_groups.iter().map(group_name).collect();
-            if let Some(position) = wanted.iter().position(|name| !known.contains(name)) {
-                return Err(PeerError::Policy(format!(
-                    "kx_groups[{position}] is not a supported key-exchange group; supported: {}",
-                    known.join(", ")
-                )));
-            }
-        }
-        let cipher_suites: Vec<rustls::SupportedCipherSuite> = ring
-            .cipher_suites
-            .iter()
-            .filter(|suite| {
-                let version = match suite {
-                    rustls::SupportedCipherSuite::Tls13(_) => TlsVersion::V1_3,
-                    rustls::SupportedCipherSuite::Tls12(_) => TlsVersion::V1_2,
-                };
-                self.tls_versions.contains(&version)
-                    && self
-                        .cipher_suites
-                        .as_ref()
-                        .is_none_or(|wanted| wanted.contains(&suite_name(suite)))
-            })
-            .copied()
-            .collect();
-        for version in &self.tls_versions {
-            let present = cipher_suites.iter().any(|suite| match suite {
-                rustls::SupportedCipherSuite::Tls13(_) => *version == TlsVersion::V1_3,
-                rustls::SupportedCipherSuite::Tls12(_) => *version == TlsVersion::V1_2,
-            });
-            if !present {
-                return Err(PeerError::Policy(format!(
-                    "TLS {version} is allowed but no allowed cipher suite is for it"
-                )));
-            }
-        }
-        let kx_groups: Vec<&'static dyn rustls::crypto::SupportedKxGroup> = ring
-            .kx_groups
-            .iter()
-            .filter(|group| {
-                self.kx_groups
-                    .as_ref()
-                    .is_none_or(|wanted| wanted.contains(&group_name(group)))
-            })
-            .copied()
-            .collect();
-        if kx_groups.is_empty() {
-            return Err(PeerError::Policy(
-                "no key-exchange group is allowed".to_owned(),
-            ));
-        }
-        Ok(Arc::new(CryptoProvider {
-            cipher_suites,
-            kx_groups,
-            ..ring
-        }))
+        Ok(self.selection()?.provider)
     }
 
-    /// The cipher suite IANA names the ring provider supports, for choosing
+    /// The cipher suite IANA names the provider this policy selects can offer, for choosing
     /// [`cipher_suites`](Self::cipher_suites) from.
-    pub fn supported_cipher_suites() -> Vec<String> {
-        rustls::crypto::ring::default_provider()
-            .cipher_suites
-            .iter()
-            .map(|suite| {
-                suite
-                    .suite()
-                    .as_str()
-                    .map_or_else(|| format!("{:?}", suite.suite()), str::to_owned)
-            })
-            .collect()
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Policy`] when this build lacks that provider.
+    pub fn supported_cipher_suites(&self) -> Result<Vec<String>, PeerError> {
+        Ok(crate::profiles::supported(self)?.0)
     }
 
-    /// The key-exchange group names the ring provider supports, for choosing
+    /// The key-exchange group names the provider this policy selects can offer, for choosing
     /// [`kx_groups`](Self::kx_groups) from.
-    pub fn supported_kx_groups() -> Vec<String> {
-        rustls::crypto::ring::default_provider()
-            .kx_groups
-            .iter()
-            .map(|group| format!("{:?}", group.name()))
-            .collect()
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Policy`] when this build lacks that provider.
+    pub fn supported_kx_groups(&self) -> Result<Vec<String>, PeerError> {
+        Ok(crate::profiles::supported(self)?.1)
     }
 }
 
@@ -487,7 +407,7 @@ mod text {
     use serde::de::Error as _;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-    use super::{POLICY_VERSION, Policy, TlsVersion};
+    use super::{CipherProfile, Crypto, POLICY_VERSION, Policy, TlsVersion};
     use coqui_peer::Digest;
 
     macro_rules! as_text {
@@ -507,6 +427,8 @@ mod text {
         };
     }
     as_text!(TlsVersion);
+    as_text!(CipherProfile);
+    as_text!(Crypto);
 
     /// The serialized form, version 1. On reading, every field but `policy_version` is
     /// optional and starts from the named `profile` (the default when absent).
@@ -523,6 +445,10 @@ mod text {
         cipher_suites: Option<Vec<String>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         kx_groups: Option<Vec<String>>,
+        #[serde(default)]
+        cipher_profiles: Option<Vec<CipherProfile>>,
+        #[serde(default)]
+        crypto: Option<Crypto>,
         #[serde(default)]
         pin_digests: Option<Vec<Digest>>,
         #[serde(default)]
@@ -556,6 +482,8 @@ mod text {
                 tls_versions: Some(self.tls_versions.clone()),
                 cipher_suites: self.cipher_suites.clone(),
                 kx_groups: self.kx_groups.clone(),
+                cipher_profiles: Some(self.cipher_profiles.clone()),
+                crypto: Some(self.crypto),
                 pin_digests: Some(self.pin_digests.clone()),
                 check_validity: Some(self.check_validity),
                 allow_chain_when_pinned: Some(self.allow_chain_when_pinned),
@@ -591,6 +519,12 @@ mod text {
             }
             if self.kx_groups.is_some() {
                 policy.kx_groups = self.kx_groups;
+            }
+            if let Some(value) = self.cipher_profiles {
+                policy.cipher_profiles = value;
+            }
+            if let Some(value) = self.crypto {
+                policy.crypto = value;
             }
             if let Some(value) = self.pin_digests {
                 policy.pin_digests = value;
