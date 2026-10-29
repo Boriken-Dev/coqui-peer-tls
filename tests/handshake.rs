@@ -276,6 +276,7 @@ fn a_ca_signed_client_connects_when_subject_and_san_match() {
         ca_file: ca_file.clone(),
         subject: vec![subject.to_owned()],
         san: vec!["localhost".to_owned()],
+        ip_in_dns: true,
     };
     for (subject, connects) in [("*Client One*", true), ("*Somebody Else*", false)] {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

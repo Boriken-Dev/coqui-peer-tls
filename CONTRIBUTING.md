@@ -23,12 +23,12 @@ without tracking down every past contributor. You keep the copyright in everythi
 
 ```bash
 cargo fmt --all --check
-cargo clippy --all-targets --features generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc -- -D warnings
+cargo clippy --all-targets --features generate,ca,tokio,pin,serde,acl,platform-roots,fields,aws-lc -- -D warnings
 cargo clippy --no-default-features -- -D warnings
 cargo clippy --no-default-features --features acl -- -D warnings
-cargo test --features generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc
+cargo test --features generate,ca,tokio,pin,serde,acl,platform-roots,fields,aws-lc
 cargo test --no-default-features
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --features generate,ca,tokio,pin,serde,acl,platform-roots,fields,aws-lc
 ```
 
 All checks must pass. [`AGENTS.md`](AGENTS.md) is the crate's API header and ships in the

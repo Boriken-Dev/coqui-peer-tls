@@ -50,7 +50,8 @@ cargo add coqui-peer-tls@0.0.0-alpha.0
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
 | `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
-| `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
+| `fields` | `x509-parser` | `CertificateFields`: a certificate's names, SANs (UPN included), serial and validity, as a map to pick identities from | off |
+| `ca` | `fields`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio`, `tokio-rustls`, `coqui-peer/tokio` | module `asynch`: async dial, accept, pairing and rotation | off |
 | `pin` | `coqui-peer/pin` | PIN pairing | off |
 | `serde` | `serde`, `coqui-peer/serde`, `coqui-net-acl/serde` | reading and writing a `Policy` and `PeerId` as text | off |
@@ -229,7 +230,7 @@ rule naming a fingerprint never admits a client.
 ## Development
 
 ```bash
-ALL=generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc   # every feature but fips
+ALL=generate,ca,tokio,pin,serde,acl,platform-roots,fields,aws-lc   # every feature but fips
 cargo fmt --all --check
 cargo clippy --all-targets --features $ALL -- -D warnings
 cargo +1.89 clippy --all-targets --features $ALL -- -D warnings

@@ -19,6 +19,8 @@ mod certificate;
 mod config;
 mod connection;
 mod error;
+#[cfg(feature = "fields")]
+mod fields;
 #[cfg(feature = "acl")]
 mod gate;
 mod handshake;
@@ -49,6 +51,8 @@ pub use coqui_peer::{
     WriteTimeout,
 };
 pub use error::{PeerError, Refusal};
+#[cfg(feature = "fields")]
+pub use fields::{CertificateFields, Name, San};
 pub use handshake::{Tls, TlsHandshake};
 pub use identity::{Identity, PeerIdentity};
 pub use pairing::{

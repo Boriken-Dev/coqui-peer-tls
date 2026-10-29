@@ -1,5 +1,6 @@
 use alloc::sync::Arc;
 use core::fmt;
+use core::net::IpAddr;
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use rustls::DistinguishedName;
@@ -9,13 +10,26 @@ use rustls::server::WebPkiClientVerifier;
 use rustls::server::danger::ClientCertVerifier;
 
 use crate::error::PeerError;
+use crate::fields::{CertificateFields, San};
 use crate::trust::CaPolicy;
 
 /// A loaded CA policy.
 pub(crate) struct Ca {
     verifier: Arc<dyn ClientCertVerifier>,
     subjects: Option<GlobSet>,
-    sans: Option<GlobSet>,
+    sans: Option<Sans>,
+    ip_in_dns: bool,
+}
+
+/// The SAN globs, by the kind of name each applies to: an unprefixed glob to any kind.
+#[derive(Default)]
+struct Sans {
+    any: Option<GlobSet>,
+    dns: Option<GlobSet>,
+    ip: Option<GlobSet>,
+    email: Option<GlobSet>,
+    uri: Option<GlobSet>,
+    upn: Option<GlobSet>,
 }
 
 impl fmt::Debug for Ca {
@@ -37,8 +51,9 @@ impl Ca {
                 .map_err(|_| PeerError::Certificate)?;
         Ok(Self {
             verifier,
-            subjects: compile(&policy.subject)?,
-            sans: compile(&policy.san)?,
+            subjects: compile(policy.subject.iter().map(String::as_str))?,
+            sans: Sans::compile(&policy.san)?,
+            ip_in_dns: policy.ip_in_dns,
         })
     }
 
@@ -64,44 +79,100 @@ impl Ca {
         if self.subjects.is_none() && self.sans.is_none() {
             return Ok(true);
         }
-        let bad = || rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding);
-        let (_, certificate) =
-            x509_parser::parse_x509_certificate(certificate.as_ref()).map_err(|_| bad())?;
+        let fields = CertificateFields::parse(certificate.as_ref()).map_err(|_| {
+            rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding)
+        })?;
         if let Some(subjects) = &self.subjects
-            && !subjects.is_match(certificate.subject().to_string())
+            && !subjects.is_match(&fields.subject.text)
         {
             return Ok(false);
         }
-        if let Some(sans) = &self.sans {
-            let extension = certificate.subject_alternative_name().map_err(|_| bad())?;
-            let matched = extension
-                .into_iter()
-                .flat_map(|extension| extension.value.general_names.iter())
-                .filter_map(|name| match name {
-                    x509_parser::extensions::GeneralName::DNSName(name)
-                    | x509_parser::extensions::GeneralName::RFC822Name(name)
-                    | x509_parser::extensions::GeneralName::URI(name) => Some((*name).to_owned()),
-                    x509_parser::extensions::GeneralName::IPAddress(address) => {
-                        Some(format!("{address:?}"))
-                    }
-                    _ => None,
-                })
-                .any(|name| sans.is_match(name));
-            if !matched {
-                return Ok(false);
-            }
+        if let Some(sans) = &self.sans
+            && !fields
+                .sans
+                .iter()
+                .any(|san| sans.matches(san, self.ip_in_dns))
+        {
+            return Ok(false);
         }
         Ok(true)
     }
 }
 
-fn compile(patterns: &[String]) -> Result<Option<GlobSet>, PeerError> {
-    if patterns.is_empty() {
-        return Ok(None);
+impl Sans {
+    fn compile(patterns: &[String]) -> Result<Option<Self>, PeerError> {
+        if patterns.is_empty() {
+            return Ok(None);
+        }
+        let mut kinds: [Vec<String>; 6] = Default::default();
+        for pattern in patterns {
+            let (kind, glob) = match pattern.split_once(':') {
+                Some(("dns", glob)) => (1, glob),
+                Some(("ip", glob)) => (2, glob),
+                Some(("email", glob)) => (3, glob),
+                Some(("uri", glob)) => (4, glob),
+                Some(("upn", glob)) => (5, glob),
+                _ => (0, pattern.as_str()),
+            };
+            kinds[kind].push(canonical_ip(glob));
+        }
+        let [any, dns, ip, email, uri, upn] = kinds;
+        let set = |globs: Vec<String>| compile(globs.iter().map(String::as_str));
+        Ok(Some(Self {
+            any: set(any)?,
+            dns: set(dns)?,
+            ip: set(ip)?,
+            email: set(email)?,
+            uri: set(uri)?,
+            upn: set(upn)?,
+        }))
     }
+
+    /// Whether `san` matches: an unprefixed glob against any DNS, email, URI or IP name, a
+    /// prefixed one against its kind. With `ip_in_dns`, a `dNSName` holding an IP literal
+    /// also matches as that address.
+    fn matches(&self, san: &San, ip_in_dns: bool) -> bool {
+        let hit =
+            |set: &Option<GlobSet>, text: &str| set.as_ref().is_some_and(|set| set.is_match(text));
+        let address = match san {
+            San::Ip(_) => san.ip(),
+            San::Dns(_) if ip_in_dns => san.ip(),
+            _ => None,
+        };
+        if let Some(address) = address {
+            let text = address.to_string();
+            if hit(&self.any, &text) || hit(&self.ip, &text) {
+                return true;
+            }
+        }
+        match san {
+            San::Dns(name) => hit(&self.any, name) || hit(&self.dns, name),
+            San::Email(name) => hit(&self.any, name) || hit(&self.email, name),
+            San::Uri(name) => hit(&self.any, name) || hit(&self.uri, name),
+            San::Upn(name) => hit(&self.upn, name),
+            _ => false,
+        }
+    }
+}
+
+/// `glob` in canonical form when it is an IP literal (IPv6 compressed, IPv4-mapped as
+/// IPv4), so it matches however the certificate or the pattern spells the address.
+fn canonical_ip(glob: &str) -> String {
+    glob.parse::<IpAddr>().map_or_else(
+        |_| glob.to_owned(),
+        |address| address.to_canonical().to_string(),
+    )
+}
+
+fn compile<'a>(patterns: impl IntoIterator<Item = &'a str>) -> Result<Option<GlobSet>, PeerError> {
     let mut builder = GlobSetBuilder::new();
+    let mut any = false;
     for pattern in patterns {
         builder.add(Glob::new(pattern).map_err(|_| PeerError::TrustPattern)?);
+        any = true;
+    }
+    if !any {
+        return Ok(None);
     }
     builder
         .build()
