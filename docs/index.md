@@ -8,10 +8,10 @@ presets (`modern`, `intermediate`, `legacy`) and, with the `acl` feature, an acc
 every server configuration applies.
 
 !!! note "Alpha"
-    `0.0.0-alpha.0` is a pre-release: the API may change in any release before 1.0.
+    `0.0.0-alpha.1` is a pre-release: the API may change in any release before 1.0.
 
 ```toml
-coqui-peer-tls = "0.0.0-alpha.0"
+coqui-peer-tls = "0.0.0-alpha.1"
 ```
 
 Two devices that have never met can pair without reading fingerprints: `pair_dial` and
