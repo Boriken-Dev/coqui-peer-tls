@@ -45,9 +45,8 @@ fips = ["aws-lc", "rustls/fips"]
 
 [dependencies]
 # The peer id, trust store, pairing and handshake this crate is the TLS method of. Alpha: the
-# family's crates are released together. The version is what a published package resolves;
-# the revision is the commit with that version, for building from git.
-coqui-peer = { version = "=0.0.0-alpha.1", git = "https://github.com/Boriken-Dev/coqui-peer", rev = "e8b7f30854b1b8fbbf81db9bee92ffad63901990" }
+# family's crates are released together, at exact versions.
+coqui-peer = "=0.0.0-alpha.1"
 # TLS. Pre-1.0: rustls's current release line; the ring provider is passed explicitly. TLS 1.2
 # is rustls's own code (no dependency); a policy chooses whether it is offered.
 rustls = { version = "0.23.27", default-features = false, features = ["std", "ring", "tls12"] }
