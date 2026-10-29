@@ -29,10 +29,12 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # Every feature but `fips`, whose FIPS module needs CMake and Go; the fips leg below has them.
+  ALL_FEATURES: generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc
 
 jobs:
   # The committed public API, so a change to it is seen in review. Regenerate with:
-  # cargo +nightly-2026-09-21 public-api --all-features -sss --color never > tools/public-api.txt
+  # cargo +nightly-2026-09-21 public-api --features <ALL_FEATURES> -sss --color never > tools/public-api.txt
   public-api:
     name: Public API snapshot
     runs-on: ubuntu-latest
@@ -48,7 +50,7 @@ jobs:
         run: cargo +stable install cargo-public-api --version 0.52.0 --locked
       - name: Compare with tools/public-api.txt
         run: |
-          cargo +nightly-2026-09-21 public-api --all-features -sss --color never > "$RUNNER_TEMP/public-api.txt"
+          cargo +nightly-2026-09-21 public-api --features ${{ env.ALL_FEATURES }} -sss --color never > "$RUNNER_TEMP/public-api.txt"
           diff -u tools/public-api.txt "$RUNNER_TEMP/public-api.txt"
 
   rust:
@@ -70,9 +72,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
         if: matrix.toolchain == 'stable'
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --all-features
-      - run: cargo doc --no-deps --all-features
+      - run: cargo clippy --all-targets --features ${{ env.ALL_FEATURES }} -- -D warnings
+      - run: cargo test --features ${{ env.ALL_FEATURES }}
+      - run: cargo doc --no-deps --features ${{ env.ALL_FEATURES }}
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -87,8 +89,13 @@ jobs:
         include:
           - name: "none"
             flags: "--no-default-features"
-          - name: "all"
-            flags: "--all-features"
+          - name: "all but fips"
+            flags: "--features generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc"
+          - name: "aws-lc"
+            flags: "--no-default-features --features aws-lc"
+          # AWS-LC's FIPS module: CMake and Go, both on ubuntu-latest.
+          - name: "fips"
+            flags: "--no-default-features --features fips,generate"
           - name: "platform-roots"
             flags: "--no-default-features --features platform-roots"
           - name: "pin"
@@ -111,5 +118,9 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      # bindgen 0.73 accepts prettyplease 0.3, which is built on another syn and does not compile.
+      - name: Pin prettyplease for bindgen
+        if: matrix.name == 'fips'
+        run: cargo generate-lockfile && cargo update -p prettyplease --precise 0.2.37
       - run: cargo clippy --all-targets ${{ matrix.flags }} -- -D warnings
       - run: cargo test ${{ matrix.flags }}
