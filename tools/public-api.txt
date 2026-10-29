@@ -120,6 +120,17 @@ pub coqui_peer_tls::ResponderTrust::Verified::name: core::option::Option<rustls_
 pub coqui_peer_tls::ResponderTrust::Verified::trust: alloc::boxed::Box<coqui_peer_tls::Trust>
 impl coqui_peer_tls::ResponderTrust
 pub fn coqui_peer_tls::ResponderTrust::pinned(coqui_peer::id::PeerId) -> Self
+#[non_exhaustive] pub enum coqui_peer_tls::San
+pub coqui_peer_tls::San::Dns(alloc::string::String)
+pub coqui_peer_tls::San::Email(alloc::string::String)
+pub coqui_peer_tls::San::Ip(core::net::ip_addr::IpAddr)
+pub coqui_peer_tls::San::Other
+pub coqui_peer_tls::San::Other::der: alloc::vec::Vec<u8>
+pub coqui_peer_tls::San::Other::oid: alloc::string::String
+pub coqui_peer_tls::San::Upn(alloc::string::String)
+pub coqui_peer_tls::San::Uri(alloc::string::String)
+impl coqui_peer_tls::San
+pub fn coqui_peer_tls::San::ip(&self) -> core::option::Option<core::net::ip_addr::IpAddr>
 #[non_exhaustive] pub enum coqui_peer_tls::TlsVersion
 pub coqui_peer_tls::TlsVersion::V1_2
 pub coqui_peer_tls::TlsVersion::V1_3
@@ -151,13 +162,30 @@ pub fn coqui_peer_tls::Trust::client_cert_verifier_for(&self, &coqui_peer_tls::P
 pub fn coqui_peer_tls::Trust::client_cert_verifier_with(&self, &coqui_peer_tls::Policy) -> core::result::Result<alloc::sync::Arc<coqui_peer_tls::PeerClientVerifier>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Trust::server_cert_verifier(&self) -> core::result::Result<alloc::sync::Arc<coqui_peer_tls::PeerServerVerifier>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Trust::server_cert_verifier_with(&self, &coqui_peer_tls::Policy) -> core::result::Result<alloc::sync::Arc<coqui_peer_tls::PeerServerVerifier>, coqui_peer_tls::PeerError>
+pub fn coqui_peer_tls::Trust::verify_client_chain(&self, &coqui_peer_tls::Policy, &[u8], &[&[u8]]) -> core::result::Result<(), coqui_peer_tls::PeerError>
 pub struct coqui_peer_tls::Built<T>
 pub coqui_peer_tls::Built::config: T
 pub coqui_peer_tls::Built::weakened: alloc::vec::Vec<coqui_peer::weakening::Weakening>
 pub struct coqui_peer_tls::CaPolicy
 pub coqui_peer_tls::CaPolicy::ca_file: std::path::PathBuf
+pub coqui_peer_tls::CaPolicy::ip_in_dns: bool
 pub coqui_peer_tls::CaPolicy::san: alloc::vec::Vec<alloc::string::String>
 pub coqui_peer_tls::CaPolicy::subject: alloc::vec::Vec<alloc::string::String>
+impl coqui_peer_tls::CaPolicy
+pub fn coqui_peer_tls::CaPolicy::new(impl core::convert::Into<std::path::PathBuf>) -> Self
+#[non_exhaustive] pub struct coqui_peer_tls::CertificateFields
+pub coqui_peer_tls::CertificateFields::fingerprint: coqui_peer::id::PeerId
+pub coqui_peer_tls::CertificateFields::issuer: coqui_peer_tls::Name
+pub coqui_peer_tls::CertificateFields::not_after: i64
+pub coqui_peer_tls::CertificateFields::not_before: i64
+pub coqui_peer_tls::CertificateFields::sans: alloc::vec::Vec<coqui_peer_tls::San>
+pub coqui_peer_tls::CertificateFields::serial: alloc::vec::Vec<u8>
+pub coqui_peer_tls::CertificateFields::subject: coqui_peer_tls::Name
+impl coqui_peer_tls::CertificateFields
+pub fn coqui_peer_tls::CertificateFields::parse(&[u8]) -> core::result::Result<Self, coqui_peer_tls::PeerError>
+pub fn coqui_peer_tls::CertificateFields::to_map(&self) -> alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::vec::Vec<alloc::string::String>>
+impl core::fmt::Debug for coqui_peer_tls::CertificateFields
+pub fn coqui_peer_tls::CertificateFields::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct coqui_peer_tls::ConnectionConfig
 impl coqui_peer_tls::ConnectionConfig
 pub fn coqui_peer_tls::ConnectionConfig::config(&self) -> alloc::sync::Arc<rustls::server::server_conn::ServerConfig>
@@ -187,6 +215,9 @@ impl core::clone::Clone for coqui_peer_tls::Identity
 pub fn coqui_peer_tls::Identity::clone(&self) -> Self
 impl core::fmt::Debug for coqui_peer_tls::Identity
 pub fn coqui_peer_tls::Identity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+#[non_exhaustive] pub struct coqui_peer_tls::Name
+pub coqui_peer_tls::Name::attributes: alloc::vec::Vec<(alloc::string::String, alloc::string::String)>
+pub coqui_peer_tls::Name::text: alloc::string::String
 pub struct coqui_peer_tls::PairConfig
 pub coqui_peer_tls::PairConfig::alpn: alloc::vec::Vec<u8>
 pub coqui_peer_tls::PairConfig::policy: coqui_peer_tls::Policy

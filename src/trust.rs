@@ -138,9 +138,32 @@ pub struct CaPolicy {
     pub ca_file: std::path::PathBuf,
     /// Globs matched against the subject, rendered as by `x509-parser`; empty matches any.
     pub subject: Vec<String>,
-    /// Globs matched against the DNS, email, URI and IP subject alternative names; empty
-    /// matches any.
+    /// Globs matched against the subject alternative names; empty matches any, otherwise one
+    /// name must match one glob. A glob without a prefix matches a DNS, email, URI or IP name;
+    /// `dns:`, `ip:`, `email:`, `uri:` or `upn:` limits it to that kind. IP addresses are
+    /// matched in canonical text (IPv6 compressed, an IPv4-mapped address as its IPv4 one),
+    /// and a glob that is an IP literal is made canonical too, so `ip:::1` matches
+    /// `0:0:0:0:0:0:0:1`.
     pub san: Vec<String>,
+    /// Whether a DNS name that is an IP literal also matches as that address (an `ip:` glob,
+    /// in canonical text). Some issuers put an address in a `dNSName` for clients that do not
+    /// read IP SANs. `true` by default; `false` matches an `ip:` glob against `iPAddress`
+    /// names only.
+    pub ip_in_dns: bool,
+}
+
+#[cfg(feature = "ca")]
+impl CaPolicy {
+    /// CAs from the PEM file at `ca_file`, no globs, DNS names holding an IP literal matched
+    /// as addresses.
+    pub fn new(ca_file: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            ca_file: ca_file.into(),
+            subject: Vec::new(),
+            san: Vec::new(),
+            ip_in_dns: true,
+        }
+    }
 }
 
 #[cfg(feature = "ca")]
@@ -322,6 +345,64 @@ impl Trust {
             #[cfg(feature = "ca")]
             ca_trusted: Mutex::default(),
         })
+    }
+
+    /// Checks a client certificate chain as this trust's client verifier does when the chain
+    /// is presented: pins (`Pinned`), chain to the CA roots with the subject and SAN globs
+    /// (`Ca`), the pin first then the CA (`PinnedOrCa`), and the policy's checks of a pinned
+    /// certificate (no chain unless allowed, validity dates). **No key proof**: use it only
+    /// for a certificate a TLS handshake already proved, such as one a proxy or host hands
+    /// over. A store-backed pin set records nothing as waiting.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Unsupported`] for the other trusts; [`PeerError::Policy`],
+    /// [`PeerError::CaFile`] or [`PeerError::TrustPattern`] when the trust cannot be built
+    /// under `policy`; [`PeerError::Io`] of kind `InvalidData` wrapping the rustls error when
+    /// the chain is refused, from which [`PeerError::refusal`] takes the [`Refusal`]
+    /// (`NotPinned`, `NotAccepted`, `NotTrusted`, `ChainWhenPinned`); an expired or not yet
+    /// valid pinned certificate is rustls's `Expired` / `NotValidYet` there.
+    pub fn verify_client_chain(
+        &self,
+        policy: &Policy,
+        leaf: &[u8],
+        intermediates: &[&[u8]],
+    ) -> Result<(), PeerError> {
+        let refused = |error: rustls::Error| {
+            PeerError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+        };
+        match self {
+            Self::Pinned(_) => {}
+            #[cfg(feature = "ca")]
+            Self::Ca(_) | Self::PinnedOrCa { .. } => {}
+            _ => return Err(PeerError::Unsupported),
+        }
+        let verifier = self.client_verifier(policy, None)?;
+        let certificate = CertificateDer::from(leaf);
+        let chain: Vec<CertificateDer<'_>> = intermediates
+            .iter()
+            .map(|der| CertificateDer::from(*der))
+            .collect();
+        let now = UnixTime::now();
+        if let Some(pins) = &verifier.parts.pins
+            && pins.matches(leaf)
+        {
+            return check_pinned(&certificate, &chain, now, verifier.parts.checks).map_err(refused);
+        }
+        #[cfg(feature = "ca")]
+        if let Some(ca) = &verifier.parts.ca {
+            return match ca.trusts(&certificate, &chain, now) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(refused(Refusal::NotTrusted.into_rustls())),
+                Err(error) => Err(refused(error)),
+            };
+        }
+        let refusal = verifier
+            .parts
+            .pins
+            .as_ref()
+            .map_or(Refusal::NotPinned, Pins::refusal);
+        Err(refused(refusal.into_rustls()))
     }
 
     /// The verifier a client uses for the server certificate, under the default policy.

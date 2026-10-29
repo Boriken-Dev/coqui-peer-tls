@@ -33,6 +33,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   features `aws-lc` (rustls's aws-lc-rs provider: ML-KEM groups, ML-DSA) and `fips` (AWS-LC's
   FIPS module; global for the build, needs CMake and Go). `CipherProfile::FIPS_VALIDATED_AVAILABLE`
   and `Crypto::AWS_LC_AVAILABLE` say what this build has.
+- `CertificateFields` (feature `fields`): a certificate's subject and issuer (`Name`), subject
+  alternative names (`San`: DNS, email, URI, IP, Microsoft UPN, other `otherName`s), serial,
+  fingerprint and validity, and `to_map` with keys such as `subject.cn`, `san.email`, `san.upn`,
+  `san.ip` and `san.dns.ip` (DNS names that are IP literals). `San::ip` gives an address from an
+  `iPAddress` or a `dNSName` holding one. `ca` builds on it.
+- `Trust::verify_client_chain(policy, leaf, intermediates)`: the client verifier's pin, chain,
+  date and glob checks for `Pinned`, `Ca` and `PinnedOrCa`, without a handshake and so without
+  key proof, for a certificate a handshake already proved.
+- `CaPolicy::new(ca_file)`, and `CaPolicy::ip_in_dns` (default `true`): a DNS SAN holding an IP
+  literal matches an IP glob as that address. SAN globs take an optional `dns:`, `ip:`,
+  `email:`, `uri:` or `upn:` prefix; addresses are matched in canonical text on both sides.
 - `Identity::from_pem` and `from_pem_chain` take a key only aws-lc-rs loads (ML-DSA) when the
   `aws-lc` feature is on.
 
@@ -75,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   .for_connection(source, local)?.config()`.
 
 ### Fixed
+
+- A `CaPolicy` SAN glob never matched an IP SAN: the address was rendered as its bytes
+  (`[10, 0, 0, 1]`). It is matched as `10.0.0.1` (IPv6 compressed, IPv4-mapped as IPv4).
+  `CaPolicy` has a new field, `ip_in_dns`: build it with `CaPolicy::new` or add the field.
 
 - A server configuration around a host verifier whose client authentication is optional
   (`client_auth_mandatory()` false) let a client that sent no certificate through an access

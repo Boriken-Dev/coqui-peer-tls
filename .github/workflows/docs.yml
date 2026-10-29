@@ -64,7 +64,7 @@ jobs:
           enablement: true
       - name: Build the Rust API reference
         # Strict, so a broken intra-doc link fails here rather than shipping.
-        run: cargo doc --no-deps --features generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc
+        run: cargo doc --no-deps --features generate,ca,tokio,pin,serde,acl,platform-roots,fields,aws-lc
         env:
           RUSTDOCFLAGS: -D warnings
       - name: Install the narrative docs tooling

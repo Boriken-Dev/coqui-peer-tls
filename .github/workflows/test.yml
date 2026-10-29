@@ -30,7 +30,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # Every feature but `fips`, whose FIPS module needs CMake and Go; the fips leg below has them.
-  ALL_FEATURES: generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc
+  ALL_FEATURES: generate,ca,tokio,pin,serde,acl,platform-roots,fields,aws-lc
 
 jobs:
   # The committed public API, so a change to it is seen in review. Regenerate with:
@@ -90,7 +90,7 @@ jobs:
           - name: "none"
             flags: "--no-default-features"
           - name: "all but fips"
-            flags: "--features generate,ca,tokio,pin,serde,acl,platform-roots,aws-lc"
+            flags: "--features generate,ca,tokio,pin,serde,acl,platform-roots,fields,aws-lc"
           - name: "aws-lc"
             flags: "--no-default-features --features aws-lc"
           # AWS-LC's FIPS module: CMake and Go, both on ubuntu-latest.
@@ -106,6 +106,8 @@ jobs:
             flags: "--no-default-features --features generate"
           - name: "ca"
             flags: "--no-default-features --features ca"
+          - name: "fields"
+            flags: "--no-default-features --features fields"
           - name: "tokio"
             flags: "--no-default-features --features tokio"
           - name: "serde"

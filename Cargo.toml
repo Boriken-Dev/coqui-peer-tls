@@ -14,7 +14,7 @@ exclude = [".*", "*.local.*", "/tools/"]
 
 [package.metadata.docs.rs]
 # Every feature but `fips`, which adds no item and whose FIPS module needs Go to build.
-features = ["generate", "ca", "tokio", "pin", "serde", "acl", "platform-roots", "aws-lc"]
+features = ["generate", "ca", "tokio", "pin", "serde", "acl", "platform-roots", "fields", "aws-lc"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
@@ -22,7 +22,9 @@ default = []
 # Generate self-signed identities (rcgen; `time`, which rcgen already uses, for validity dates).
 generate = ["dep:rcgen", "dep:time"]
 # Trust certificates signed by a CA file and matching subject and SAN globs.
-ca = ["dep:x509-parser", "dep:globset"]
+ca = ["fields", "dep:globset"]
+# A certificate's identifying fields (`CertificateFields`): names, SANs, serial, validity.
+fields = ["dep:x509-parser"]
 # Async dial and accept over tokio-rustls.
 tokio = ["dep:tokio", "dep:tokio-rustls", "coqui-peer/tokio"]
 # PIN pairing: coqui-peer's `pin` (SPAKE2, HKDF, HMAC).
@@ -58,7 +60,8 @@ serde = { version = "1", default-features = false, features = ["derive", "std"],
 # Self-signed identities, behind `generate`. Pre-1.0: rcgen's and time's current release lines.
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"], optional = true }
 time = { version = "0.3.6", default-features = false, optional = true }
-# CA trust, behind `ca`: certificate names and their globs. Pre-1.0: the current release lines.
+# Certificate fields, behind `fields`, and CA name globs, behind `ca`. Pre-1.0: the current
+# release lines.
 x509-parser = { version = "0.18", default-features = false, optional = true }
 globset = { version = "0.4", default-features = false, optional = true }
 # Async streams, behind `tokio`. Pre-1.0: tokio-rustls's release line for rustls 0.23.

@@ -106,6 +106,7 @@ fn a_ca_file_that_cannot_be_read_is_named_in_the_error() {
         ca_file: path.clone(),
         subject: Vec::new(),
         san: Vec::new(),
+        ip_in_dns: true,
     });
     let refused = trust.client_cert_verifier().expect_err("no file");
     assert!(matches!(

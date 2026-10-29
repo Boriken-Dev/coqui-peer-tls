@@ -110,6 +110,7 @@ fn a_certificate_the_ca_policy_does_not_trust_is_not_trusted() {
         ca_file,
         subject: Vec::new(),
         san: Vec::new(),
+        ip_in_dns: true,
     };
     let stranger = Identity::generate().unwrap();
     assert_eq!(

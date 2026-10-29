@@ -80,6 +80,7 @@ fn trust(store: &TrustStore, ca: Option<&Path>) -> Trust {
                 ca_file: path.to_owned(),
                 subject: Vec::new(),
                 san: Vec::new(),
+                ip_in_dns: true,
             },
         },
     }

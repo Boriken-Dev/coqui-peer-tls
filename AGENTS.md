@@ -8,7 +8,8 @@ package and is self-contained. Development documentation lives with the source a
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
 | `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
-| `ca` | `x509-parser`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
+| `fields` | `x509-parser` | `CertificateFields`, `Name`, `San` | off |
+| `ca` | `fields`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio` (`net`, `io-util`, `time`), `tokio-rustls`, `coqui-peer/tokio` | module `asynch` | off |
 | `pin` | `coqui-peer/pin` | PIN pairing (`Pairing::pin`) | off |
 | `serde` | `serde`, `coqui-peer/serde`, `coqui-net-acl/serde` | the text form of `Policy`, `PeerId` as text; the consumer picks the format | off |
@@ -100,7 +101,8 @@ pub enum Trust { Pinned(Pins), Ca(CaPolicy), PinnedOrCa { pins: Pins, ca: CaPoli
                  Roots(Roots), PinnedOrRoots { pins: Pins, roots: Roots } }
 impl Pins { pub fn fixed(impl IntoIterator<Item = PeerId>) -> Pins; pub fn store(TrustStore) -> Pins;
             pub fn matches(&self, der: &[u8]) -> bool; }
-pub struct CaPolicy { pub ca_file: PathBuf, pub subject: Vec<String>, pub san: Vec<String> }  // feature ca
+pub struct CaPolicy { pub ca_file: PathBuf, pub subject: Vec<String>, pub san: Vec<String>, pub ip_in_dns: bool }  // feature ca
+impl CaPolicy { pub fn new(ca_file: impl Into<PathBuf>) -> CaPolicy; }   // no globs, ip_in_dns true
 pub struct Roots;    // Clone, Debug (a PEM bundle shows only its length)
 impl Roots {
     pub fn bundle_pem(text: impl Into<String>) -> Roots;     // every CERTIFICATE block is a root
@@ -170,6 +172,56 @@ prove its key. Names are not checked on the pinned path; roots always check them
   resumption off (see Policy); a stack that takes only the verifiers must turn it off itself
   (server `session_storage = NoServerSessionStorage`, `send_tls13_tickets = 0`; client
   `resumption = Resumption::disabled()`), or a peer that lost trust can resume.
+
+- **CA name globs.** `subject` globs match the subject as x509-parser displays it (`CN=a, O=b`).
+  `san` globs: one SAN must match one glob. An unprefixed glob matches a DNS, email, URI or IP
+  name; `dns:`, `ip:`, `email:`, `uri:` or `upn:` limits it to that kind. Addresses are matched
+  in canonical text (IPv6 compressed, an IPv4-mapped address as IPv4), and a glob that is an IP
+  literal is made canonical too, so `ip:2001:db8::7` matches `2001:db8:0:0:0:0:0:7`. With
+  `ip_in_dns` (the default), a `dNSName` holding an IP literal also matches an `ip:` or
+  unprefixed glob as that address; `false` is strict: `ip:` globs see `iPAddress` names only.
+  An unprefixed glob always matches a DNS name as text.
+
+```rust
+impl Trust {
+    pub fn verify_client_chain(&self, &Policy, leaf: &[u8], intermediates: &[&[u8]]) -> Result<(), PeerError>;
+}
+```
+
+`verify_client_chain` runs the client verifier's checks on a chain without a handshake:
+`Pinned` (the pin, then no chain unless allowed and the dates), `Ca` (the chain to the roots,
+the subject and SAN globs), `PinnedOrCa` (pin first). **No key proof**: only for a certificate a
+handshake already proved (one a proxy or the host hands over). A store-backed pin set records
+nothing as waiting. A refused chain is `PeerError::Io` (kind `InvalidData`) wrapping the
+rustls error, so `refusal()` gives `NotPinned`, `NotAccepted`, `NotTrusted` or
+`ChainWhenPinned`; a pinned certificate outside its dates is rustls's `Expired` /
+`NotValidYet`. Other trusts are `PeerError::Unsupported`.
+
+## Certificate fields (`coqui_peer_tls::{CertificateFields, Name, San}`, feature `fields`)
+
+```rust
+#[non_exhaustive] pub struct CertificateFields {   // Clone, Eq; Debug shows only the fingerprint
+    pub subject: Name, pub issuer: Name, pub sans: Vec<San>, pub serial: Vec<u8>,
+    pub fingerprint: PeerId, pub not_before: i64, pub not_after: i64,      // Unix seconds
+}
+impl CertificateFields {
+    pub fn parse(der: &[u8]) -> Result<CertificateFields, PeerError>;     // malformed: PeerError::Certificate
+    pub fn to_map(&self) -> BTreeMap<String, Vec<String>>;
+}
+#[non_exhaustive] pub struct Name { pub text: String, pub attributes: Vec<(String, String)> }
+#[non_exhaustive] pub enum San { Dns(String), Email(String), Uri(String), Ip(IpAddr), Upn(String), Other { oid: String, der: Vec<u8> } }
+impl San { pub fn ip(&self) -> Option<IpAddr>; }   // Ip, or a Dns name that is an IP literal; canonical
+```
+
+`parse` reads exactly one certificate and verifies nothing. `Name::attributes` are in
+certificate order by short name (`cn`, `o`, `ou`, `c`, `st`, `l`, `dc`, `uid`, `email`,
+`serialnumber`, else the dotted OID); a value that is not a string type is `#` and its hex.
+`Upn` is the `otherName` 1.3.6.1.4.1.311.20.2.3 holding a UTF8String; `Other::der` is the
+value with its `[0]` wrapper. `to_map` keys, values in certificate order: `subject`, `issuer`,
+`subject.<attr>`, `issuer.<attr>`, `san.dns`, `san.email`, `san.uri`, `san.upn`, `san.ip`
+(canonical), `san.dns.ip` (each DNS name that is an IP literal, canonical: a consumer may treat
+it as an address), `san.other.<oid>` (hex DER), `serial` (lowercase hex, leading zero bytes
+dropped, `0` for zero), `fingerprint` (`sha256:<hex>`), `not_before`, `not_after`.
 
 ## Trust store and certificates (`coqui_peer_tls::{TrustStore, TrustStoreExt}`)
 
@@ -677,6 +729,9 @@ key material; only `CaFile` names a path, the file it could not use.
 ## Gotchas
 
 - TLS 1.0 and 1.1 and non-AEAD suites cannot be offered; asking is `PeerError::Policy`.
+- Some issuers put an IP address in a `dNSName` SAN because some clients do not read IP SANs.
+  `San::Dns` keeps it a DNS name; `San::ip()` and the map's `san.dns.ip` give it as an address,
+  and CA globs match it as one unless `CaPolicy::ip_in_dns` is false.
 - A CA policy applies to servers only, `Roots` to clients only. Pairing (waiting entries) is
   a server-side feature.
 - `Roots` with `dial` (or `TlsHandshake::client`) is always refused: they send
