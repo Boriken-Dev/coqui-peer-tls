@@ -14,9 +14,11 @@ package and is self-contained. Development documentation lives with the source a
 | `serde` | `serde`, `coqui-peer/serde`, `coqui-net-acl/serde` | the text form of `Policy`, `PeerId` as text; the consumer picks the format | off |
 | `acl` | `coqui-net-acl` | `Policy::acl` and its enforcement, `coqui_peer_tls::acl` | off |
 | `platform-roots` | `rustls-platform-verifier` | `Roots::platform` | off |
+| `aws-lc` | rustls `aws_lc_rs` (AWS-LC, built from C) | `Crypto::AwsLc`: ML-KEM groups, ML-DSA, `cnsa-2.0` | off |
+| `fips` | `aws-lc`, rustls `fips` (AWS-LC's FIPS module; global, see Gotchas) | `CipherProfile::Fips1403Validated` | off |
 
-MSRV Rust 1.89. A default build depends on `coqui-peer` and `rustls` (0.23.27 or later, ring
-provider). Version `0.0.0-alpha.0` is a pre-release; the API may change in any release before
+MSRV Rust 1.89. A default build depends on `coqui-peer`, `rustls` (0.23.27 or later, ring
+provider, `tls12`) and `rustls-webpki` (which rustls already uses). Version `0.0.0-alpha.0` is a pre-release; the API may change in any release before
 1.0. This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sans-IO
 `Handshake`, `Weakening`); its API header ships in that crate.
 
@@ -195,6 +197,8 @@ pub struct Policy {
     pub tls_versions: Vec<TlsVersion>,         // #[non_exhaustive] enum TlsVersion { V1_2, V1_3 }
     pub cipher_suites: Option<Vec<String>>,    // IANA names; None = all for the versions
     pub kx_groups: Option<Vec<String>>,        // e.g. "X25519"; None = all
+    pub cipher_profiles: Vec<CipherProfile>,   // allowed algorithm profiles; [Mozilla] in every preset
+    pub crypto: Crypto,                        // the provider; Crypto::Ring in every preset
     pub pin_digests: Vec<Digest>,
     pub check_validity: bool,
     pub allow_chain_when_pinned: bool,
@@ -212,8 +216,8 @@ impl Policy {
     pub fn check_pin(&self, fingerprint: &PeerId) -> Result<(), PeerError>;
     pub fn check(&self) -> Result<(), PeerError>;   // what a configuration build checks, without one
     pub fn crypto_provider(&self) -> Result<Arc<CryptoProvider>, PeerError>;
-    pub fn supported_cipher_suites() -> Vec<String>;
-    pub fn supported_kx_groups() -> Vec<String>;
+    pub fn supported_cipher_suites(&self) -> Result<Vec<String>, PeerError>;   // of the provider `crypto` selects
+    pub fn supported_kx_groups(&self) -> Result<Vec<String>, PeerError>;
     pub fn deserialize_over<'de, D: Deserializer<'de>>(base: Policy, d: D) -> Result<Policy, D::Error>;  // feature serde
 }
 pub use coqui_peer::Weakening;    // { setting, value, strict }, Weakening::new; setting: a field, or "client_auth"; strict = the baseline's value
@@ -231,14 +235,15 @@ impl TlsVersion { pub const fn as_str(self) -> &'static str; }   // "1.2", "1.3"
 | `require_ems` | true | true | false |
 | `waiting` (`per_source`, `total`, `rerecord`) | 16, 1000, 60 s | same | same |
 | `cipher_suites`, `kx_groups`, `acl` | none | none | none |
+| `cipher_profiles`, `crypto` | `[mozilla]`, `ring` | same | same |
 
 `check` runs the checks a configuration build runs (versions, suites and groups against the
 provider and this build; with `acl`, that every rule's fingerprint is a SHA-256 peer id) and
 builds nothing: for a host that builds its configurations later, one per connection.
 
-`crypto_provider` narrows the ring provider to the policy's versions, suites and groups; an
-unknown name, or a version left with no suite, is `PeerError::Policy` whose message lists the
-supported names. `preset` takes `modern`, `intermediate` or `legacy`. `weakened` compares with
+`crypto_provider` is the provider `crypto` names narrowed to what the policy offers (next
+section); an unknown suite or group name is `PeerError::Policy` whose message lists the
+provider's names, and so is a policy that leaves no version or no group. `preset` takes `modern`, `intermediate` or `legacy`. `weakened` compares with
 `Policy::default()` (intermediate) and reports `tls_versions` beyond 1.2/1.3 (none exist),
 `pin_digests` beyond sha256/384/512, `check_validity` false, `allow_chain_when_pinned` true,
 `allow_resumption` true, `require_ems` false, larger waiting caps or a shorter rerecord time,
@@ -252,6 +257,55 @@ every connection runs the verifiers and a peer removed from the store or no long
 refused at its next connection. True keeps rustls's defaults (a 256-session cache, two TLS 1.3
 tickets) and lets a peer that lost trust reconnect on a session it holds.
 
+### Cipher profiles and the provider (`coqui_peer_tls::{CipherProfile, Crypto}`)
+
+```rust
+#[non_exhaustive] pub enum CipherProfile { Mozilla, Fips1403Compliant, Fips1402Compliant, Fips1403Validated, Cnsa1, Cnsa2 }
+impl CipherProfile {
+    pub const ALL: &'static [CipherProfile];
+    pub const FIPS_VALIDATED_AVAILABLE: bool;            // feature fips
+    pub const fn as_str(self) -> &'static str;           // also Display; FromStr lists the known names
+}
+#[non_exhaustive] pub enum Crypto { Ring /* default */, AwsLc }
+impl Crypto { pub const AWS_LC_AVAILABLE: bool; pub const fn as_str(self) -> &'static str; }  // "ring", "aws-lc"
+```
+
+A policy lists the profiles it allows. Offered = the union of the allowed profiles (preference
+order from the first listed) ∩ `tls_versions` ∩ the provider ∩ `cipher_suites` / `kx_groups`
+when set. A TLS version left with no suite is dropped (a `cnsa-2.0`-only policy under the default
+versions is TLS 1.3); none left, an empty `cipher_profiles`, or no group is `PeerError::Policy`.
+Signature schemes come only from the profiles (and they bound certificate chains as well as
+handshake signatures). Profiles and the provider are choices, not weakenings.
+
+| Text | Claim (quoted from the docs) | Suites | Groups | Signatures |
+| --- | --- | --- | --- | --- |
+| `mozilla` (default) | Mozilla server-side TLS guideline 6.0, intermediate (holds modern's) | 1.3 AES-128-GCM, AES-256-GCM, ChaCha20; 1.2 ECDHE-ECDSA/RSA with the same, Mozilla's order | X25519MLKEM768 (aws-lc), X25519, P-256, P-384 | every scheme the provider verifies |
+| `fips-140-3-compliant` | "algorithm selection only; not a FIPS 140-3 validated module; makes no validation claim" (SP 800-52r2, SP 800-131A r2) | 1.3 AES-128/256-GCM; 1.2 ECDHE-ECDSA/RSA AES-GCM | P-256, P-384; aws-lc: SecP256r1MLKEM768, X25519MLKEM768, MLKEM768, MLKEM1024 | RSA-PSS, RSA PKCS#1 (SHA-256/384/512), ECDSA P-256/SHA-256, P-384/SHA-384; no Ed25519, no ML-DSA |
+| `fips-140-2-compliant` | algorithm selection only, no validation claim | as 140-3 | P-256, P-384 (no ML-KEM) | as 140-3 |
+| `fips-140-3-validated` | "AWS-LC's FIPS module; validated only as its CMVP certificate and tested operating environments state" | as 140-3, approved only | as 140-3, approved only | as 140-3 |
+| `cnsa-1.0` | CNSSP 15 / RFC 9151 as far as rustls goes | 1.3 AES-256-GCM-SHA384; 1.2 ECDHE-ECDSA/RSA AES-256-GCM-SHA384 | secp384r1 | ECDSA P-384/SHA-384, RSA-PSS SHA-384, RSA PKCS#1 SHA-384 (3072+ bits) |
+| `cnsa-2.0` | CNSA 2.0 in the shape of draft-becker-cnsa2-tls-profile-05 | 1.3 AES-256-GCM-SHA384 | MLKEM1024 | ML-DSA-87 |
+
+- **`fips-140-3-validated`**, alone or with others, builds on rustls's FIPS provider whatever
+  `crypto` says, keeps only what the module reports approved (other listed profiles lose
+  ChaCha20 and X25519), and every builder refuses (`PeerError::Policy`, "fips-140-3-validated:
+  rustls does not report this configuration FIPS ...") unless `ClientConfig::fips()` /
+  `ServerConfig::fips()` is true, which also needs `require_ems`. Without the `fips` feature it
+  is `PeerError::Policy("this build has no FIPS module: feature fips")`.
+- **`crypto = Crypto::AwsLc`** without the `aws-lc` feature is `PeerError::Policy`.
+  `cnsa-2.0` with `ring` is `PeerError::Policy("cnsa-2.0 needs crypto = aws-lc: ring has no
+  ML-KEM or ML-DSA")`.
+- **Not met, stated**: `cnsa-1.0` lacks RFC 9151's static-RSA and DHE suites and ffdhe groups
+  (absent from rustls; SP 800-131A disallows static RSA) and the 3072-bit floor for RSA-PSS keys;
+  `cnsa-2.0` leaves out the ML-KEM-768 hybrids (category 3) and has no SecP384r1MLKEM1024 (not in
+  rustls; the draft does not use it); whether AWS-LC's certificate covers ML-KEM hybrids and
+  ML-DSA is unconfirmed, so a `fips-140-3-validated` + `cnsa-2.0` build the module does not
+  report FIPS is refused as usual.
+- **Identities**: generated ones are ECDSA P-256 made with ring, outside any FIPS module, and
+  neither CNSA profile accepts them: bring a P-384 or RSA-3072 identity for `cnsa-1.0`, an
+  ML-DSA-87 one (with its ML-DSA-87 CA chain) for `cnsa-2.0`, and a validated deployment brings
+  its own. `Identity::from_pem` loads a key ring cannot (ML-DSA) when `aws-lc` is on.
+
 ### Text form, version 1 (feature `serde`)
 
 Build a `Policy` in code (constructors and public fields); the text form is optional. The crate
@@ -260,11 +314,13 @@ parses no format itself: with `serde` the consumer reads it with its own `toml` 
 TOML or JSON object. Keys: `policy_version` (must be 1 when present), `profile` (`modern`, `intermediate` or `legacy`, the built-in
 preset name to start from; unknown names are errors; free text when read with
 `deserialize_over`), `tls_versions` (`"1.2"`, `"1.3"`), `cipher_suites`, `kx_groups`,
+`cipher_profiles` (the profiles' text names; an unknown one is an error listing the known),
+`crypto` (`"ring"`, `"aws-lc"`),
 `pin_digests` (`"sha256"`, `"sha384"`, `"sha512"`, `"sha1"`), `check_validity`,
 `allow_chain_when_pinned`, `allow_resumption`, `require_ems`, `waiting_per_source`,
 `waiting_total`, `waiting_rerecord_secs` (the fields of `waiting`, the last in whole seconds), and
 `acl` (see `coqui-net-acl`). Unknown keys are errors; absent keys keep the preset. Writing
-always names every field. `tests/vectors/policy/{modern,intermediate,legacy,acl}.{toml,json}`
+always names every field. `tests/vectors/policy/{modern,intermediate,legacy,acl,profiles}.{toml,json}`
 are byte-exact.
 
 ## Access control (`Policy::acl`, feature `acl`)
@@ -628,8 +684,8 @@ key material; only `CaFile` names a path, the file it could not use.
 - A server-TLS server has no client verifier: no pins, no CA, no waiting entries. A client
   pinning its server works the same in both modes.
 - `PeerId` equality is constant time; compare through it, not through `to_string()`.
-- `PeerError`, `Refusal`, `Trust`, `TlsVersion` and `ResponderTrust` are `#[non_exhaustive]`:
-  a `match` needs a `_` arm.
+- `PeerError`, `Refusal`, `Trust`, `TlsVersion`, `CipherProfile`, `Crypto` and `ResponderTrust`
+  are `#[non_exhaustive]`: a `match` needs a `_` arm.
 - With a policy ACL, a connection whose addresses the configuration cannot learn is refused
   (`Refusal::AddressUnknown`): accept through `accept`, `accept_at`, `TlsHandshake::with_local`
   or `with_addresses`, or build the configuration for the connection
@@ -642,3 +698,8 @@ key material; only `CaFile` names a path, the file it could not use.
   fingerprint never admits it, even when it then presents that certificate.
 - Session resumption skips the verifiers and the ACL's fingerprint rules (its address rules
   still apply): leave `allow_resumption` off where a peer can lose its access.
+- The `fips` feature has global effect: rustls's `fips` changes defaults for every crate in the
+  build (aws-lc-rs builds as the FIPS module, its default provider drops ChaCha20 and X25519).
+  It needs CMake and Go (and on Windows bindgen with libclang, NASM and Ninja). If bindgen fails
+  with `ParseQuote is not implemented for syn::File`, cargo paired bindgen 0.73 with
+  prettyplease 0.3: `cargo update -p prettyplease --precise 0.2.37`.

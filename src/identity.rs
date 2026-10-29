@@ -11,8 +11,8 @@ use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
-use crate::config::crypto_provider;
 use crate::error::PeerError;
+use alloc::sync::Arc;
 use coqui_peer::PeerId;
 use coqui_peer::file::{self, Access};
 use coqui_peer::pem;
@@ -110,13 +110,24 @@ impl Identity {
         }
         let key =
             PrivateKeyDer::from_pem_slice(text.as_bytes()).map_err(|_| PeerError::Certificate)?;
-        // rustls refuses a key whose public key is not the first certificate's.
-        ServerConfig::builder_with_provider(crypto_provider())
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .map_err(|_| PeerError::Tls)?
-            .with_no_client_auth()
-            .with_single_cert(certificates.clone(), key.clone_key())
-            .map_err(|_| PeerError::Certificate)?;
+        // rustls refuses a key whose public key is not the first certificate's. A key ring
+        // cannot load (ML-DSA) is checked by aws-lc-rs when this build has it.
+        let matches = |provider: rustls::crypto::CryptoProvider| {
+            ServerConfig::builder_with_provider(Arc::new(provider))
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .is_ok_and(|builder| {
+                    builder
+                        .with_no_client_auth()
+                        .with_single_cert(certificates.clone(), key.clone_key())
+                        .is_ok()
+                })
+        };
+        let loaded = matches(rustls::crypto::ring::default_provider());
+        #[cfg(feature = "aws-lc")]
+        let loaded = loaded || matches(rustls::crypto::aws_lc_rs::default_provider());
+        if !loaded {
+            return Err(PeerError::Certificate);
+        }
         let certificate = certificates.remove(0);
         Ok(Self {
             fingerprint: PeerId::of(certificate.as_ref()),

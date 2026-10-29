@@ -12,6 +12,10 @@
   "kx_groups": [
     "X25519"
   ],
+  "cipher_profiles": [
+    "mozilla"
+  ],
+  "crypto": "ring",
   "pin_digests": [
     "sha256",
     "sha384",

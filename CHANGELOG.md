@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `Policy::check`: the checks a configuration build runs on a policy (versions, suites, groups,
   and the access control list's fingerprints), without building one.
 - `WriteTimeout` re-exported from `coqui-peer`.
+- Cipher profiles, apart from the TLS versions: `Policy::cipher_profiles` (`Vec<CipherProfile>`,
+  default `[Mozilla]`) lists the allowed algorithm profiles, and what is offered is their union
+  in the order of the first listed, narrowed to the versions, the provider and any
+  `cipher_suites` / `kx_groups`. A version left with no suite is dropped. The profiles:
+  `mozilla` (Mozilla's guideline 6.0 intermediate), `fips-140-3-compliant` and
+  `fips-140-2-compliant` (FIPS approved algorithm selection, no validation claim),
+  `fips-140-3-validated` (AWS-LC's FIPS module; the configuration is refused unless rustls
+  reports it FIPS), `cnsa-1.0` and `cnsa-2.0` (ML-KEM-1024 and ML-DSA-87). Signature schemes now
+  come from the profiles. Text key `cipher_profiles`.
+- `Policy::crypto` (`Crypto::Ring`, the default, or `Crypto::AwsLc`), text key `crypto`, and the
+  features `aws-lc` (rustls's aws-lc-rs provider: ML-KEM groups, ML-DSA) and `fips` (AWS-LC's
+  FIPS module; global for the build, needs CMake and Go). `CipherProfile::FIPS_VALIDATED_AVAILABLE`
+  and `Crypto::AWS_LC_AVAILABLE` say what this build has.
+- `Identity::from_pem` and `from_pem_chain` take a key only aws-lc-rs loads (ML-DSA) when the
+  `aws-lc` feature is on.
 
 ### Changed
 
@@ -40,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   timeout to what is left of `PairConfig::timeout`, and the async forms bound every write with
   the same deadline. A peer that stops reading ends the exchange with `PeerError::Io`
   (`TimedOut` or `WouldBlock`) instead of holding it.
+- A policy whose cipher suite list leaves an allowed TLS version with no suite drops that
+  version instead of failing; only a policy left with no version is `PeerError::Policy`. An
+  empty `tls_versions` is now refused by `crypto_provider` too.
+- `Policy::supported_cipher_suites` and `supported_kx_groups` take `&self` and return
+  `Result`: the names of the provider the policy's `crypto` selects.
+- `rustls-webpki` is a direct dependency (rustls already used it), for the profiles' signature
+  tables.
 - `Trust::client_cert_verifier_with` refuses a policy with an access control list
   (`PeerError::Policy`) instead of ignoring the list: a verifier has no addresses to apply it
   with. Pass the policy to a configuration builder, or use `client_cert_verifier_for`.

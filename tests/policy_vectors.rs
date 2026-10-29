@@ -8,8 +8,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use coqui_peer_tls::Policy;
 use coqui_peer_tls::acl::{Acl, Action, IpNet, Rule};
+use coqui_peer_tls::{CipherProfile, Crypto, Policy};
 
 fn directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/policy")
@@ -34,11 +34,17 @@ fn policies() -> Vec<(&'static str, Policy)> {
         rules: vec![permit, named, Rule::new(Action::Deny, IpNet::Any)],
         default: Action::Deny,
     });
+    let profiles = Policy {
+        cipher_profiles: vec![CipherProfile::Fips1403Compliant, CipherProfile::Cnsa1],
+        crypto: Crypto::AwsLc,
+        ..Policy::default()
+    };
     vec![
         ("modern", Policy::modern()),
         ("intermediate", Policy::intermediate()),
         ("legacy", Policy::legacy()),
         ("acl", routed),
+        ("profiles", profiles),
     ]
 }
 
@@ -109,7 +115,10 @@ fn a_document_may_name_a_profile_and_override_fields_and_nothing_else() {
 
 #[test]
 fn the_acl_example_reads_like_a_router_listing() {
-    let (_, policy) = policies().pop().unwrap();
+    let (_, policy) = policies()
+        .into_iter()
+        .find(|(name, _)| *name == "acl")
+        .unwrap();
     assert_eq!(
         policy.acl.unwrap().to_string(),
         format!(

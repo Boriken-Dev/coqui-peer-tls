@@ -158,7 +158,12 @@ fn unknown_suites_groups_and_versions_are_clear_errors_that_list_what_is_support
             && !message.contains("TLS_RSA_WITH_RC4_128_SHA")
             && message.contains("TLS13_AES_128_GCM_SHA256")
     );
-    assert!(Policy::supported_cipher_suites().contains(&"TLS13_AES_256_GCM_SHA384".to_owned()));
+    assert!(
+        Policy::default()
+            .supported_cipher_suites()
+            .unwrap()
+            .contains(&"TLS13_AES_256_GCM_SHA384".to_owned())
+    );
 
     let mut policy = Policy::modern();
     policy.kx_groups = Some(vec!["nonsense".to_owned()]);
@@ -166,14 +171,24 @@ fn unknown_suites_groups_and_versions_are_clear_errors_that_list_what_is_support
         policy.crypto_provider(),
         Err(PeerError::Policy(_))
     ));
-    assert!(Policy::supported_kx_groups().contains(&"X25519".to_owned()));
+    assert!(
+        Policy::default()
+            .supported_kx_groups()
+            .unwrap()
+            .contains(&"X25519".to_owned())
+    );
     let mut policy = Policy::modern();
     policy.kx_groups = Some(vec!["X25519".to_owned()]);
     assert!(policy.crypto_provider().is_ok());
 
-    // TLS 1.2 allowed but every allowed suite is a 1.3 one.
+    // TLS 1.2 allowed but every allowed suite is a 1.3 one: 1.2 is dropped.
     let mut policy = Policy::intermediate();
     policy.cipher_suites = Some(vec!["TLS13_AES_128_GCM_SHA256".to_owned()]);
+    let provider = policy.crypto_provider().unwrap();
+    assert_eq!(provider.cipher_suites.len(), 1);
+    // No suite left for any allowed version.
+    let mut policy = Policy::modern();
+    policy.cipher_suites = Some(vec!["TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256".to_owned()]);
     assert!(matches!(
         policy.crypto_provider(),
         Err(PeerError::Policy(_))
@@ -186,7 +201,7 @@ fn unknown_suites_groups_and_versions_are_clear_errors_that_list_what_is_support
     assert!("1.0".parse::<TlsVersion>().is_err());
     let mut empty = Policy::modern();
     empty.tls_versions.clear();
-    assert!(empty.crypto_provider().is_ok());
+    assert!(empty.crypto_provider().is_err());
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     assert!(client_config_with(&client, &pinned(&server), &[ALPN], &empty).is_err());
 }

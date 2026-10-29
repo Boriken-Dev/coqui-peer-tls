@@ -34,6 +34,41 @@ pub async fn coqui_peer_tls::asynch::pair_accept_from<S>(S, core::net::socket_ad
 pub async fn coqui_peer_tls::asynch::pair_dial<S>(S, &coqui_peer_tls::Identity, coqui_peer::pair::Pairing, &coqui_peer_tls::ResponderTrust, &coqui_peer_tls::PairConfig) -> core::result::Result<coqui_peer_tls::asynch::PairDial<S>, coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
 pub async fn coqui_peer_tls::asynch::pair_respond<S>(tokio_rustls::server::TlsStream<S>, core::option::Option<core::net::socket_addr::SocketAddr>, &coqui_peer_tls::Identity, &coqui_peer::store::TrustStore, &coqui_peer::pair::desk::PairingDesk, &coqui_peer_tls::PairConfig) -> core::result::Result<coqui_peer::pair::Paired, coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
 pub async fn coqui_peer_tls::asynch::receive_announcement<S: tokio::io::async_read::AsyncRead + core::marker::Unpin>(&mut S, &coqui_peer::store::TrustStore, &coqui_peer_tls::PeerIdentity) -> core::result::Result<coqui_peer::id::PeerId, coqui_peer_tls::PeerError>
+#[non_exhaustive] pub enum coqui_peer_tls::CipherProfile
+pub coqui_peer_tls::CipherProfile::Cnsa1
+pub coqui_peer_tls::CipherProfile::Cnsa2
+pub coqui_peer_tls::CipherProfile::Fips1402Compliant
+pub coqui_peer_tls::CipherProfile::Fips1403Compliant
+pub coqui_peer_tls::CipherProfile::Fips1403Validated
+pub coqui_peer_tls::CipherProfile::Mozilla
+impl coqui_peer_tls::CipherProfile
+pub const coqui_peer_tls::CipherProfile::ALL: &'static [coqui_peer_tls::CipherProfile]
+pub const coqui_peer_tls::CipherProfile::FIPS_VALIDATED_AVAILABLE: bool
+pub const fn coqui_peer_tls::CipherProfile::as_str(self) -> &'static str
+impl core::fmt::Display for coqui_peer_tls::CipherProfile
+pub fn coqui_peer_tls::CipherProfile::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::str::traits::FromStr for coqui_peer_tls::CipherProfile
+pub type coqui_peer_tls::CipherProfile::Err = coqui_peer_tls::PeerError
+pub fn coqui_peer_tls::CipherProfile::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl serde_core::ser::Serialize for coqui_peer_tls::CipherProfile
+pub fn coqui_peer_tls::CipherProfile::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
+impl<'de> serde_core::de::Deserialize<'de> for coqui_peer_tls::CipherProfile
+pub fn coqui_peer_tls::CipherProfile::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+#[non_exhaustive] pub enum coqui_peer_tls::Crypto
+pub coqui_peer_tls::Crypto::AwsLc
+pub coqui_peer_tls::Crypto::Ring
+impl coqui_peer_tls::Crypto
+pub const coqui_peer_tls::Crypto::AWS_LC_AVAILABLE: bool
+pub const fn coqui_peer_tls::Crypto::as_str(self) -> &'static str
+impl core::fmt::Display for coqui_peer_tls::Crypto
+pub fn coqui_peer_tls::Crypto::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::str::traits::FromStr for coqui_peer_tls::Crypto
+pub type coqui_peer_tls::Crypto::Err = coqui_peer_tls::PeerError
+pub fn coqui_peer_tls::Crypto::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl serde_core::ser::Serialize for coqui_peer_tls::Crypto
+pub fn coqui_peer_tls::Crypto::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
+impl<'de> serde_core::de::Deserialize<'de> for coqui_peer_tls::Crypto
+pub fn coqui_peer_tls::Crypto::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
 #[non_exhaustive] pub enum coqui_peer_tls::PeerError
 pub coqui_peer_tls::PeerError::AlreadyAccepted
 pub coqui_peer_tls::PeerError::CaFile
@@ -190,7 +225,9 @@ pub coqui_peer_tls::Policy::acl: core::option::Option<coqui_net_acl::Acl>
 pub coqui_peer_tls::Policy::allow_chain_when_pinned: bool
 pub coqui_peer_tls::Policy::allow_resumption: bool
 pub coqui_peer_tls::Policy::check_validity: bool
+pub coqui_peer_tls::Policy::cipher_profiles: alloc::vec::Vec<coqui_peer_tls::CipherProfile>
 pub coqui_peer_tls::Policy::cipher_suites: core::option::Option<alloc::vec::Vec<alloc::string::String>>
+pub coqui_peer_tls::Policy::crypto: coqui_peer_tls::Crypto
 pub coqui_peer_tls::Policy::kx_groups: core::option::Option<alloc::vec::Vec<alloc::string::String>>
 pub coqui_peer_tls::Policy::name: alloc::string::String
 pub coqui_peer_tls::Policy::pin_digests: alloc::vec::Vec<coqui_peer::id::Digest>
@@ -203,8 +240,8 @@ pub fn coqui_peer_tls::Policy::admits_anonymous(&self, core::net::socket_addr::S
 pub fn coqui_peer_tls::Policy::check(&self) -> core::result::Result<(), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Policy::check_pin(&self, &coqui_peer::id::PeerId) -> core::result::Result<(), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Policy::crypto_provider(&self) -> core::result::Result<alloc::sync::Arc<rustls::crypto::CryptoProvider>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::Policy::supported_cipher_suites() -> alloc::vec::Vec<alloc::string::String>
-pub fn coqui_peer_tls::Policy::supported_kx_groups() -> alloc::vec::Vec<alloc::string::String>
+pub fn coqui_peer_tls::Policy::supported_cipher_suites(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, coqui_peer_tls::PeerError>
+pub fn coqui_peer_tls::Policy::supported_kx_groups(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Policy::weakened(&self) -> alloc::vec::Vec<coqui_peer::weakening::Weakening>
 pub fn coqui_peer_tls::Policy::weakened_against(&self, &Self) -> alloc::vec::Vec<coqui_peer::weakening::Weakening>
 impl coqui_peer_tls::Policy
