@@ -15,10 +15,7 @@ use crate::error::PeerError;
 use crate::identity::Identity;
 use crate::policy::Policy;
 use crate::trust::Trust;
-use coqui_peer::Weakening;
-
-/// The [`Weakening::setting`] a server configuration without client authentication reports.
-pub const CLIENT_AUTH_SETTING: &str = "client_auth";
+use coqui_peer::NonDefault;
 
 /// rustls's ring provider with its defaults. The configurations built here take the provider a
 /// [`Policy`] selects ([`Policy::crypto_provider`]); nothing in this crate installs a
@@ -34,8 +31,8 @@ pub struct Built<T> {
     /// The configuration.
     pub config: T,
     /// Every setting looser than the default policy's; empty under the default and `modern`
-    /// profiles with mutual TLS.
-    pub weakened: Vec<Weakening>,
+    /// profiles.
+    pub non_defaults: Vec<NonDefault>,
 }
 
 /// A client configuration under the default policy (TLS 1.2 and 1.3) that presents `identity`
@@ -162,7 +159,7 @@ fn build_client_with(
     crate::profiles::require_fips(&selection, config.fips())?;
     Ok(Built {
         config,
-        weakened: policy.weakened(),
+        non_defaults: policy.non_defaults(),
     })
 }
 
@@ -204,7 +201,7 @@ pub fn server_config_with(
     let base = Base::new(identity, alpn, policy)?;
     Ok(Built {
         config: base.config(Some(verifier), None, None)?,
-        weakened: policy.weakened(),
+        non_defaults: policy.non_defaults(),
     })
 }
 
@@ -230,9 +227,6 @@ pub fn server_config_without_client_auth(
 /// [`server_config_without_client_auth`] under `policy`, with the same handling of versions,
 /// suites, groups, ALPN and resumption as [`server_config_with`].
 ///
-/// [`Built::weakened`] always holds a [`Weakening`] with setting [`CLIENT_AUTH_SETTING`],
-/// value `none` and strict value `certificate`, after the policy's own.
-///
 /// # Errors
 ///
 /// [`PeerError::Certificate`], [`PeerError::Policy`] or [`PeerError::Tls`] when the
@@ -245,7 +239,7 @@ pub fn server_config_without_client_auth_with(
     let base = Base::new(identity, alpn, policy)?;
     Ok(Built {
         config: base.config(None, None, None)?,
-        weakened: without_client_auth(policy.weakened()),
+        non_defaults: policy.non_defaults(),
     })
 }
 
@@ -273,18 +267,8 @@ pub fn server_config_with_verifier(
     let base = Base::new(identity, alpn, policy)?;
     Ok(Built {
         config: base.config(Some(verifier), None, None)?,
-        weakened: policy.weakened(),
+        non_defaults: policy.non_defaults(),
     })
-}
-
-/// `weakened` with the server-TLS entry after it.
-pub(crate) fn without_client_auth(mut weakened: Vec<Weakening>) -> Vec<Weakening> {
-    weakened.push(Weakening {
-        setting: CLIENT_AUTH_SETTING.to_owned(),
-        value: "none".to_owned(),
-        strict: "certificate".to_owned(),
-    });
-    weakened
 }
 
 /// What every server configuration under one identity, ALPN list and policy shares: built and

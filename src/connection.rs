@@ -11,12 +11,12 @@ use rustls::pki_types::{CertificateDer, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DigitallySignedStruct, DistinguishedName, ServerConfig, SignatureScheme};
 
-use crate::config::{Base, without_client_auth};
+use crate::config::Base;
 use crate::error::{PeerError, Refusal};
 use crate::identity::Identity;
 use crate::policy::Policy;
 use crate::trust::{PeerClientVerifier, Trust};
-use coqui_peer::Weakening;
+use coqui_peer::NonDefault;
 
 /// The server configurations of one listener whose connections reach rustls without this
 /// crate's accept helpers, such as quinn, which runs the verifier on threads of its own and
@@ -32,7 +32,7 @@ use coqui_peer::Weakening;
 pub struct ServerConfigs {
     base: Base,
     client: Client,
-    weakened: Vec<Weakening>,
+    non_defaults: Vec<NonDefault>,
 }
 
 #[derive(Clone)]
@@ -52,7 +52,7 @@ impl fmt::Debug for ServerConfigs {
         formatter
             .debug_struct("ServerConfigs")
             .field("client", &client)
-            .field("weakened", &self.weakened)
+            .field("non_defaults", &self.non_defaults)
             .finish_non_exhaustive()
     }
 }
@@ -73,7 +73,7 @@ impl ServerConfigs {
         Ok(Self {
             client: Client::Trust(Arc::new(trust.client_verifier(policy, None)?)),
             base: Base::new(identity, alpn, policy)?,
-            weakened: policy.weakened(),
+            non_defaults: policy.non_defaults(),
         })
     }
 
@@ -92,13 +92,13 @@ impl ServerConfigs {
         Ok(Self {
             client: Client::Verifier(verifier),
             base: Base::new(identity, alpn, policy)?,
-            weakened: policy.weakened(),
+            non_defaults: policy.non_defaults(),
         })
     }
 
     /// Server-TLS configurations that ask for no client certificate, as
     /// [`server_config_without_client_auth_with`](crate::server_config_without_client_auth_with)
-    /// builds; [`weakened`](Self::weakened) ends with its `client_auth` entry.
+    /// builds.
     ///
     /// # Errors
     ///
@@ -111,14 +111,20 @@ impl ServerConfigs {
         Ok(Self {
             client: Client::None,
             base: Base::new(identity, alpn, policy)?,
-            weakened: without_client_auth(policy.weakened()),
+            non_defaults: policy.non_defaults(),
         })
     }
 
     /// Every setting of the policy looser than the default, as the configuration builders
     /// report it.
-    pub fn weakened(&self) -> &[Weakening] {
-        &self.weakened
+    pub fn non_defaults(&self) -> &[NonDefault] {
+        &self.non_defaults
+    }
+
+    /// The old name of [`non_defaults`](Self::non_defaults).
+    #[deprecated(since = "0.0.0", note = "renamed to `non_defaults`")]
+    pub fn weakened(&self) -> &[NonDefault] {
+        self.non_defaults()
     }
 
     /// The configuration of one connection from `source` to `local`.

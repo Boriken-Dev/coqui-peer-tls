@@ -119,7 +119,7 @@ fn a_custom_verifier_under_a_tls12_policy_negotiates_tls12_and_presents_the_chai
     let server = server_config_with_verifier(&server_identity, verifier, &[ALPN], &policy)?;
     assert!(
         server
-            .weakened
+            .non_defaults
             .iter()
             .any(|w| w.setting == "allow_chain_when_pinned")
     );

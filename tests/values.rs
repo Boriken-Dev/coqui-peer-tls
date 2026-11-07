@@ -2,8 +2,9 @@
 //! the input.
 
 use coqui_peer_tls::{
-    Built, Identity, PairConfig, PeerClientVerifier, PeerError, PeerIdentity, PeerServerVerifier,
-    Pins, Policy, Refusal, ResponderTrust, Roots, Tls, TlsHandshake, TlsVersion, Trust, Weakening,
+    Built, Identity, NonDefault, PairConfig, PeerClientVerifier, PeerError, PeerIdentity,
+    PeerServerVerifier, Pins, Policy, Refusal, ResponderTrust, Roots, Tls, TlsHandshake,
+    TlsVersion, Trust,
 };
 
 fn assert_send_sync<T: Send + Sync>() {}
@@ -26,7 +27,7 @@ fn every_public_type_is_send_and_sync() {
     assert_send_sync::<TlsHandshake>();
     assert_send_sync::<TlsVersion>();
     assert_send_sync::<Trust>();
-    assert_send_sync::<Weakening>();
+    assert_send_sync::<NonDefault>();
 }
 
 #[test]
@@ -59,13 +60,13 @@ fn the_default_server_name_is_server_name() {
 }
 
 #[test]
-fn a_policy_reports_weakenings_with_coqui_peers_type() {
+fn a_policy_reports_non_defaults_with_coqui_peers_type() {
     let mut policy = Policy::modern();
     policy.allow_resumption = true;
-    let weakened: Vec<coqui_peer::Weakening> = policy.weakened();
+    let listed: Vec<coqui_peer::NonDefault> = policy.non_defaults();
     assert_eq!(
-        weakened,
-        [coqui_peer::Weakening::new(
+        listed,
+        [coqui_peer::NonDefault::new(
             "allow_resumption",
             "true",
             "false"
@@ -75,15 +76,15 @@ fn a_policy_reports_weakenings_with_coqui_peers_type() {
 
 #[cfg(feature = "acl")]
 #[test]
-fn an_acl_weakening_is_converted_field_for_field() {
+fn an_acl_non_default_is_converted_field_for_field() {
     let mut policy = Policy::modern();
     policy.acl = Some(coqui_net_acl::Acl {
         rules: Vec::new(),
         default: coqui_net_acl::Action::Permit,
     });
     assert_eq!(
-        policy.weakened(),
-        [Weakening::new("acl.default", "permit", "deny")]
+        policy.non_defaults(),
+        [NonDefault::new("acl.default", "permit", "deny")]
     );
 }
 
@@ -93,7 +94,11 @@ fn a_policy_holds_its_waiting_limits_as_one_value() {
     assert_eq!(policy.waiting, coqui_peer::WaitingLimits::default());
     policy.waiting.total = 5_000;
     policy.waiting.rerecord = core::time::Duration::from_secs(5);
-    let settings: Vec<String> = policy.weakened().into_iter().map(|w| w.setting).collect();
+    let settings: Vec<String> = policy
+        .non_defaults()
+        .into_iter()
+        .map(|w| w.setting)
+        .collect();
     assert_eq!(settings, ["waiting_total", "waiting_rerecord_secs"]);
 }
 

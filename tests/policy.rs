@@ -233,9 +233,9 @@ async fn a_sha1_pin_is_accepted_only_when_the_policy_allows_it() {
     let legacy = Policy::legacy();
     let Built {
         config: server_config,
-        weakened,
+        non_defaults,
     } = server_config_with(&server, &sha1_pin(&client), &[ALPN], &legacy).unwrap();
-    assert!(weakened.iter().any(|w| w.setting == "pin_digests"));
+    assert!(non_defaults.iter().any(|w| w.setting == "pin_digests"));
     let Built {
         config: client_config,
         ..
@@ -247,24 +247,24 @@ async fn a_sha1_pin_is_accepted_only_when_the_policy_allows_it() {
 }
 
 #[test]
-fn weakening_is_reported_as_plain_data() {
-    assert!(Policy::default().weakened().is_empty());
-    assert!(Policy::intermediate().weakened().is_empty());
-    assert!(Policy::modern().weakened().is_empty());
+fn non_default_settings_are_reported_as_plain_data() {
+    assert!(Policy::default().non_defaults().is_empty());
+    assert!(Policy::intermediate().non_defaults().is_empty());
+    assert!(Policy::modern().non_defaults().is_empty());
     let legacy: Vec<String> = Policy::legacy()
-        .weakened()
+        .non_defaults()
         .into_iter()
         .map(|w| w.setting)
         .collect();
     assert_eq!(legacy, ["pin_digests", "require_ems"]);
     // Against a stricter baseline of the consumer's own, TLS 1.2 is reported.
-    let against_modern = Policy::default().weakened_against(&Policy::modern());
+    let against_modern = Policy::default().non_defaults_against(&Policy::modern());
     assert_eq!(against_modern.len(), 1);
     assert_eq!(
         (
             against_modern[0].setting.as_str(),
             against_modern[0].value.as_str(),
-            against_modern[0].strict.as_str()
+            against_modern[0].default.as_str()
         ),
         ("tls_versions", "1.2,1.3", "1.3")
     );
@@ -273,7 +273,11 @@ fn weakening_is_reported_as_plain_data() {
     policy.allow_chain_when_pinned = true;
     policy.allow_resumption = true;
     policy.waiting.per_source = 64;
-    let settings: Vec<String> = policy.weakened().into_iter().map(|w| w.setting).collect();
+    let settings: Vec<String> = policy
+        .non_defaults()
+        .into_iter()
+        .map(|w| w.setting)
+        .collect();
     assert_eq!(
         settings,
         [
@@ -288,12 +292,12 @@ fn weakening_is_reported_as_plain_data() {
     // The builders hand the same list back.
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     let built = client_config_with(&client, &pinned(&server), &[ALPN], &policy).unwrap();
-    assert_eq!(built.weakened, policy.weakened());
-    // Fields are plain: stricter-than-default overrides are not weakenings.
+    assert_eq!(built.non_defaults, policy.non_defaults());
+    // Fields are plain: stricter-than-default overrides are not non-default settings.
     let mut tighter = Policy::modern();
     tighter.pin_digests = vec![Digest::Sha256];
     tighter.waiting.per_source = 4;
-    assert!(tighter.weakened().is_empty());
+    assert!(tighter.non_defaults().is_empty());
 }
 
 #[tokio::test]
@@ -331,18 +335,18 @@ fn the_extended_master_secret_is_required_unless_the_policy_says_otherwise() {
         assert!(preset.require_ems, "{}", preset.name);
         assert!(
             !preset
-                .weakened()
+                .non_defaults()
                 .iter()
-                .any(|weakening| weakening.setting == "require_ems")
+                .any(|non_default| non_default.setting == "require_ems")
         );
     }
     let mut loose = Policy::intermediate();
     loose.require_ems = false;
     assert!(
         loose
-            .weakened()
+            .non_defaults()
             .iter()
-            .any(|weakening| weakening.setting == "require_ems" && weakening.value == "false")
+            .any(|non_default| non_default.setting == "require_ems" && non_default.value == "false")
     );
     let identity = Identity::generate().unwrap();
     let trust = pinned(&identity);
@@ -352,4 +356,16 @@ fn the_extended_master_secret_is_required_unless_the_policy_says_otherwise() {
         assert_eq!(client.config.require_ems, policy.require_ems);
         assert_eq!(server.config.require_ems, policy.require_ems);
     }
+}
+
+#[test]
+#[allow(deprecated)]
+fn the_old_names_answer_the_new_ones() {
+    let mut policy = Policy::modern();
+    policy.allow_resumption = true;
+    assert_eq!(policy.weakened(), policy.non_defaults());
+    assert_eq!(
+        policy.weakened_against(&Policy::modern()),
+        policy.non_defaults_against(&Policy::modern())
+    );
 }

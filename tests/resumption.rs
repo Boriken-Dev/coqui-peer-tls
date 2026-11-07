@@ -5,9 +5,9 @@
 use std::sync::Arc;
 
 use coqui_peer_tls::{
-    CLIENT_AUTH_SETTING, Identity, PeerError, Pins, Policy, TlsVersion, Trust, TrustStore,
-    TrustStoreExt, asynch, client_config_with, client_config_without_identity_with,
-    server_config_with, server_config_without_client_auth_with,
+    Identity, PeerError, Pins, Policy, TlsVersion, Trust, TrustStore, TrustStoreExt, asynch,
+    client_config_with, client_config_without_identity_with, server_config_with,
+    server_config_without_client_auth_with,
 };
 use rustls::{ClientConfig, HandshakeKind, ServerConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -142,9 +142,9 @@ async fn a_removed_server_is_refused_over_tls12() {
 }
 
 /// A second connection between two trusted peers is a full handshake under every preset, and
-/// a resumed one only when the policy allows it, which it then reports as a weakening.
+/// a resumed one only when the policy allows it, which it then reports as a non_default.
 #[tokio::test]
-async fn resumption_is_an_opt_in_reported_as_a_weakening() {
+async fn resumption_is_an_opt_in_reported_as_a_non_default() {
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     let server_pin = Trust::Pinned(Pins::fixed([server.fingerprint()]));
     let client_pin = Trust::Pinned(Pins::fixed([client.fingerprint()]));
@@ -167,9 +167,9 @@ async fn resumption_is_an_opt_in_reported_as_a_weakening() {
     let mut policy = Policy::modern();
     policy.allow_resumption = true;
     let built = server_config_with(&server, &client_pin, &[ALPN], &policy).unwrap();
-    assert_eq!(built.weakened.len(), 1);
-    assert_eq!(built.weakened[0].setting, "allow_resumption");
-    assert_eq!(built.weakened[0].value, "true");
+    assert_eq!(built.non_defaults.len(), 1);
+    assert_eq!(built.non_defaults[0].setting, "allow_resumption");
+    assert_eq!(built.non_defaults[0].value, "true");
     let server_config = Arc::new(built.config);
     let client_config = Arc::new(
         client_config_with(&client, &server_pin, &[ALPN], &policy)
@@ -243,14 +243,14 @@ async fn server_tls_configurations_resume_only_when_allowed() {
     policy.allow_resumption = true;
     let built = server_config_without_client_auth_with(&server, &[ALPN], &policy).unwrap();
     let settings: Vec<&str> = built
-        .weakened
+        .non_defaults
         .iter()
-        .map(|weakening| weakening.setting.as_str())
+        .map(|non_default| non_default.setting.as_str())
         .collect();
-    assert_eq!(settings, ["allow_resumption", CLIENT_AUTH_SETTING]);
+    assert_eq!(settings, ["allow_resumption"]);
     let server_config = Arc::new(built.config);
     let built = client_config_without_identity_with(&server_pin, &[ALPN], &policy).unwrap();
-    assert_eq!(built.weakened.len(), 1);
+    assert_eq!(built.non_defaults.len(), 1);
     let client_config = Arc::new(built.config);
     let (accepted, _) = link_server_tls(&server_config, &client_config).await;
     assert_eq!(accepted, HandshakeKind::Full);

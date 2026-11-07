@@ -20,7 +20,7 @@ mod tables;
 /// union, in the order of the first listed, narrowed to its TLS versions, to what the crypto
 /// provider has, and to [`Policy::cipher_suites`] and [`Policy::kx_groups`] when set. A TLS
 /// version left with no suite is dropped; none left is [`PeerError::Policy`]. Profiles are
-/// choices, not weakenings: [`Policy::weakened`] does not report them.
+/// choices, not non-default settings: [`Policy::non_defaults`] does not report them.
 ///
 /// Text form: `mozilla`, `fips-140-3-compliant`, `fips-140-2-compliant`, `fips-140-3-validated`,
 /// `cnsa-1.0`, `cnsa-2.0`.

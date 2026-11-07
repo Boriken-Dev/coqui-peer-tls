@@ -11,10 +11,9 @@ use std::time::Duration;
 
 use coqui_peer::Handshake;
 use coqui_peer_tls::{
-    CLIENT_AUTH_SETTING, Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal,
-    TlsHandshake, Trust, accept, client_config, client_config_without_identity,
-    client_config_without_identity_with, dial, server_config, server_config_without_client_auth,
-    server_config_without_client_auth_with,
+    Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal, TlsHandshake, Trust, accept,
+    client_config, client_config_without_identity, client_config_without_identity_with, dial,
+    server_config, server_config_without_client_auth, server_config_without_client_auth_with,
 };
 use rcgen::{BasicConstraints, Certificate, CertificateParams, DnType, IsCa, Issuer, KeyPair};
 use rustls::{Connection, ServerConfig, StreamOwned};
@@ -102,10 +101,7 @@ fn a_client_without_identity_reaches_a_server_tls_server_that_reports_no_peer() 
     let server = Identity::generate().unwrap();
     let built =
         server_config_without_client_auth_with(&server, &[ALPN], &Policy::modern()).unwrap();
-    assert_eq!(built.weakened.len(), 1);
-    assert_eq!(built.weakened[0].setting, CLIENT_AUTH_SETTING);
-    assert_eq!(built.weakened[0].value, "none");
-    assert_eq!(built.weakened[0].strict, "certificate");
+    assert!(built.non_defaults.is_empty());
     let (address, served) = serve(built.config);
 
     let client = client_config_without_identity(&pinned(server.fingerprint()), &[ALPN]).unwrap();
@@ -347,8 +343,8 @@ fn a_pinning_client_refuses_a_chain_unless_its_policy_allows_one() {
     let mut policy = Policy::modern();
     policy.allow_chain_when_pinned = true;
     let built = client_config_without_identity_with(&trust, &[], &policy).unwrap();
-    assert_eq!(built.weakened.len(), 1);
-    assert_eq!(built.weakened[0].setting, "allow_chain_when_pinned");
+    assert_eq!(built.non_defaults.len(), 1);
+    assert_eq!(built.non_defaults[0].setting, "allow_chain_when_pinned");
     let (address, served) = serve(server_config_without_client_auth(&identity, &[]).unwrap());
     let (_, presented) = ping(address, built.config).unwrap();
     assert_eq!(presented.len(), 2);

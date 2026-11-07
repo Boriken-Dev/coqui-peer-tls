@@ -6,7 +6,7 @@ use rustls::crypto::CryptoProvider;
 
 use crate::error::PeerError;
 use crate::profiles::{CipherProfile, Crypto};
-use coqui_peer::{Digest, PeerId, WaitingLimits, Weakening};
+use coqui_peer::{Digest, NonDefault, PeerId, WaitingLimits};
 
 /// The version of the serialized form of [`Policy`] (`policy_version`).
 pub const POLICY_VERSION: u32 = 1;
@@ -59,7 +59,7 @@ impl FromStr for TlsVersion {
 ///
 /// Start from [`Policy::modern`], [`Policy::intermediate`], [`Policy::legacy`] or a policy of
 /// your own, then change any field. [`Default`] is intermediate (TLS 1.2 and 1.3). Nothing is
-/// silently weakened: [`weakened`](Policy::weakened) lists every setting looser than the
+/// silently non-default: [`non_defaults`](Policy::non_defaults) lists every setting looser than the
 /// default, and the configuration builders return that list.
 ///
 /// With the `serde` feature a policy reads and writes the versioned form documented in the
@@ -94,7 +94,7 @@ pub struct Policy {
     /// Whether TLS sessions may be resumed. A resumed handshake skips the certificate
     /// verifiers, so a peer removed from the trust store or no longer pinned can reconnect
     /// on a session it already holds, and the access control list's fingerprint rules are not
-    /// checked again (its address rules are). Every preset leaves it off; `weakened` reports it.
+    /// checked again (its address rules are). Every preset leaves it off; `non_defaults` reports it.
     pub allow_resumption: bool,
     /// Whether a TLS 1.2 connection must use the extended master secret (RFC 7627). Without it
     /// a TLS 1.2 session's keys and exporter are not bound to its handshake, which an attacker
@@ -203,20 +203,26 @@ fn list<T: fmt::Display>(items: &[T]) -> String {
 impl Policy {
     /// Every setting looser than the default (intermediate) preset, as plain data. Empty for
     /// `intermediate` and `modern`; `legacy` reports `pin_digests` and `require_ems`.
-    pub fn weakened(&self) -> Vec<Weakening> {
-        self.weakened_against(&Self::default())
+    pub fn non_defaults(&self) -> Vec<NonDefault> {
+        self.non_defaults_against(&Self::default())
+    }
+
+    /// The old name of [`non_defaults`](Self::non_defaults).
+    #[deprecated(since = "0.0.0", note = "renamed to `non_defaults`")]
+    pub fn weakened(&self) -> Vec<NonDefault> {
+        self.non_defaults()
     }
 
     /// Every setting looser than `baseline`, as plain data, for a consumer whose own baseline
-    /// is stricter than the default (`weakened_against(&Policy::modern())` reports TLS 1.2).
-    pub fn weakened_against(&self, baseline: &Self) -> Vec<Weakening> {
+    /// is stricter than the default (`non_defaults_against(&Policy::modern())` reports TLS 1.2).
+    pub fn non_defaults_against(&self, baseline: &Self) -> Vec<NonDefault> {
         let strict = baseline;
         let mut found = Vec::new();
         let mut note = |setting: &str, value: String, strict: String| {
-            found.push(Weakening {
+            found.push(NonDefault {
                 setting: setting.to_owned(),
                 value,
-                strict,
+                default: strict,
             });
         };
         if self
@@ -281,14 +287,20 @@ impl Policy {
         }
         #[cfg(feature = "acl")]
         if let Some(acl) = &self.acl {
-            // coqui-net-acl has no dependencies and keeps a Weakening of its own, field for field.
+            // coqui-net-acl has no dependencies and keeps a NonDefault of its own, field for field.
             found.extend(
-                acl.weakened()
+                acl.non_defaults()
                     .into_iter()
-                    .map(|w| Weakening::new(w.setting, w.value, w.strict)),
+                    .map(|w| NonDefault::new(w.setting, w.value, w.default)),
             );
         }
         found
+    }
+
+    /// The old name of [`non_defaults_against`](Self::non_defaults_against).
+    #[deprecated(since = "0.0.0", note = "renamed to `non_defaults_against`")]
+    pub fn weakened_against(&self, baseline: &Self) -> Vec<NonDefault> {
+        self.non_defaults_against(baseline)
     }
 
     /// Whether the access control list admits, by address, a client from `source` to `local`
