@@ -114,8 +114,7 @@ for the dialled name is trusted. The chain, the dates and the name are always ch
 ## Profiles and policy
 
 `Policy::default()` is `intermediate` and works as it is. `Policy::modern()`, `intermediate()`
-and `legacy()` are plain values; start from one and change any public field. `weakened()` lists
-every setting looser than the default, as data; `client_config_with` and `server_config_with`
+and `legacy()` are plain values; start from one and change any public field. `non_defaults()` listsevery setting looser than the default, as data; `client_config_with` and `server_config_with`
 return that list beside the configuration. Nothing is printed.
 
 | Field | `modern` | `intermediate` (default) | `legacy` |
@@ -172,8 +171,8 @@ let mut policy = Policy::default();
 policy.pin_digests.push(Digest::Sha1);
 policy.waiting.per_source = 4;
 let built = server_config_with(&identity, &Trust::AnyWithKeyProof, &[b"my-protocol/1"], &policy)?;
-for weaker in &built.weakened {
-    eprintln!("{} = {} (default: {})", weaker.setting, weaker.value, weaker.strict);
+for setting in &built.non_defaults {
+    eprintln!("{} = {} (default: {})", setting.setting, setting.value, setting.default);
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```

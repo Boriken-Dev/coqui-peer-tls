@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: a weakened setting is a non-default setting.** `Policy::weakened` and `weakened_against` are
+  `non_defaults` and `non_defaults_against`, `ServerConfigs::weakened` is `non_defaults`, and the public field
+  `Built::weakened` is `Built::non_defaults` (no alias is possible for a field). The entries are coqui-peer's
+  `NonDefault { setting, value, default }` (its `strict` field is now `default`) and coqui-net-acl's likewise.
+  The methods and the `Weakening` re-export stay one release as deprecated aliases.
+
+### Removed
+
+- **Breaking:** the `client_auth = none` entry that every server-TLS configuration added to its list, and
+  `CLIENT_AUTH_SETTING` with it: choosing the server-TLS function is the choice, not a setting left off its default.
+
 ## [0.0.0-alpha.1] - 2026-10-29
 
 ### Added

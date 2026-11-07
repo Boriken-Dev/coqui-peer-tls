@@ -21,12 +21,12 @@ package and is self-contained. Development documentation lives with the source a
 MSRV Rust 1.89. A default build depends on `coqui-peer`, `rustls` (0.23.27 or later, ring
 provider, `tls12`) and `rustls-webpki` (which rustls already uses). Version `0.0.0-alpha.1` is
 a pre-release; the API may change in any release before 1.0. This is the TLS method of `coqui-peer` (the core: `PeerId`, `TrustStore`, the sans-IO
-`Handshake`, `Weakening`); its API header ships in that crate.
+`Handshake`, `NonDefault`); its API header ships in that crate.
 
 Imports: everything is at the crate root, including re-exports of `coqui-peer`'s `Clock`,
 `Digest`, `Invitation`, `InvitationOptions`, `KeyMaterial`, `PeerId`, `Random`,
 `ReadTimeout`, `WriteTimeout`, `RotationEvent`, `RotationOptions`, `TrustStore`,
-`WaitingEntry`, `WaitingLimits` and `Weakening`. Public modules: `asynch` (feature `tokio`), `pair` (`coqui_peer::pair`
+`WaitingEntry`, `WaitingLimits` and `NonDefault`. Public modules: `asynch` (feature `tokio`), `pair` (`coqui_peer::pair`
 re-exported) and `acl` (`coqui_net_acl` re-exported, feature `acl`).
 
 No `unsafe` code (`#![forbid(unsafe_code)]`). Process-wide state: one thread-local holding the
@@ -263,8 +263,8 @@ impl Default for Policy { /* Policy::intermediate() */ }
 impl Policy {
     pub fn modern() -> Policy;  pub fn intermediate() -> Policy;  pub fn legacy() -> Policy;
     pub fn preset(name: &str) -> Result<Policy, PeerError>;
-    pub fn weakened(&self) -> Vec<Weakening>;
-    pub fn weakened_against(&self, baseline: &Policy) -> Vec<Weakening>;
+    pub fn non_defaults(&self) -> Vec<NonDefault>;
+    pub fn non_defaults_against(&self, baseline: &Policy) -> Vec<NonDefault>;   // weakened, weakened_against: deprecated aliases for one release
     pub fn check_pin(&self, fingerprint: &PeerId) -> Result<(), PeerError>;
     pub fn check(&self) -> Result<(), PeerError>;   // what a configuration build checks, without one
     pub fn crypto_provider(&self) -> Result<Arc<CryptoProvider>, PeerError>;
@@ -272,7 +272,8 @@ impl Policy {
     pub fn supported_kx_groups(&self) -> Result<Vec<String>, PeerError>;
     pub fn deserialize_over<'de, D: Deserializer<'de>>(base: Policy, d: D) -> Result<Policy, D::Error>;  // feature serde
 }
-pub use coqui_peer::Weakening;    // { setting, value, strict }, Weakening::new; setting: a field, or "client_auth"; strict = the baseline's value
+pub use coqui_peer::NonDefault;    // { setting, value, default }, NonDefault::new; setting: a field; default = the baseline's value
+pub use coqui_peer::Weakening;   // deprecated alias of NonDefault for one release; its field `strict` is now `default`
 pub const POLICY_VERSION: u32 = 1;
 impl TlsVersion { pub const fn as_str(self) -> &'static str; }   // "1.2", "1.3"; also Display; FromStr refuses others
 ```
@@ -295,12 +296,12 @@ builds nothing: for a host that builds its configurations later, one per connect
 
 `crypto_provider` is the provider `crypto` names narrowed to what the policy offers (next
 section); an unknown suite or group name is `PeerError::Policy` whose message lists the
-provider's names, and so is a policy that leaves no version or no group. `preset` takes `modern`, `intermediate` or `legacy`. `weakened` compares with
+provider's names, and so is a policy that leaves no version or no group. `preset` takes `modern`, `intermediate` or `legacy`. `non_defaults` compares with
 `Policy::default()` (intermediate) and reports `tls_versions` beyond 1.2/1.3 (none exist),
 `pin_digests` beyond sha256/384/512, `check_validity` false, `allow_chain_when_pinned` true,
 `allow_resumption` true, `require_ems` false, larger waiting caps or a shorter rerecord time,
 and an ACL with a `permit` default: empty for `modern` and `intermediate`, `pin_digests` and
-`require_ems` for `legacy`. `weakened_against(&Policy::modern())` is for a consumer whose own
+`require_ems` for `legacy`. `non_defaults_against(&Policy::modern())` is for a consumer whose own
 baseline is TLS 1.3 only: it reports TLS 1.2.
 
 `allow_resumption` false (every preset) builds configurations with resumption off at both ends:
@@ -327,7 +328,7 @@ order from the first listed) ∩ `tls_versions` ∩ the provider ∩ `cipher_sui
 when set. A TLS version left with no suite is dropped (a `cnsa-2.0`-only policy under the default
 versions is TLS 1.3); none left, an empty `cipher_profiles`, or no group is `PeerError::Policy`.
 Signature schemes come only from the profiles (and they bound certificate chains as well as
-handshake signatures). Profiles and the provider are choices, not weakenings.
+handshake signatures). Profiles and the provider are choices, not non-default settings.
 
 | Text | Claim (quoted from the docs) | Suites | Groups | Signatures |
 | --- | --- | --- | --- | --- |
@@ -409,7 +410,7 @@ Every server configuration built under a policy with `acl: Some(..)` applies it:
   without a handshake, for a host that refuses a connection before it (a quinn `Incoming`).
 - Session resumption skips the fingerprint check, as it skips the verifiers; the address check at
   the `ClientHello` still runs (rustls resolves the certificate before it resumes). Resumption
-  is off unless `allow_resumption`, which `weakened()` reports.
+  is off unless `allow_resumption`, which `non_defaults()` reports.
 
 ```rust
 pub fn with_addresses<R>(source: Option<SocketAddr>, local: Option<SocketAddr>, work: impl FnOnce() -> R) -> R;
@@ -438,7 +439,7 @@ impl ServerConfigs {
     pub fn new(&Identity, &Trust, alpn: &[&[u8]], &Policy) -> Result<ServerConfigs, PeerError>;
     pub fn with_verifier(&Identity, Arc<dyn ClientCertVerifier>, alpn: &[&[u8]], &Policy) -> Result<ServerConfigs, PeerError>;
     pub fn without_client_auth(&Identity, alpn: &[&[u8]], &Policy) -> Result<ServerConfigs, PeerError>;
-    pub fn weakened(&self) -> &[Weakening];
+    pub fn non_defaults(&self) -> &[NonDefault];   // weakened(): a deprecated alias for one release
     pub fn for_connection(&self, source: SocketAddr, local: SocketAddr) -> Result<ConnectionConfig, PeerError>;
 }
 pub struct ConnectionConfig;   // Clone, Debug
@@ -451,7 +452,7 @@ impl ConnectionConfig {
 For a host that builds a configuration per connection (quinn's `Incoming::accept_with`). The
 three constructors build what `server_config_with`, `server_config_with_verifier` and
 `server_config_without_client_auth_with` build, and check the identity and policy once (their
-errors are those functions'); `weakened` is what `Built::weakened` would hold.
+errors are those functions'); `non_defaults` is what `Built::non_defaults` would hold.
 `for_connection` then gives one connection's configuration: waiting entries recorded under
 `source`, the ACL decided from `source` and `local` (by address at the `ClientHello`, by
 fingerprint before the store), and every configuration from one `ServerConfigs` sharing one
@@ -465,7 +466,7 @@ handshake.
 ## Configurations and streams (`coqui_peer_tls`, `coqui_peer_tls::asynch`)
 
 ```rust
-pub struct Built<T> { pub config: T, pub weakened: Vec<Weakening> }
+pub struct Built<T> { pub config: T, pub non_defaults: Vec<NonDefault> }
 pub fn client_config(&Identity, &Trust, alpn: &[&[u8]]) -> Result<ClientConfig, PeerError>;
 pub fn server_config(&Identity, &Trust, alpn: &[&[u8]]) -> Result<ServerConfig, PeerError>;
 pub fn client_config_with(&Identity, &Trust, &[&[u8]], &Policy) -> Result<Built<ClientConfig>, PeerError>;
@@ -478,7 +479,6 @@ pub fn client_config_without_identity_with(&Trust, &[&[u8]], &Policy) -> Result<
 // a verifier of the host's own, under the policy; the whole chain presented
 pub fn server_config_with_verifier(&Identity, Arc<dyn ClientCertVerifier>, alpn: &[&[u8]], &Policy) -> Result<Built<ServerConfig>, PeerError>;
 pub fn client_config_with_verifier(Option<&Identity>, Arc<dyn ServerCertVerifier>, alpn: &[&[u8]], &Policy) -> Result<Built<ClientConfig>, PeerError>;
-pub const CLIENT_AUTH_SETTING: &str = "client_auth";
 pub fn crypto_provider() -> Arc<CryptoProvider>;       // default ring provider
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
 pub fn default_server_name() -> ServerName<'static>;   // SERVER_NAME as rustls takes it
@@ -500,7 +500,7 @@ pub async fn accept_with<S: PeerAddr>(S, select: impl FnOnce(&ClientHello<'_>) -
 `server_config_with_verifier` and `client_config_with_verifier` build exactly what
 `server_config_with` and `client_config_with` build (the policy's versions, suites, groups,
 extended master secret and resumption, the identity's whole chain, ALPN) around a verifier the
-host supplies, typically one of this crate's wrapped; `Built::weakened` is the policy's. A host
+host supplies, typically one of this crate's wrapped; `Built::non_defaults` is the policy's. A host
 building a rustls or quinn configuration by hand takes the identity's `certificate_chain()` and
 `private_key_der()`.
 
@@ -520,11 +520,11 @@ certificate, and hosts without an identity of their own.
 
 - `server_config_without_client_auth*` handle versions, suites, groups, ALPN and resumption as
   `server_config_with` does (resumption off unless `allow_resumption`) and request no client
-  certificate. `Built::weakened` always ends with `Weakening { setting: "client_auth" (=
-  CLIENT_AUTH_SETTING), value: "none", strict: "certificate" }`, after the policy's own.
+  certificate. `Built::non_defaults` is the policy's: a server that asks for no client certificate lists
+  nothing for it.
 - `client_config_without_identity*` verify the server by `Trust` exactly as `client_config*`
   (pins or a store; roots; `AnyWithKeyProof`; CA is `Unsupported`) and present no
-  certificate. A mutual-TLS server refuses such a client. Its `weakened` is the policy's only.
+  certificate. A mutual-TLS server refuses such a client. Its `non_defaults` is the policy's.
 - The server finishes with `TlsHandshake::finish_unauthenticated` (below), or any rustls /
   tokio-rustls acceptor: there is no client verifier, so `with_source` has nothing to scope.
   `accept`, `accept_from` and the `asynch` accepts return a verified client, so with this
@@ -639,7 +639,7 @@ allows): the exporter is unique to the connection, so a relay between two connec
 PIN confirmation. TLS 1.2 (a policy that allows it): the exporter is unique only with the
 extended master secret, which `modern` and `intermediate` require (`Policy::require_ems`,
 applied to every configuration built here, pairing's included); a policy that turns it off
-(`legacy` does) is reported by `weakened()`, and then the
+(`legacy` does) is reported by `non_defaults()`, and then the
 confirmation still covers both certificates, which a relay cannot replace with its own without
 failing it.
 
