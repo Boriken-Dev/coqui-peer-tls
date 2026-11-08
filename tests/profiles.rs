@@ -2,6 +2,8 @@
 //! them is refused.
 #![cfg(feature = "generate")]
 
+mod support;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -249,10 +251,7 @@ mod aws_lc {
     }
 
     fn ml_dsa_87() -> Identity {
-        let text = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/mldsa87.pem"),
-        )
-        .expect("the ML-DSA-87 vector");
+        let text = support::vector("mldsa87.txt");
         Identity::from_pem(&text).expect("an identity")
     }
 

@@ -4,23 +4,28 @@
 //! Regenerating them is a format change:
 //! `cargo test -p coqui-peer-tls --features generate -- --ignored regenerate_vectors`
 
+mod support;
+
+#[cfg(feature = "generate")]
 use std::fs;
+#[cfg(feature = "generate")]
 use std::path::{Path, PathBuf};
 
 use coqui_peer_tls::{Identity, PeerId};
 
+#[cfg(feature = "generate")]
 fn vectors() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors")
 }
 
 fn read(name: &str) -> String {
-    fs::read_to_string(vectors().join(name)).unwrap()
+    support::vector(name)
 }
 
 #[test]
 fn each_certificate_has_the_committed_fingerprint_in_every_spelling() {
     for name in ["a", "b"] {
-        let identity = Identity::from_pem(&read(&format!("identity-{name}.pem"))).unwrap();
+        let identity = Identity::from_pem(&read(&format!("identity-{name}.txt"))).unwrap();
         let expected = read(&format!("identity-{name}.fingerprint"));
         let lines: Vec<&str> = expected.lines().collect();
         assert_eq!(lines.len(), 3, "sha256 form, bare hex, grouped base32");
@@ -35,7 +40,7 @@ fn each_certificate_has_the_committed_fingerprint_in_every_spelling() {
         // An identity file round-trips byte for byte: certificate block, then PKCS#8 key.
         assert_eq!(
             identity.to_pem().unwrap(),
-            read(&format!("identity-{name}.pem"))
+            read(&format!("identity-{name}.txt"))
         );
     }
 }
@@ -50,7 +55,11 @@ fn regenerate_vectors() {
         let identity = Identity::generate().unwrap();
         let pem = identity.to_pem().unwrap();
         let fingerprint = identity.fingerprint();
-        fs::write(root.join(format!("identity-{name}.pem")), &pem).unwrap();
+        fs::write(
+            root.join(format!("identity-{name}.txt")),
+            support::stored(&pem),
+        )
+        .unwrap();
         fs::write(
             root.join(format!("identity-{name}.fingerprint")),
             format!(

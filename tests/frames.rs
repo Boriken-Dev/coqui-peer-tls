@@ -1,5 +1,7 @@
 //! Announcements and pairing messages use coqui-peer's frames, and its `ReadTimeout`.
 
+mod support;
+
 use std::io::{self, Cursor};
 
 use coqui_peer_tls::{
@@ -7,8 +9,8 @@ use coqui_peer_tls::{
 };
 
 fn sender() -> Result<PeerIdentity, PeerError> {
-    let pem = include_str!("vectors/identity-a.pem");
-    Ok(Identity::from_pem(pem)?.peer_identity())
+    let pem = support::vector("identity-a.txt");
+    Ok(Identity::from_pem(&pem)?.peer_identity())
 }
 
 #[test]
@@ -28,7 +30,7 @@ fn an_announcement_declaring_more_than_the_frame_limit_is_refused_unread() -> Re
 
 #[test]
 fn an_announcement_is_one_coqui_peer_frame() -> Result<(), PeerError> {
-    let successor = Identity::from_pem(include_str!("vectors/identity-b.pem"))?;
+    let successor = Identity::from_pem(&support::vector("identity-b.txt"))?;
     let mut wire = Vec::new();
     announce(&mut wire, &successor)?;
     let message = coqui_peer::read_frame(&mut Cursor::new(&wire)).map_err(PeerError::Io)?;
