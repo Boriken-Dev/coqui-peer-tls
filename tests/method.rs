@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! The TLS method driven through the sans-IO traits of `coqui-peer`, over a byte stream and
 //! over a message transport.
 #![cfg(feature = "generate")]

@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Server TLS: the server proves itself by certificate and the client presents none. Covers
 //! the configurations, the handshake that finishes without a peer certificate, identities
 //! with a chain and short-lived generated identities.

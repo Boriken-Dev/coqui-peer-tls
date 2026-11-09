@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Handshakes between real identities. Run with `--all-features`.
 #![cfg(all(feature = "generate", feature = "ca", feature = "tokio"))]
 

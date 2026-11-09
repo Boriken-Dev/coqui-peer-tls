@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A QUIC host (quinn) with a policy access control list: a configuration per incoming
 //! connection, decided from the addresses quinn reports, the refusal kept for the host.
 #![cfg(all(feature = "acl", feature = "generate"))]

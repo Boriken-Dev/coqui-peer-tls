@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Cipher profiles: what each allows, how a set of them combines, and what a peer outside
 //! them is refused.
 #![cfg(feature = "generate")]

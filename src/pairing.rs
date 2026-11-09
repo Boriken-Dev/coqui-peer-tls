@@ -18,7 +18,7 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, StreamOwned};
 
 use crate::certificate::certificate_key;
-use crate::config::{client_config_with, crypto_provider, server_config_with};
+use crate::config::{ClientAuth, ClientBuilder, ServerBuilder, crypto_provider};
 use crate::error::PeerError;
 use crate::identity::{Identity, PeerIdentity};
 use crate::policy::Policy;
@@ -34,18 +34,72 @@ pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
 
 /// The TLS side of pairing: the device's own [`Policy`] and the ALPN that marks a pairing
 /// connection. Nothing here sets a TLS version or suite; the policy does.
+///
+/// [`PairConfig::builder`] sets it by name; with the `guatiao` feature it is also the settings
+/// type a file or a form fills (`alpn` as text, `timeout` as `[secs, nanos]` or seconds).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "guatiao",
+    derive(guatiao::ToValue, guatiao::FromValue, guatiao::Schema),
+    map(deny_unknown_fields)
+)]
 pub struct PairConfig {
     /// The policy both pairing configurations are built with. Default [`Policy::default`].
+    #[cfg_attr(feature = "guatiao", map(default))]
     pub policy: Policy,
     /// The pairing ALPN; only a connection that negotiated it carries a pairing exchange, and
     /// only the configurations built here admit a key-proven certificate nobody trusts yet.
     /// Default [`PAIR_ALPN`].
+    #[cfg_attr(
+        feature = "guatiao",
+        map(default = PAIR_ALPN.to_vec(), with = crate::settings::alpn_text)
+    )]
     pub alpn: Vec<u8>,
     /// How long one side's whole exchange may take, the TLS handshake included: the joiner's
     /// dial and finish together, the responder's accept. `Duration::MAX` waits forever. Default
     /// 15 minutes, longer than the default `device_ttl` an operator has to approve.
+    #[cfg_attr(feature = "guatiao", map(default = DEFAULT_TIMEOUT))]
     pub timeout: Duration,
+}
+
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+impl PairConfig {
+    /// A builder that starts from the defaults.
+    pub fn builder() -> PairConfigBuilder {
+        PairConfigBuilder(Self::default())
+    }
+}
+
+/// Builds a [`PairConfig`] by setting name: [`PairConfig::builder`], the settings, then
+/// [`build`](Self::build).
+#[derive(Debug, Clone)]
+#[must_use]
+pub struct PairConfigBuilder(PairConfig);
+
+impl PairConfigBuilder {
+    /// The policy both pairing configurations are built with.
+    pub fn policy(mut self, policy: Policy) -> Self {
+        self.0.policy = policy;
+        self
+    }
+
+    /// The pairing ALPN.
+    pub fn alpn(mut self, alpn: impl Into<Vec<u8>>) -> Self {
+        self.0.alpn = alpn.into();
+        self
+    }
+
+    /// How long one side's whole exchange may take; `Duration::MAX` waits forever.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.0.timeout = timeout;
+        self
+    }
+
+    /// The settings.
+    pub fn build(self) -> PairConfig {
+        self.0
+    }
 }
 
 impl Default for PairConfig {
@@ -53,7 +107,7 @@ impl Default for PairConfig {
         Self {
             policy: Policy::default(),
             alpn: PAIR_ALPN.to_vec(),
-            timeout: Duration::from_secs(15 * 60),
+            timeout: DEFAULT_TIMEOUT,
         }
     }
 }
@@ -110,18 +164,18 @@ pub fn random() -> Random {
 ///
 /// # Errors
 ///
-/// As [`server_config_with`].
+/// As [`ServerBuilder::build`].
 pub fn pair_server_config(
     identity: &Identity,
     config: &PairConfig,
 ) -> Result<ServerConfig, PeerError> {
-    Ok(server_config_with(
-        identity,
-        &Trust::AnyWithKeyProof,
-        &[&config.alpn],
-        &config.policy,
-    )?
-    .config)
+    Ok(
+        ServerBuilder::new(identity, ClientAuth::Required(Trust::AnyWithKeyProof))
+            .alpn([&config.alpn])
+            .policy(config.policy.clone())
+            .build()?
+            .config,
+    )
 }
 
 /// The client configuration of a pairing connection for `pairing`: an invitation pins the
@@ -130,7 +184,7 @@ pub fn pair_server_config(
 /// # Errors
 ///
 /// [`PeerError::Pairing`] with [`PairingError::Unverified`] for the device flow under
-/// [`ResponderTrust::Unverified`] unless the pairing allows it; as [`client_config_with`].
+/// [`ResponderTrust::Unverified`] unless the pairing allows it; as [`ClientBuilder::build`].
 pub fn pair_client_config(
     identity: &Identity,
     pairing: &Pairing,
@@ -152,7 +206,11 @@ pub fn pair_client_config(
         Some(name) => name,
         None => ServerName::try_from(SERVER_NAME).map_err(|_| PeerError::Tls)?,
     };
-    let built = client_config_with(identity, &trust, &[&config.alpn], &config.policy)?;
+    let built = ClientBuilder::new(trust)
+        .identity(identity)
+        .alpn([&config.alpn])
+        .policy(config.policy.clone())
+        .build()?;
     Ok((built.config, name))
 }
 

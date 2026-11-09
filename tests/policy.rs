@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Profiles and policy: what each preset negotiates, what overrides restrict, and what is
 //! reported as weaker. Run with `--all-features`.
 #![cfg(all(feature = "generate", feature = "tokio"))]

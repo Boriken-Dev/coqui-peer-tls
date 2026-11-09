@@ -11,7 +11,7 @@ use rustls::pki_types::{CertificateDer, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DigitallySignedStruct, DistinguishedName, ServerConfig, SignatureScheme};
 
-use crate::config::Base;
+use crate::config::{Base, ClientAuth, ServerBuilder};
 use crate::error::{PeerError, Refusal};
 use crate::identity::Identity;
 use crate::policy::Policy;
@@ -22,7 +22,8 @@ use coqui_peer::NonDefault;
 /// crate's accept helpers, such as quinn, which runs the verifier on threads of its own and
 /// takes a configuration per incoming connection.
 ///
-/// Built once from the identity, ALPN list and [`Policy`] (checked then), it gives a
+/// Built once, by [`ServerBuilder::configs`], from the identity, ALPN list and [`Policy`]
+/// (checked then), it gives a
 /// configuration for each connection's addresses with [`for_connection`](Self::for_connection).
 /// Those configurations share one session cache and ticketer, so with
 /// [`Policy::allow_resumption`] a client resumes across connections; waiting entries are
@@ -36,7 +37,7 @@ pub struct ServerConfigs {
 }
 
 #[derive(Clone)]
-enum Client {
+pub(crate) enum Client {
     Trust(Arc<PeerClientVerifier>),
     Verifier(Arc<dyn ClientCertVerifier>),
     None,
@@ -58,61 +59,72 @@ impl fmt::Debug for ServerConfigs {
 }
 
 impl ServerConfigs {
+    pub(crate) fn from_parts(base: Base, client: Client, non_defaults: Vec<NonDefault>) -> Self {
+        Self {
+            base,
+            client,
+            non_defaults,
+        }
+    }
+
     /// Configurations that present `identity` and require a client certificate `trust`
-    /// accepts, as [`server_config_with`](crate::server_config_with) builds.
+    /// accepts.
     ///
     /// # Errors
     ///
-    /// As [`server_config_with`](crate::server_config_with).
+    /// As [`ServerBuilder::configs`].
+    #[deprecated(since = "0.0.0", note = "use `ServerBuilder::configs`")]
     pub fn new(
         identity: &Identity,
         trust: &Trust,
         alpn: &[&[u8]],
         policy: &Policy,
     ) -> Result<Self, PeerError> {
-        Ok(Self {
-            client: Client::Trust(Arc::new(trust.client_verifier(policy, None)?)),
-            base: Base::new(identity, alpn, policy)?,
-            non_defaults: policy.non_defaults(),
-        })
+        ServerBuilder::new(identity, ClientAuth::Required(trust.clone()))
+            .alpn(alpn)
+            .policy(policy.clone())
+            .configs()
     }
 
-    /// Configurations that verify clients with the host's own `verifier`, as
-    /// [`server_config_with_verifier`](crate::server_config_with_verifier) builds.
+    /// Configurations that verify clients with the host's own `verifier`.
     ///
     /// # Errors
     ///
-    /// As [`server_config_with_verifier`](crate::server_config_with_verifier).
+    /// As [`ServerBuilder::configs`].
+    #[deprecated(
+        since = "0.0.0",
+        note = "use `ServerBuilder` with `ClientAuth::Verifier`, then `configs`"
+    )]
     pub fn with_verifier(
         identity: &Identity,
         verifier: Arc<dyn ClientCertVerifier>,
         alpn: &[&[u8]],
         policy: &Policy,
     ) -> Result<Self, PeerError> {
-        Ok(Self {
-            client: Client::Verifier(verifier),
-            base: Base::new(identity, alpn, policy)?,
-            non_defaults: policy.non_defaults(),
-        })
+        ServerBuilder::new(identity, ClientAuth::Verifier(verifier))
+            .alpn(alpn)
+            .policy(policy.clone())
+            .configs()
     }
 
-    /// Server-TLS configurations that ask for no client certificate, as
-    /// [`server_config_without_client_auth_with`](crate::server_config_without_client_auth_with)
-    /// builds.
+    /// Server-TLS configurations that ask for no client certificate.
     ///
     /// # Errors
     ///
-    /// As [`server_config_without_client_auth_with`](crate::server_config_without_client_auth_with).
+    /// As [`ServerBuilder::configs`].
+    #[deprecated(
+        since = "0.0.0",
+        note = "use `ServerBuilder` with `ClientAuth::None`, then `configs`"
+    )]
     pub fn without_client_auth(
         identity: &Identity,
         alpn: &[&[u8]],
         policy: &Policy,
     ) -> Result<Self, PeerError> {
-        Ok(Self {
-            client: Client::None,
-            base: Base::new(identity, alpn, policy)?,
-            non_defaults: policy.non_defaults(),
-        })
+        ServerBuilder::new(identity, ClientAuth::None)
+            .alpn(alpn)
+            .policy(policy.clone())
+            .configs()
     }
 
     /// Every setting of the policy looser than the default, as the configuration builders

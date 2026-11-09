@@ -29,17 +29,21 @@ mod pairing;
 mod policy;
 mod profiles;
 mod roots;
+#[cfg(feature = "guatiao")]
+mod settings;
 mod source;
 mod stream;
 mod trust;
 mod x509;
 
 pub use certificate::{METHOD, TrustStoreExt, certificate_key};
+pub use config::{Built, ClientAuth, ClientBuilder, ServerBuilder, crypto_provider};
+#[allow(deprecated)]
 pub use config::{
-    Built, client_config, client_config_with, client_config_with_verifier,
-    client_config_without_identity, client_config_without_identity_with, crypto_provider,
-    server_config, server_config_with, server_config_with_verifier,
-    server_config_without_client_auth, server_config_without_client_auth_with,
+    client_config, client_config_with, client_config_with_verifier, client_config_without_identity,
+    client_config_without_identity_with, server_config, server_config_with,
+    server_config_with_verifier, server_config_without_client_auth,
+    server_config_without_client_auth_with,
 };
 pub use connection::{ConnectionConfig, ServerConfigs};
 #[cfg(feature = "acl")]
@@ -56,15 +60,21 @@ pub use error::{PeerError, Refusal};
 #[cfg(feature = "fields")]
 pub use fields::{CertificateFields, Name, San};
 pub use handshake::{Tls, TlsHandshake};
+#[cfg(feature = "generate")]
+pub use identity::IdentityBuilder;
 pub use identity::{Identity, PeerIdentity};
 pub use pairing::{
-    EXPORTER_LABEL, PAIR_ALPN, PairConfig, PairDial, ResponderTrust, announce, pair_accept,
-    pair_accept_from, pair_client_config, pair_dial, pair_server_config, random,
+    EXPORTER_LABEL, PAIR_ALPN, PairConfig, PairConfigBuilder, PairDial, ResponderTrust, announce,
+    pair_accept, pair_accept_from, pair_client_config, pair_dial, pair_server_config, random,
     receive_announcement,
 };
-pub use policy::{POLICY_VERSION, Policy, TlsVersion};
+#[allow(deprecated)]
+pub use policy::POLICY_VERSION;
+pub use policy::{Policy, TlsVersion};
 pub use profiles::{CipherProfile, Crypto};
 pub use roots::Roots;
+#[cfg(feature = "guatiao")]
+pub use settings::TlsSettings;
 pub use source::{with_addresses, with_source};
 pub use stream::{
     PeerAddr, SERVER_NAME, accept, accept_at, accept_from, default_server_name, dial, dial_named,

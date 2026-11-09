@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Key rotation over TLS: a peer announces its successor certificate over a connection its
 //! current one authenticated; the first handshake that proves the successor promotes it, and
 //! the old certificate is refused from its retirement time on. Clients and servers alike.

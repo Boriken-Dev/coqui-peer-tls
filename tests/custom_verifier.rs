@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Configurations around a verifier of the host's own: the policy's versions apply, the whole
 //! chain is presented, and the identity's key is available to build them.
 #![cfg(feature = "generate")]

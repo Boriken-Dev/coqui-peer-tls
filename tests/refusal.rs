@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A refused certificate is a typed `Refusal` inside `rustls::Error::InvalidCertificate`, which
 //! the refusing side reads back from the rustls error or from `PeerError::refusal`.
 #![cfg(all(feature = "generate", feature = "tokio"))]

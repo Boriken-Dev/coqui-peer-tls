@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Server configurations built for one connection each: addresses from the host, session state
 //! shared from one base, and the refusal kept for a host that sees only the alert.
 #![cfg(feature = "generate")]

@@ -18,8 +18,8 @@ use crate::stream::{default_server_name, identity_of};
 /// ```no_run
 /// # fn demo(client: rustls::ClientConfig, server: rustls::ServerConfig) {
 /// let method = coqui_peer_tls::Tls::new()
-///     .with_client(std::sync::Arc::new(client))
-///     .with_server(std::sync::Arc::new(server));
+///     .client(std::sync::Arc::new(client))
+///     .server(std::sync::Arc::new(server));
 /// # let _ = method;
 /// # }
 /// ```
@@ -35,18 +35,32 @@ impl Tls {
         Self::default()
     }
 
-    /// This method able to dial with `config` (see [`client_config`](crate::client_config)).
+    /// This method able to dial with `config` (see [`ClientBuilder`](crate::ClientBuilder)).
     #[must_use]
-    pub fn with_client(mut self, config: Arc<ClientConfig>) -> Self {
+    pub fn client(mut self, config: Arc<ClientConfig>) -> Self {
         self.client = Some(config);
         self
     }
 
-    /// This method able to accept with `config` (see [`server_config`](crate::server_config)).
+    /// This method able to accept with `config` (see [`ServerBuilder`](crate::ServerBuilder)).
     #[must_use]
-    pub fn with_server(mut self, config: Arc<ServerConfig>) -> Self {
+    pub fn server(mut self, config: Arc<ServerConfig>) -> Self {
         self.server = Some(config);
         self
+    }
+
+    /// The old name of [`client`](Self::client).
+    #[deprecated(since = "0.0.0", note = "renamed to `client`")]
+    #[must_use]
+    pub fn with_client(self, config: Arc<ClientConfig>) -> Self {
+        self.client(config)
+    }
+
+    /// The old name of [`server`](Self::server).
+    #[deprecated(since = "0.0.0", note = "renamed to `server`")]
+    #[must_use]
+    pub fn with_server(self, config: Arc<ServerConfig>) -> Self {
+        self.server(config)
     }
 }
 
@@ -133,9 +147,16 @@ impl TlsHandshake {
     /// handshake without one refuses a connection such a rule would decide
     /// ([`Refusal::AddressUnknown`](crate::Refusal::AddressUnknown)).
     #[must_use]
-    pub fn with_local(mut self, local: SocketAddr) -> Self {
+    pub fn local(mut self, local: SocketAddr) -> Self {
         self.local = Some(local);
         self
+    }
+
+    /// The old name of [`local`](Self::local).
+    #[deprecated(since = "0.0.0", note = "renamed to `local`")]
+    #[must_use]
+    pub fn with_local(self, local: SocketAddr) -> Self {
+        self.local(local)
     }
 
     /// Finishes a completed handshake whose peer may have presented no certificate: the

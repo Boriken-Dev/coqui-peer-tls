@@ -1,4 +1,5 @@
 use alloc::sync::Arc;
+use core::fmt;
 use core::net::SocketAddr;
 
 use rustls::client::Resumption;
@@ -10,10 +11,12 @@ use rustls::server::{
 };
 use rustls::{ClientConfig, ServerConfig, SupportedProtocolVersion};
 
-use crate::connection::{Keeping, Slot};
+use crate::connection::{Client, Keeping, ServerConfigs, Slot};
 use crate::error::PeerError;
 use crate::identity::Identity;
 use crate::policy::Policy;
+#[cfg(feature = "guatiao")]
+use crate::settings::TlsSettings;
 use crate::trust::Trust;
 use coqui_peer::NonDefault;
 
@@ -35,240 +38,451 @@ pub struct Built<T> {
     pub non_defaults: Vec<NonDefault>,
 }
 
-/// A client configuration under the default policy (TLS 1.2 and 1.3) that presents `identity`
-/// and verifies the server by `trust`: pinned, by [`Roots`](crate::Roots) for the name
-/// dialled ([`dial_named`](crate::dial_named)), pinned or roots, or any certificate with key
-/// proof.
+/// How a server treats the client's certificate.
 ///
-/// `alpn` lists the application protocols offered, most preferred first. Session resumption
-/// is off: every connection verifies the server's certificate.
+/// A value the [`ServerBuilder`] takes, so no default hides the choice.
+#[derive(Clone)]
+#[non_exhaustive]
+pub enum ClientAuth {
+    /// Ask for no client certificate: the server proves itself, the client does not at the TLS
+    /// layer.
+    ///
+    /// **The application must authenticate the client inside the encrypted channel** (a key
+    /// proof, a token) before trusting it. A handshake with this configuration finishes with no
+    /// peer certificate: see
+    /// [`TlsHandshake::finish_unauthenticated`](crate::TlsHandshake::finish_unauthenticated).
+    None,
+    /// Require a client certificate this trust accepts.
+    Required(Trust),
+    /// Verify clients with a verifier of the host's own (one of this crate's wrapped, for
+    /// example).
+    ///
+    /// A verifier whose client authentication is optional
+    /// (`ClientCertVerifier::client_auth_mandatory` is false) admits a client without a
+    /// certificate; under an access control list such a client is decided by address alone, as
+    /// one that proves no identity, so a rule naming a fingerprint never admits it.
+    Verifier(Arc<dyn ClientCertVerifier>),
+}
+
+impl fmt::Debug for ClientAuth {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::None => formatter.write_str("None"),
+            Self::Required(trust) => formatter.debug_tuple("Required").field(trust).finish(),
+            Self::Verifier(_) => formatter.write_str("Verifier(..)"),
+        }
+    }
+}
+
+/// Builds a server configuration, or the configurations of a listener, that presents an
+/// identity: [`ServerBuilder::new`], the settings, then [`build`](Self::build).
+///
+/// Session resumption is off unless [`Policy::allow_resumption`] is set, which then keeps
+/// rustls's default session cache and TLS 1.3 tickets. A policy's access control list reads each
+/// connection's addresses from the scope this crate's accept helpers set
+/// ([`accept`](crate::accept), [`with_addresses`](crate::with_addresses)); a host whose
+/// connections reach rustls another way (quinn) takes [`configs`](Self::configs).
+#[derive(Debug, Clone)]
+#[must_use]
+pub struct ServerBuilder<'a> {
+    identity: &'a Identity,
+    client_auth: ClientAuth,
+    alpn: Vec<Vec<u8>>,
+    policy: Policy,
+}
+
+impl<'a> ServerBuilder<'a> {
+    /// A builder for a server that presents `identity` and treats client certificates as
+    /// `client_auth` says, with no ALPN and the default policy.
+    pub fn new(identity: &'a Identity, client_auth: ClientAuth) -> Self {
+        Self {
+            identity,
+            client_auth,
+            alpn: Vec::new(),
+            policy: Policy::default(),
+        }
+    }
+
+    /// The application protocols offered, most preferred first. Replaces any set before.
+    pub fn alpn<I>(mut self, protocols: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<[u8]>,
+    {
+        self.alpn = protocols
+            .into_iter()
+            .map(|protocol| protocol.as_ref().to_vec())
+            .collect();
+        self
+    }
+
+    /// The policy: versions, suites, groups, the extended master secret, resumption and the
+    /// access control list. Default [`Policy::default`].
+    pub fn policy(mut self, policy: Policy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// The ALPN list and the policy from `settings`, as a file or a form gave them.
+    #[cfg(feature = "guatiao")]
+    pub fn settings(mut self, settings: TlsSettings) -> Self {
+        self.alpn = settings.alpn_bytes();
+        self.policy = settings.policy;
+        self
+    }
+
+    /// Every setting of the policy looser than the default, as the built configuration
+    /// reports it.
+    pub fn non_defaults(&self) -> Vec<NonDefault> {
+        self.policy.non_defaults()
+    }
+
+    /// The configuration, shared by every connection it accepts.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Certificate`], [`PeerError::TrustPattern`], [`PeerError::CaFile`],
+    /// [`PeerError::Unsupported`] for trust only clients apply, [`PeerError::Policy`] or
+    /// [`PeerError::Tls`] when the configuration cannot be built.
+    pub fn build(self) -> Result<Built<ServerConfig>, PeerError> {
+        let non_defaults = self.policy.non_defaults();
+        let verifier = match &self.client_auth {
+            ClientAuth::None => None,
+            ClientAuth::Required(trust) => {
+                Some(Arc::new(trust.client_verifier(&self.policy, None)?)
+                    as Arc<dyn ClientCertVerifier>)
+            }
+            ClientAuth::Verifier(verifier) => Some(Arc::clone(verifier)),
+        };
+        let base = Base::new(self.identity, &self.alpn, &self.policy)?;
+        Ok(Built {
+            config: base.config(verifier, None, None)?,
+            non_defaults,
+        })
+    }
+
+    /// The configurations of a listener, one per connection: for a host such as quinn, whose
+    /// connections reach rustls without this crate's accept helpers. See [`ServerConfigs`].
+    ///
+    /// # Errors
+    ///
+    /// As [`build`](Self::build).
+    pub fn configs(self) -> Result<ServerConfigs, PeerError> {
+        let non_defaults = self.policy.non_defaults();
+        let client = match self.client_auth {
+            ClientAuth::None => Client::None,
+            ClientAuth::Required(trust) => {
+                Client::Trust(Arc::new(trust.client_verifier(&self.policy, None)?))
+            }
+            ClientAuth::Verifier(verifier) => Client::Verifier(verifier),
+        };
+        Ok(ServerConfigs::from_parts(
+            Base::new(self.identity, &self.alpn, &self.policy)?,
+            client,
+            non_defaults,
+        ))
+    }
+}
+
+/// Builds a client configuration: [`ClientBuilder::new`], the settings, then
+/// [`build`](Self::build).
+///
+/// The server is verified by the trust given to `new`: pinned, by [`Roots`](crate::Roots) for
+/// the name dialled ([`dial_named`](crate::dial_named)), pinned or roots, or any certificate with
+/// key proof; or by [`verifier`](Self::verifier). Session resumption is off unless
+/// [`Policy::allow_resumption`] is set, which then keeps rustls's default session cache.
+#[derive(Debug, Clone)]
+#[must_use]
+pub struct ClientBuilder<'a> {
+    trust: Trust,
+    verifier: Option<Arc<dyn ServerCertVerifier>>,
+    identity: Option<&'a Identity>,
+    alpn: Vec<Vec<u8>>,
+    policy: Policy,
+}
+
+impl<'a> ClientBuilder<'a> {
+    /// A builder for a client that verifies the server by `trust`, presents no certificate, offers
+    /// no ALPN and runs under the default policy.
+    pub fn new(trust: Trust) -> Self {
+        Self {
+            trust,
+            verifier: None,
+            identity: None,
+            alpn: Vec::new(),
+            policy: Policy::default(),
+        }
+    }
+
+    /// Presents `identity` and its intermediates as the client certificate. Without it this side
+    /// proves itself, if at all, inside the encrypted channel, and a server that requires a
+    /// client certificate refuses it.
+    pub fn identity(mut self, identity: &'a Identity) -> Self {
+        self.identity = Some(identity);
+        self
+    }
+
+    /// Verifies the server with `verifier`, a verifier of the host's own, instead of the trust
+    /// given to `new`, which is then not read.
+    pub fn verifier(mut self, verifier: Arc<dyn ServerCertVerifier>) -> Self {
+        self.verifier = Some(verifier);
+        self
+    }
+
+    /// The application protocols offered, most preferred first. Replaces any set before.
+    pub fn alpn<I>(mut self, protocols: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<[u8]>,
+    {
+        self.alpn = protocols
+            .into_iter()
+            .map(|protocol| protocol.as_ref().to_vec())
+            .collect();
+        self
+    }
+
+    /// The policy. Default [`Policy::default`].
+    pub fn policy(mut self, policy: Policy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// The ALPN list and the policy from `settings`, as a file or a form gave them.
+    #[cfg(feature = "guatiao")]
+    pub fn settings(mut self, settings: TlsSettings) -> Self {
+        self.alpn = settings.alpn_bytes();
+        self.policy = settings.policy;
+        self
+    }
+
+    /// Every setting of the policy looser than the default, as the built configuration
+    /// reports it.
+    pub fn non_defaults(&self) -> Vec<NonDefault> {
+        self.policy.non_defaults()
+    }
+
+    /// The configuration.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Unsupported`] for CA trust; [`PeerError::Policy`] when the policy asks for
+    /// something the ring provider or this build cannot do; [`PeerError::Io`] or
+    /// [`PeerError::Certificate`] when the roots cannot be loaded; [`PeerError::Certificate`] or
+    /// [`PeerError::Tls`] when the configuration cannot be built.
+    pub fn build(self) -> Result<Built<ClientConfig>, PeerError> {
+        let verifier: Arc<dyn ServerCertVerifier> = match self.verifier {
+            Some(verifier) => verifier,
+            None => self.trust.server_cert_verifier_with(&self.policy)?,
+        };
+        let selection = self.policy.selection()?;
+        let builder = ClientConfig::builder_with_provider(Arc::clone(&selection.provider))
+            .with_protocol_versions(&selection.versions)
+            .map_err(|_| PeerError::Tls)?
+            .dangerous()
+            .with_custom_certificate_verifier(verifier);
+        let mut config = match self.identity {
+            Some(identity) => builder
+                .with_client_auth_cert(identity.certificate_chain(), identity.private_key_der())
+                .map_err(|_| PeerError::Certificate)?,
+            None => builder.with_no_client_auth(),
+        };
+        config.alpn_protocols = self.alpn;
+        config.require_ems = self.policy.require_ems;
+        if !self.policy.allow_resumption {
+            config.resumption = Resumption::disabled();
+        }
+        crate::profiles::require_fips(&selection, config.fips())?;
+        Ok(Built {
+            config,
+            non_defaults: self.policy.non_defaults(),
+        })
+    }
+}
+
+/// A client configuration under the default policy that presents `identity` and verifies the
+/// server by `trust`.
 ///
 /// # Errors
 ///
-/// As [`client_config_with`].
+/// As [`ClientBuilder::build`].
+#[deprecated(since = "0.0.0", note = "use `ClientBuilder`")]
 pub fn client_config(
     identity: &Identity,
     trust: &Trust,
     alpn: &[&[u8]],
 ) -> Result<ClientConfig, PeerError> {
-    client_config_with(identity, trust, alpn, &Policy::default()).map(|built| built.config)
+    ClientBuilder::new(trust.clone())
+        .identity(identity)
+        .alpn(alpn)
+        .build()
+        .map(|built| built.config)
 }
 
-/// A client configuration under `policy`. Session resumption is off unless
-/// [`Policy::allow_resumption`] is set, which then keeps rustls's default session cache.
+/// A client configuration under `policy`.
 ///
 /// # Errors
 ///
-/// [`PeerError::Unsupported`] for CA trust; [`PeerError::Policy`] when the policy asks for
-/// something the ring provider or this build cannot do; [`PeerError::Io`] or
-/// [`PeerError::Certificate`] when the roots cannot be loaded; [`PeerError::Certificate`] or
-/// [`PeerError::Tls`] when the configuration cannot be built.
+/// As [`ClientBuilder::build`].
+#[deprecated(since = "0.0.0", note = "use `ClientBuilder`")]
 pub fn client_config_with(
     identity: &Identity,
     trust: &Trust,
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ClientConfig>, PeerError> {
-    build_client(Some(identity), trust, alpn, policy)
+    ClientBuilder::new(trust.clone())
+        .identity(identity)
+        .alpn(alpn)
+        .policy(policy.clone())
+        .build()
 }
 
-/// A client configuration under the default policy that presents no certificate, for a
-/// server built with [`server_config_without_client_auth`]. The server is verified by
-/// `trust` exactly as in [`client_config`]; this side proves itself, if at all, inside the
-/// encrypted channel. A server that requires a client certificate refuses it.
+/// A client configuration under the default policy that presents no certificate.
 ///
 /// # Errors
 ///
-/// As [`client_config_without_identity_with`].
+/// As [`ClientBuilder::build`].
+#[deprecated(since = "0.0.0", note = "use `ClientBuilder`")]
 pub fn client_config_without_identity(
     trust: &Trust,
     alpn: &[&[u8]],
 ) -> Result<ClientConfig, PeerError> {
-    client_config_without_identity_with(trust, alpn, &Policy::default()).map(|built| built.config)
+    ClientBuilder::new(trust.clone())
+        .alpn(alpn)
+        .build()
+        .map(|built| built.config)
 }
 
-/// [`client_config_without_identity`] under `policy`, with the same handling of versions,
-/// suites, groups and resumption as [`client_config_with`].
+/// A client configuration under `policy` that presents no certificate.
 ///
 /// # Errors
 ///
-/// [`PeerError::Unsupported`] for CA trust; [`PeerError::Policy`] when the policy asks for
-/// something the ring provider or this build cannot do; [`PeerError::Io`] or
-/// [`PeerError::Certificate`] when the roots cannot be loaded; [`PeerError::Tls`] when the
-/// configuration cannot be built.
+/// As [`ClientBuilder::build`].
+#[deprecated(since = "0.0.0", note = "use `ClientBuilder`")]
 pub fn client_config_without_identity_with(
     trust: &Trust,
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ClientConfig>, PeerError> {
-    build_client(None, trust, alpn, policy)
+    ClientBuilder::new(trust.clone())
+        .alpn(alpn)
+        .policy(policy.clone())
+        .build()
 }
 
-/// A client configuration under `policy` that verifies the server with `verifier`, a verifier
-/// of the host's own (one of this crate's wrapped, for example). It presents `identity` and its
-/// intermediates, or no certificate for `None`, and handles versions, suites, groups, the
-/// extended master secret, ALPN and resumption as [`client_config_with`] does.
+/// A client configuration under `policy` that verifies the server with `verifier`, presenting
+/// `identity` or, for `None`, no certificate.
 ///
 /// # Errors
 ///
-/// [`PeerError::Policy`] when the policy asks for something the ring provider or this build
-/// cannot do; [`PeerError::Certificate`] or [`PeerError::Tls`] when the configuration cannot be
-/// built.
+/// As [`ClientBuilder::build`].
+#[deprecated(since = "0.0.0", note = "use `ClientBuilder::verifier`")]
 pub fn client_config_with_verifier(
     identity: Option<&Identity>,
     verifier: Arc<dyn ServerCertVerifier>,
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ClientConfig>, PeerError> {
-    build_client_with(identity, verifier, alpn, policy)
-}
-
-fn build_client(
-    identity: Option<&Identity>,
-    trust: &Trust,
-    alpn: &[&[u8]],
-    policy: &Policy,
-) -> Result<Built<ClientConfig>, PeerError> {
-    let verifier = trust.server_cert_verifier_with(policy)?;
-    build_client_with(identity, verifier, alpn, policy)
-}
-
-fn build_client_with(
-    identity: Option<&Identity>,
-    verifier: Arc<dyn ServerCertVerifier>,
-    alpn: &[&[u8]],
-    policy: &Policy,
-) -> Result<Built<ClientConfig>, PeerError> {
-    let selection = policy.selection()?;
-    let builder = ClientConfig::builder_with_provider(Arc::clone(&selection.provider))
-        .with_protocol_versions(&selection.versions)
-        .map_err(|_| PeerError::Tls)?
-        .dangerous()
-        .with_custom_certificate_verifier(verifier);
-    let mut config = match identity {
-        Some(identity) => builder
-            .with_client_auth_cert(identity.certificate_chain(), identity.private_key_der())
-            .map_err(|_| PeerError::Certificate)?,
-        None => builder.with_no_client_auth(),
-    };
-    config.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
-    config.require_ems = policy.require_ems;
-    if !policy.allow_resumption {
-        config.resumption = Resumption::disabled();
+    let mut builder = ClientBuilder::new(Trust::AnyWithKeyProof)
+        .verifier(verifier)
+        .alpn(alpn)
+        .policy(policy.clone());
+    if let Some(identity) = identity {
+        builder = builder.identity(identity);
     }
-    crate::profiles::require_fips(&selection, config.fips())?;
-    Ok(Built {
-        config,
-        non_defaults: policy.non_defaults(),
-    })
+    builder.build()
 }
 
 /// A server configuration under the default policy that presents `identity` and requires a
-/// client certificate trusted by `trust`. Session resumption is off: every connection
-/// verifies the client's certificate.
+/// client certificate trusted by `trust`.
 ///
 /// # Errors
 ///
-/// As [`server_config_with`].
+/// As [`ServerBuilder::build`].
+#[deprecated(since = "0.0.0", note = "use `ServerBuilder`")]
 pub fn server_config(
     identity: &Identity,
     trust: &Trust,
     alpn: &[&[u8]],
 ) -> Result<ServerConfig, PeerError> {
-    server_config_with(identity, trust, alpn, &Policy::default()).map(|built| built.config)
+    ServerBuilder::new(identity, ClientAuth::Required(trust.clone()))
+        .alpn(alpn)
+        .build()
+        .map(|built| built.config)
 }
 
-/// A server configuration under `policy`, shared by every connection it accepts. Session
-/// resumption is off unless [`Policy::allow_resumption`] is set, which then keeps rustls's
-/// default session cache and TLS 1.3 tickets.
-///
-/// A policy's access control list reads each connection's addresses from the scope this
-/// crate's accept helpers set ([`accept`](crate::accept), [`with_addresses`](crate::with_addresses)).
-/// A host whose connections reach rustls another way (quinn) builds a configuration per
-/// connection with [`ServerConfigs`](crate::ServerConfigs).
+/// A server configuration under `policy`, shared by every connection it accepts.
 ///
 /// # Errors
 ///
-/// [`PeerError::Certificate`], [`PeerError::TrustPattern`], [`PeerError::CaFile`],
-/// [`PeerError::Policy`] or [`PeerError::Tls`] when the configuration cannot be built.
+/// As [`ServerBuilder::build`].
+#[deprecated(since = "0.0.0", note = "use `ServerBuilder`")]
 pub fn server_config_with(
     identity: &Identity,
     trust: &Trust,
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    let verifier: Arc<dyn ClientCertVerifier> = Arc::new(trust.client_verifier(policy, None)?);
-    let base = Base::new(identity, alpn, policy)?;
-    Ok(Built {
-        config: base.config(Some(verifier), None, None)?,
-        non_defaults: policy.non_defaults(),
-    })
+    ServerBuilder::new(identity, ClientAuth::Required(trust.clone()))
+        .alpn(alpn)
+        .policy(policy.clone())
+        .build()
 }
 
-/// A server configuration under the default policy that presents `identity` and asks for no
-/// client certificate: the server proves itself, the client does not at the TLS layer.
-///
-/// **The application must authenticate the client inside the encrypted channel** (a key
-/// proof, a token) before trusting it. A handshake with this configuration finishes with no
-/// peer certificate: see [`TlsHandshake::finish_unauthenticated`](crate::TlsHandshake::finish_unauthenticated).
-/// Session resumption is off.
+/// A server configuration under the default policy that asks for no client certificate; see
+/// [`ClientAuth::None`] for what the application must do.
 ///
 /// # Errors
 ///
-/// As [`server_config_without_client_auth_with`].
+/// As [`ServerBuilder::build`].
+#[deprecated(since = "0.0.0", note = "use `ServerBuilder` with `ClientAuth::None`")]
 pub fn server_config_without_client_auth(
     identity: &Identity,
     alpn: &[&[u8]],
 ) -> Result<ServerConfig, PeerError> {
-    server_config_without_client_auth_with(identity, alpn, &Policy::default())
+    ServerBuilder::new(identity, ClientAuth::None)
+        .alpn(alpn)
+        .build()
         .map(|built| built.config)
 }
 
-/// [`server_config_without_client_auth`] under `policy`, with the same handling of versions,
-/// suites, groups, ALPN and resumption as [`server_config_with`].
+/// [`server_config_without_client_auth`] under `policy`.
 ///
 /// # Errors
 ///
-/// [`PeerError::Certificate`], [`PeerError::Policy`] or [`PeerError::Tls`] when the
-/// configuration cannot be built.
+/// As [`ServerBuilder::build`].
+#[deprecated(since = "0.0.0", note = "use `ServerBuilder` with `ClientAuth::None`")]
 pub fn server_config_without_client_auth_with(
     identity: &Identity,
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    let base = Base::new(identity, alpn, policy)?;
-    Ok(Built {
-        config: base.config(None, None, None)?,
-        non_defaults: policy.non_defaults(),
-    })
+    ServerBuilder::new(identity, ClientAuth::None)
+        .alpn(alpn)
+        .policy(policy.clone())
+        .build()
 }
 
-/// A server configuration under `policy` that verifies clients with `verifier`, a verifier of
-/// the host's own (one of this crate's wrapped, for example). It presents `identity` and its
-/// intermediates, and handles versions, suites, groups, the extended master secret, ALPN,
-/// resumption and the access control list as [`server_config_with`] does.
-///
-/// A verifier whose client authentication is optional
-/// (`ClientCertVerifier::client_auth_mandatory` is false) admits a client without a
-/// certificate; under an access control list such a client is decided by address alone, as
-/// one that proves no identity, so a rule naming a fingerprint never admits it.
+/// A server configuration under `policy` that verifies clients with `verifier`.
 ///
 /// # Errors
 ///
-/// [`PeerError::Policy`] when the policy asks for something the ring provider or this build
-/// cannot do; [`PeerError::Certificate`] or [`PeerError::Tls`] when the configuration cannot be
-/// built.
+/// As [`ServerBuilder::build`].
+#[deprecated(
+    since = "0.0.0",
+    note = "use `ServerBuilder` with `ClientAuth::Verifier`"
+)]
 pub fn server_config_with_verifier(
     identity: &Identity,
     verifier: Arc<dyn ClientCertVerifier>,
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    let base = Base::new(identity, alpn, policy)?;
-    Ok(Built {
-        config: base.config(Some(verifier), None, None)?,
-        non_defaults: policy.non_defaults(),
-    })
+    ServerBuilder::new(identity, ClientAuth::Verifier(verifier))
+        .alpn(alpn)
+        .policy(policy.clone())
+        .build()
 }
 
 /// What every server configuration under one identity, ALPN list and policy shares: built and
@@ -290,7 +504,7 @@ pub(crate) struct Base {
 impl Base {
     pub(crate) fn new(
         identity: &Identity,
-        alpn: &[&[u8]],
+        alpn: &[Vec<u8>],
         policy: &Policy,
     ) -> Result<Self, PeerError> {
         let selection = policy.selection()?;
@@ -315,7 +529,7 @@ impl Base {
             versions,
             provider,
             resolver: template.cert_resolver,
-            alpn: alpn.iter().map(|protocol| protocol.to_vec()).collect(),
+            alpn: alpn.to_vec(),
             require_ems: policy.require_ems,
             resumption: policy.allow_resumption,
             session_storage,

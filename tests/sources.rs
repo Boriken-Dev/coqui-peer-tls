@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Waiting entries carry the address the handshake came from, and the caps are per source.
 #![cfg(all(feature = "generate", feature = "tokio"))]
 

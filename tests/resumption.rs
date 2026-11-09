@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A peer that lost trust is refused at its next connection: TLS session resumption, which
 //! would skip the certificate check, is off unless the policy allows it.
 #![cfg(all(feature = "generate", feature = "tokio"))]

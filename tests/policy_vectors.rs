@@ -1,15 +1,21 @@
-//! The serialized form of `Policy` (format version 1) pinned by committed files in
-//! `tests/vectors/policy/`, in TOML and in JSON, for implementations in other languages.
+//! The serialized form of `Policy` pinned by committed files in `tests/vectors/policy/`, in
+//! TOML and in JSON, for implementations in other languages.
 //!
 //! Regenerating them is a format change:
 //! `cargo test -p coqui-peer-tls --all-features --test policy_vectors -- --ignored regenerate`
-#![cfg(all(feature = "serde", feature = "acl"))]
+#![cfg(all(feature = "guatiao", feature = "acl"))]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use coqui_peer_tls::acl::{Acl, Action, IpNet, Rule};
 use coqui_peer_tls::{CipherProfile, Crypto, Policy};
+use guatiao_serde::Presentation;
+use guatiao_serde::text::{json, toml};
+
+fn plain() -> Presentation {
+    Presentation::new()
+}
 
 fn directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/policy")
@@ -49,13 +55,17 @@ fn policies() -> Vec<(&'static str, Policy)> {
 }
 
 fn toml_of(policy: &Policy) -> String {
-    toml::to_string(policy).unwrap()
+    toml::to_string_of(policy, plain()).unwrap()
 }
 
 fn json_of(policy: &Policy) -> String {
-    let mut text = serde_json::to_string_pretty(policy).unwrap();
+    let mut text = json::to_string_pretty_of(policy, plain()).unwrap();
     text.push('\n');
     text
+}
+
+fn from_toml(text: &str) -> Result<Policy, guatiao_serde::text::Error> {
+    toml::from_str_as(text, plain())
 }
 
 #[test]
@@ -63,13 +73,9 @@ fn each_vector_reads_back_to_its_policy_in_both_encodings_byte_for_byte() {
     for (name, policy) in policies() {
         let toml_text = fs::read_to_string(directory().join(format!("{name}.toml"))).unwrap();
         let json_text = fs::read_to_string(directory().join(format!("{name}.json"))).unwrap();
+        assert_eq!(from_toml(&toml_text).unwrap(), policy, "{name}.toml");
         assert_eq!(
-            toml::from_str::<Policy>(&toml_text).unwrap(),
-            policy,
-            "{name}.toml"
-        );
-        assert_eq!(
-            serde_json::from_str::<Policy>(&json_text).unwrap(),
+            json::from_str_as::<Policy>(&json_text, plain()).unwrap(),
             policy,
             "{name}.json"
         );
@@ -87,30 +93,40 @@ fn each_vector_reads_back_to_its_policy_in_both_encodings_byte_for_byte() {
 }
 
 #[test]
-fn a_document_may_name_a_profile_and_override_fields_and_nothing_else() {
-    let policy: Policy = toml::from_str(
-        "profile = \"intermediate\"\ncheck_validity = false\npin_digests = [\"sha256\"]\n\
-         allow_resumption = true\n",
+fn a_document_names_what_differs_from_the_intermediate_preset_and_nothing_else() {
+    let policy = from_toml(
+        "name = \"mine\"\ncheck_validity = false\npin_digests = [\"sha256\"]\nallow_resumption = true\n",
     )
     .unwrap();
-    assert_eq!(policy.name, "intermediate");
+    assert_eq!(policy.name, "mine");
     assert!(!policy.check_validity);
     assert!(policy.allow_resumption);
     assert_eq!(policy.tls_versions.len(), 2);
     assert_eq!(policy.pin_digests.len(), 1);
-    assert_eq!(toml::from_str::<Policy>("").unwrap(), Policy::default());
+    assert_eq!(from_toml("").unwrap(), Policy::default());
     for bad in [
-        "policy_version = 2",
+        "policy_version = 1",
+        "profile = \"modern\"",
         "surprise = 1",
-        "profile = \"lax\"",
-        "profile = \"strict\"",
-        "profile = \"compatible\"",
         "tls_versions = [\"1.1\"]",
         "pin_digests = [\"md5\"]",
+        "cipher_profiles = [\"lax\"]",
+        "waiting = { surprise = 1 }",
         "[acl]\ndefault = \"maybe\"",
     ] {
-        assert!(toml::from_str::<Policy>(bad).is_err(), "{bad}");
+        assert!(from_toml(bad).is_err(), "{bad}");
     }
+}
+
+#[test]
+fn a_flat_waiting_key_is_refused_loudly() {
+    assert!(from_toml("waiting_total = 5").is_err());
+    let policy = from_toml("[waiting]\ntotal = 5\n").unwrap();
+    assert_eq!(policy.waiting.total, 5);
+    assert_eq!(
+        policy.waiting.per_source,
+        Policy::default().waiting.per_source
+    );
 }
 
 #[test]
@@ -146,14 +162,35 @@ fn a_consumer_reads_a_document_over_its_own_profile() {
     let mut mine = Policy::intermediate();
     mine.name = "mine".to_owned();
     mine.waiting.total = 50;
-    let policy = Policy::deserialize_over(
-        mine,
-        toml::Deserializer::parse("check_validity = false").unwrap(),
+    let document = guatiao_serde::text::toml::from_str(
+        "check_validity = false",
+        guatiao::Alloc::rust(),
+        plain(),
     )
     .unwrap();
+    let policy = Policy::from_value_over(&mine, &document).unwrap();
     assert_eq!(policy.name, "mine");
     assert_eq!(policy.waiting.total, 50);
     assert!(!policy.check_validity);
     assert_eq!(policy.tls_versions.len(), 2);
     assert!(Policy::preset("mine").is_err());
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn the_serde_impls_forward_to_the_same_form() {
+    let (_, policy) = policies()
+        .into_iter()
+        .find(|(n, _)| *n == "legacy")
+        .unwrap();
+    let text = ::toml::to_string(&policy).unwrap();
+    assert_eq!(text, toml_of(&policy));
+    assert_eq!(::toml::from_str::<Policy>(&text).unwrap(), policy);
+    let over = Policy::deserialize_over(
+        Policy::modern(),
+        ::toml::Deserializer::parse("check_validity = false").unwrap(),
+    )
+    .unwrap();
+    assert!(!over.check_validity);
+    assert_eq!(over.tls_versions, Policy::modern().tls_versions);
 }

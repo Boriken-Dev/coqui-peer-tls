@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A client verifying a server by the web PKI: a chain to the roots, validity dates and the
 //! server name dialled. Every certificate comes from a throwaway test CA.
 

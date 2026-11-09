@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A policy's access control list, applied by every server configuration built under it: by
 //! address at the `ClientHello`, by fingerprint before the trust store is consulted.
 #![cfg(all(feature = "acl", feature = "generate"))]

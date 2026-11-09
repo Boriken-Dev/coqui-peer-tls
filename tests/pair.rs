@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Pairing over TLS on loopback TCP: invitations, PINs, the device flow, a relaying attacker,
 //! the pairing ALPN kept apart from the app's, and the device's own TLS policy. Blocking and
 //! tokio. Run with `--all-features`.

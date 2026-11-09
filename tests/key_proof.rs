@@ -1,3 +1,4 @@
+#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A waiting entry is recorded only for a client that proved it holds the certificate's key.
 #![cfg(all(feature = "generate", feature = "ca"))]
 
