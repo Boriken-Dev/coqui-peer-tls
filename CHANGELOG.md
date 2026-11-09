@@ -7,8 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Builders.** `ServerBuilder::new(&identity, ClientAuth)` and `ClientBuilder::new(trust)` build
+  a configuration by setting name (`alpn`, `policy`, `identity`, `verifier`, `settings`), then
+  `build()`; `ServerBuilder::configs()` gives the `ServerConfigs` of a listener. The choice the old
+  function names encoded is a value: `ClientAuth::{None, Required(Trust), Verifier(..)}`.
+  `PairConfig::builder()` and `Identity::builder()` (`not_before`, `not_after`, `valid_for`) the
+  same way.
+- Feature `guatiao`: `TlsSettings { alpn, policy }`, `Policy` and `PairConfig` derive guatiao's
+  `ToValue`, `FromValue` and `Schema`, so TOML, JSON and YAML read into them through
+  `guatiao-serde` and the schema carries the defaults; builders take `settings(TlsSettings)`.
+  `Policy::from_value_over` reads a document over a base policy.
+
+### Deprecated
+
+- Kept one release as one-line wrappers over the builders: `server_config`, `server_config_with`,
+  `server_config_with_verifier`, `server_config_without_client_auth`,
+  `server_config_without_client_auth_with`, `client_config`, `client_config_with`,
+  `client_config_with_verifier`, `client_config_without_identity`,
+  `client_config_without_identity_with`, `ServerConfigs::{new, with_verifier,
+  without_client_auth}`, `Identity::{generate_valid_for, generate_with}`, `Tls::{with_client,
+  with_server}` (now `client`, `server`), `TlsHandshake::with_local` (now `local`) and
+  `POLICY_VERSION`.
+
 ### Changed
 
+- **Breaking: the text form of `Policy` is the guatiao form.** The `serde` feature now forwards to it
+  (it implies `guatiao`). The keys `policy_version` and `profile` are gone (a preset is a function,
+  or a document that writes its values; `name` replaces `profile` as free text), and the flat
+  `waiting_per_source`, `waiting_total` and `waiting_rerecord_secs` are the table `waiting`
+  (`per_source`, `total`, `rerecord_secs`). An old key is an unknown key and is refused. The
+  vectors in `tests/vectors/policy/` are regenerated.
 - **Breaking: a weakened setting is a non-default setting.** `Policy::weakened` and `weakened_against` are
   `non_defaults` and `non_defaults_against`, `ServerConfigs::weakened` is `non_defaults`, and the public field
   `Built::weakened` is `Built::non_defaults` (no alias is possible for a field). The entries are coqui-peer's

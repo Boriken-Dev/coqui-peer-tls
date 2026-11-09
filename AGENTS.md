@@ -7,12 +7,13 @@ package and is self-contained. Development documentation lives with the source a
 
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
-| `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
+| `generate` | `rcgen`, `time` | `Identity::generate`, `Identity::builder`, `IdentityBuilder`, `open_or_create` | off |
 | `fields` | `x509-parser` | `CertificateFields`, `Name`, `San` | off |
 | `ca` | `fields`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio` (`net`, `io-util`, `time`), `tokio-rustls`, `coqui-peer/tokio` | module `asynch` | off |
 | `pin` | `coqui-peer/pin` | PIN pairing (`Pairing::pin`) | off |
-| `serde` | `serde`, `coqui-peer/serde`, `coqui-net-acl/serde` | the text form of `Policy`, `PeerId` as text; the consumer picks the format | off |
+| `guatiao` | `guatiao` (`derive`), `guatiao-serde`, `coqui-net-acl/serde` | `TlsSettings`, `Policy`, `PairConfig` as guatiao values with a schema; read and written as TOML, JSON or YAML by `guatiao_serde::text` | off |
+| `serde` | `guatiao`, `serde`, `coqui-peer/serde` | those types as serde types over the same form, `Policy::deserialize_over`, `PeerId` as text | off |
 | `acl` | `coqui-net-acl` | `Policy::acl` and its enforcement, `coqui_peer_tls::acl` | off |
 | `platform-roots` | `rustls-platform-verifier` | `Roots::platform` | off |
 | `aws-lc` | rustls `aws_lc_rs` (AWS-LC, built from C) | `Crypto::AwsLc`: ML-KEM groups, ML-DSA, `cnsa-2.0` | off |
@@ -67,9 +68,17 @@ impl Identity {
     // feature generate: self-signed ECDSA P-256, CN "coqui-peer", DNS SAN SERVER_NAME,
     // subjectKeyIdentifier, basicConstraints CA:FALSE
     pub fn generate() -> Result<Identity, PeerError>;                 // rcgen's default validity (decades)
-    pub fn generate_valid_for(validity: Duration) -> Result<Identity, PeerError>;           // from now
-    pub fn generate_with(not_before: SystemTime, not_after: SystemTime) -> Result<Identity, PeerError>;
+    pub fn builder() -> IdentityBuilder;                               // a validity window of your own
     pub fn open_or_create(path: &Path) -> Result<Identity, PeerError>;
+    // deprecated one release: generate_valid_for(d) = builder().valid_for(d).build(),
+    //   generate_with(a, b) = builder().not_before(a).not_after(b).build()
+}
+#[must_use] pub struct IdentityBuilder;   // Clone, Debug, Default
+impl IdentityBuilder {
+    pub fn not_before(self, SystemTime) -> Self;     // default: rcgen's
+    pub fn not_after(self, SystemTime) -> Self;      // not with valid_for
+    pub fn valid_for(self, Duration) -> Self;        // from not_before, from now when unset
+    pub fn build(self) -> Result<Identity, PeerError>;
 }
 pub struct PeerIdentity { pub fingerprint: PeerId, pub certificate: Vec<u8> }   // DER
 ```
@@ -81,8 +90,9 @@ pub struct PeerIdentity { pub fingerprint: PeerId, pub certificate: Vec<u8> }   
   unless its policy sets `allow_chain_when_pinned`; `AnyWithKeyProof` takes it. `from_pem`
   refuses a chain; `read` and `open_or_create` read a file holding one (leaf first), so a
   chained identity written with `write_new` reads back as it was.
-- **Short-lived identities.** `generate_valid_for(d)` is valid from now to now + `d`;
-  `generate_with` takes both ends. Times are truncated to whole seconds; a window under one
+- **Short-lived identities.** `Identity::builder().valid_for(d)` is valid from now to now + `d`
+  (from `not_before` when set); `.not_before(a).not_after(b)` names both ends. `valid_for` with
+  `not_after` is `PeerError::Certificate`. Times are truncated to whole seconds; a window under one
   second, an end before the start, or a time before 1970 is `PeerError::Certificate`. Any
   positive length is accepted. WebTransport's `serverCertificateHashes` accepts only a
   certificate whose whole validity period is at most 14 days: pass at most
@@ -143,7 +153,7 @@ prove its key. Names are not checked on the pinned path; roots always check them
   rustls's own too; any other chain failure (unknown issuer, bad signature, a leaf not for
   server authentication, a platform's own reason) is `Refusal::NotTrusted`.
 - A bundle (and a `CaPolicy::ca_file`) is read when the verifier is built
-  (`server_cert_verifier*`, `client_config*`; `client_cert_verifier*`, `server_config*`):
+  (`server_cert_verifier*`, `ClientBuilder::build`; `client_cert_verifier*`, `ServerBuilder::build`):
   every failure is `PeerError::CaFile { path, certificate, read }` naming the file (`None` for
   `bundle_pem`), and the certificate that is malformed or cannot be a trust anchor by its
   position from 0, or `read` with the I/O error when the file cannot be read; neither when it
@@ -270,11 +280,12 @@ impl Policy {
     pub fn crypto_provider(&self) -> Result<Arc<CryptoProvider>, PeerError>;
     pub fn supported_cipher_suites(&self) -> Result<Vec<String>, PeerError>;   // of the provider `crypto` selects
     pub fn supported_kx_groups(&self) -> Result<Vec<String>, PeerError>;
+    pub fn from_value_over(base: &Policy, document: &guatiao::Value) -> Result<Policy, guatiao::MapError>;  // feature guatiao
     pub fn deserialize_over<'de, D: Deserializer<'de>>(base: Policy, d: D) -> Result<Policy, D::Error>;  // feature serde
 }
 pub use coqui_peer::NonDefault;    // { setting, value, default }, NonDefault::new; setting: a field; default = the baseline's value
 pub use coqui_peer::Weakening;   // deprecated alias of NonDefault for one release; its field `strict` is now `default`
-pub const POLICY_VERSION: u32 = 1;
+#[deprecated] pub const POLICY_VERSION: u32 = 1;   // the text form no longer has a version key
 impl TlsVersion { pub const fn as_str(self) -> &'static str; }   // "1.2", "1.3"; also Display; FromStr refuses others
 ```
 
@@ -359,33 +370,41 @@ handshake signatures). Profiles and the provider are choices, not non-default se
   ML-DSA-87 one (with its ML-DSA-87 CA chain) for `cnsa-2.0`, and a validated deployment brings
   its own. `Identity::from_pem` loads a key ring cannot (ML-DSA) when `aws-lc` is on.
 
-### Text form, version 1 (feature `serde`)
+### Settings as data (feature `guatiao`)
 
-Build a `Policy` in code (constructors and public fields); the text form is optional. The crate
-parses no format itself: with `serde` the consumer reads it with its own `toml` or `serde_json`.
+Build a `Policy` in code (constructors and public fields), or read it. `TlsSettings`, `Policy`
+and `PairConfig` derive guatiao's `ToValue`, `FromValue` and `Schema`: `T::schema()` is the
+description, with each field's `default`, and `guatiao_serde::text::{toml, json, yaml}`
+`from_str_as::<T>` / `to_string_of` read and write the text. Every key is optional and takes the
+intermediate preset's value; an unknown key is an error.
 
-TOML or JSON object. Keys: `policy_version` (must be 1 when present), `profile` (`modern`, `intermediate` or `legacy`, the built-in
-preset name to start from; unknown names are errors; free text when read with
-`deserialize_over`), `tls_versions` (`"1.2"`, `"1.3"`), `cipher_suites`, `kx_groups`,
-`cipher_profiles` (the profiles' text names; an unknown one is an error listing the known),
-`crypto` (`"ring"`, `"aws-lc"`),
-`pin_digests` (`"sha256"`, `"sha384"`, `"sha512"`, `"sha1"`), `check_validity`,
-`allow_chain_when_pinned`, `allow_resumption`, `require_ems`, `waiting_per_source`,
-`waiting_total`, `waiting_rerecord_secs` (the fields of `waiting`, the last in whole seconds), and
-`acl` (see `coqui-net-acl`). Unknown keys are errors; absent keys keep the preset. Writing
-always names every field. `tests/vectors/policy/{modern,intermediate,legacy,acl,profiles}.{toml,json}`
-are byte-exact.
+```rust
+#[non_exhaustive] pub struct TlsSettings { pub alpn: Vec<String>, pub policy: Policy }   // Default; new(alpn, policy)
+```
+
+`Policy` keys: `name` (informational), `tls_versions` (`"1.2"`, `"1.3"`), `cipher_suites`,
+`kx_groups`, `cipher_profiles` (the profiles' text names; an unknown one is an error listing the
+known), `crypto` (`"ring"`, `"aws-lc"`), `pin_digests` (`"sha256"`, `"sha384"`, `"sha512"`,
+`"sha1"`), `check_validity`, `allow_chain_when_pinned`, `allow_resumption`, `require_ems`,
+`waiting` (a table: `per_source`, `total`, `rerecord_secs`) and `acl` (see `coqui-net-acl`).
+`PairConfig` keys: `policy`, `alpn` (text), `timeout` (seconds, or `[secs, nanos]`).
+`tests/vectors/policy/{modern,intermediate,legacy,acl,profiles}.{toml,json}` are byte-exact.
+
+The `policy_version`, `profile` and flat `waiting_*` keys of the earlier text form are unknown keys
+now and refused: a preset is a function (`Policy::modern()`), or a document that writes its
+values; a consumer with its own default profile reads over it with `from_value_over`.
+With `serde`, `Serialize` / `Deserialize` for these types forward to the same form.
 
 ## Access control (`Policy::acl`, feature `acl`)
 
 Every server configuration built under a policy with `acl: Some(..)` applies it:
-`server_config(_with)`, `server_config_with_verifier`, `server_config_without_client_auth_with`,
+`ServerBuilder::build`, `ServerBuilder::configs`,
 `ServerConfigs::for_connection` and `pair_server_config`.
 
 - **By address, at the `ClientHello`**: the certificate resolver is wrapped and answers only an
   admitted connection. When every client must present a certificate, `Acl::decide` (a rule
   naming a fingerprint defers to the certificate); otherwise `Acl::decide_anonymous`: server TLS
-  (`server_config_without_client_auth_with`), and a host verifier whose
+  (`ClientAuth::None`), and a host verifier whose
   `client_auth_mandatory()` is false, since its client may send no certificate and the
   fingerprint check would never run. So under optional client authentication a rule naming a
   fingerprint never admits a client. A denial is `Refusal::AddressDenied` and no certificate is
@@ -400,7 +419,7 @@ Every server configuration built under a policy with `acl: Some(..)` applies it:
 - **Addresses.** A configuration shared by connections reads them from the scope the accept
   helpers set: `accept` takes both from a `PeerAddr` (`TcpStream`, tokio's too), `accept_from`
   the source only, `accept_at` and `asynch::accept_at` both, `TlsHandshake::server(.., source)`
-  the source and `.with_local(local)` the local address, `with_addresses` both for a host
+  the source and `.local(local)` the local address, `with_addresses` both for a host
   driving rustls itself. Without a source, or without a local address when a rule names a
   destination or port, the connection is refused (`Refusal::AddressUnknown`); a missing local
   address is fine when no rule reads it. A configuration for one connection
@@ -417,7 +436,7 @@ pub fn with_addresses<R>(source: Option<SocketAddr>, local: Option<SocketAddr>, 
 pub trait PeerAddr { fn peer_addr(&self) -> Option<SocketAddr>; fn local_addr(&self) -> Option<SocketAddr> { None } }
 pub fn accept_at<S: Read + Write>(Arc<ServerConfig>, S, source: SocketAddr, local: SocketAddr) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;
 // feature tokio: asynch::accept_at(Arc<ServerConfig>, S, SocketAddr, SocketAddr), async
-impl TlsHandshake { pub fn with_local(self, local: SocketAddr) -> TlsHandshake; }
+impl TlsHandshake { pub fn local(self, local: SocketAddr) -> TlsHandshake; }   // with_local: deprecated one release
 impl Trust { pub fn client_cert_verifier_for(&self, &Policy, source: SocketAddr, local: SocketAddr) -> Result<Arc<dyn ClientCertVerifier>, PeerError>; }
 impl Policy {   // feature acl
     pub fn admits_address(&self, source: SocketAddr, local: SocketAddr) -> Result<(), Refusal>;
@@ -434,13 +453,11 @@ do. `client_cert_verifier_with` has no addresses, so it refuses a policy with an
 ### Configurations per connection (`coqui_peer_tls::{ServerConfigs, ConnectionConfig}`)
 
 ```rust
-pub struct ServerConfigs;   // Clone (shares the session state), Debug
+pub struct ServerConfigs;   // Clone (shares the session state), Debug; made by ServerBuilder::configs
 impl ServerConfigs {
-    pub fn new(&Identity, &Trust, alpn: &[&[u8]], &Policy) -> Result<ServerConfigs, PeerError>;
-    pub fn with_verifier(&Identity, Arc<dyn ClientCertVerifier>, alpn: &[&[u8]], &Policy) -> Result<ServerConfigs, PeerError>;
-    pub fn without_client_auth(&Identity, alpn: &[&[u8]], &Policy) -> Result<ServerConfigs, PeerError>;
     pub fn non_defaults(&self) -> &[NonDefault];   // weakened(): a deprecated alias for one release
     pub fn for_connection(&self, source: SocketAddr, local: SocketAddr) -> Result<ConnectionConfig, PeerError>;
+    // deprecated one release: new, with_verifier, without_client_auth (ServerBuilder + ClientAuth, then configs)
 }
 pub struct ConnectionConfig;   // Clone, Debug
 impl ConnectionConfig {
@@ -449,10 +466,9 @@ impl ConnectionConfig {
 }
 ```
 
-For a host that builds a configuration per connection (quinn's `Incoming::accept_with`). The
-three constructors build what `server_config_with`, `server_config_with_verifier` and
-`server_config_without_client_auth_with` build, and check the identity and policy once (their
-errors are those functions'); `non_defaults` is what `Built::non_defaults` would hold.
+For a host that builds a configuration per connection (quinn's `Incoming::accept_with`).
+`ServerBuilder::configs` builds what `build` builds, and checks the identity and policy once
+(their errors are `build`'s); `non_defaults` is what `Built::non_defaults` would hold.
 `for_connection` then gives one connection's configuration: waiting entries recorded under
 `source`, the ACL decided from `source` and `local` (by address at the `ClientHello`, by
 fingerprint before the store), and every configuration from one `ServerConfigs` sharing one
@@ -467,18 +483,41 @@ handshake.
 
 ```rust
 pub struct Built<T> { pub config: T, pub non_defaults: Vec<NonDefault> }
-pub fn client_config(&Identity, &Trust, alpn: &[&[u8]]) -> Result<ClientConfig, PeerError>;
-pub fn server_config(&Identity, &Trust, alpn: &[&[u8]]) -> Result<ServerConfig, PeerError>;
-pub fn client_config_with(&Identity, &Trust, &[&[u8]], &Policy) -> Result<Built<ClientConfig>, PeerError>;
-pub fn server_config_with(&Identity, &Trust, &[&[u8]], &Policy) -> Result<Built<ServerConfig>, PeerError>;
-// server TLS: the server presents a certificate, the client none
-pub fn server_config_without_client_auth(&Identity, alpn: &[&[u8]]) -> Result<ServerConfig, PeerError>;
-pub fn server_config_without_client_auth_with(&Identity, &[&[u8]], &Policy) -> Result<Built<ServerConfig>, PeerError>;
-pub fn client_config_without_identity(&Trust, alpn: &[&[u8]]) -> Result<ClientConfig, PeerError>;
-pub fn client_config_without_identity_with(&Trust, &[&[u8]], &Policy) -> Result<Built<ClientConfig>, PeerError>;
-// a verifier of the host's own, under the policy; the whole chain presented
-pub fn server_config_with_verifier(&Identity, Arc<dyn ClientCertVerifier>, alpn: &[&[u8]], &Policy) -> Result<Built<ServerConfig>, PeerError>;
-pub fn client_config_with_verifier(Option<&Identity>, Arc<dyn ServerCertVerifier>, alpn: &[&[u8]], &Policy) -> Result<Built<ClientConfig>, PeerError>;
+#[non_exhaustive] pub enum ClientAuth {          // Clone, Debug
+    None,                                        // server TLS: the client presents no certificate
+    Required(Trust),                             // a client certificate this trust accepts
+    Verifier(Arc<dyn ClientCertVerifier>),       // a verifier of the host's own
+}
+#[must_use] pub struct ServerBuilder<'a>;        // Clone, Debug
+impl<'a> ServerBuilder<'a> {
+    pub fn new(identity: &'a Identity, client_auth: ClientAuth) -> Self;   // no ALPN, Policy::default()
+    pub fn alpn<I>(self, protocols: I) -> Self where I: IntoIterator, I::Item: AsRef<[u8]>;   // replaces
+    pub fn policy(self, Policy) -> Self;
+    pub fn settings(self, TlsSettings) -> Self;  // feature guatiao: alpn and policy at once
+    pub fn non_defaults(&self) -> Vec<NonDefault>;
+    pub fn build(self) -> Result<Built<ServerConfig>, PeerError>;
+    pub fn configs(self) -> Result<ServerConfigs, PeerError>;   // one configuration per connection
+}
+#[must_use] pub struct ClientBuilder<'a>;        // Clone, Debug
+impl<'a> ClientBuilder<'a> {
+    pub fn new(trust: Trust) -> Self;            // no certificate presented, no ALPN, Policy::default()
+    pub fn identity(self, &'a Identity) -> Self; // presented with its whole chain
+    pub fn verifier(self, Arc<dyn ServerCertVerifier>) -> Self;   // replaces the trust; the trust is then not read
+    pub fn alpn<I>(self, protocols: I) -> Self where I: IntoIterator, I::Item: AsRef<[u8]>;
+    pub fn policy(self, Policy) -> Self;
+    pub fn settings(self, TlsSettings) -> Self;  // feature guatiao
+    pub fn non_defaults(&self) -> Vec<NonDefault>;
+    pub fn build(self) -> Result<Built<ClientConfig>, PeerError>;
+}
+// Deprecated one release, each a one-line wrapper:
+//   server_config(i, t, a)                          = ServerBuilder::new(i, ClientAuth::Required(t)).alpn(a).build()
+//   server_config_with(i, t, a, p)                  = ... .policy(p).build()
+//   server_config_without_client_auth[_with](..)    = ServerBuilder::new(i, ClientAuth::None) ...
+//   server_config_with_verifier(i, v, a, p)         = ServerBuilder::new(i, ClientAuth::Verifier(v)) ...
+//   client_config(i, t, a)                          = ClientBuilder::new(t).identity(i).alpn(a).build()
+//   client_config_with(i, t, a, p)                  = ... .policy(p).build()
+//   client_config_without_identity[_with](t, a[, p])= ClientBuilder::new(t).alpn(a)[.policy(p)].build()
+//   client_config_with_verifier(i, v, a, p)         = ClientBuilder::new(Trust::AnyWithKeyProof).verifier(v)[.identity(i)] ...
 pub fn crypto_provider() -> Arc<CryptoProvider>;       // default ring provider
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
 pub fn default_server_name() -> ServerName<'static>;   // SERVER_NAME as rustls takes it
@@ -497,10 +536,9 @@ pub async fn accept_with_from<S>(S, SocketAddr, select: impl FnOnce(&ClientHello
 pub async fn accept_with<S: PeerAddr>(S, select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
 ```
 
-`server_config_with_verifier` and `client_config_with_verifier` build exactly what
-`server_config_with` and `client_config_with` build (the policy's versions, suites, groups,
-extended master secret and resumption, the identity's whole chain, ALPN) around a verifier the
-host supplies, typically one of this crate's wrapped; `Built::non_defaults` is the policy's. A host
+`ClientAuth::Verifier` and `ClientBuilder::verifier` build exactly what the trust builds (the
+policy's versions, suites, groups, extended master secret and resumption, the identity's whole
+chain, ALPN) around a verifier the host supplies, typically one of this crate's wrapped; `Built::non_defaults` is the policy's. A host
 building a rustls or quinn configuration by hand takes the identity's `certificate_chain()` and
 `private_key_der()`.
 
@@ -518,12 +556,11 @@ authenticated by the application inside the encrypted channel** (a key proof, a 
 it is trusted. For browsers (`wss://`, WebTransport), which cannot present a chosen client
 certificate, and hosts without an identity of their own.
 
-- `server_config_without_client_auth*` handle versions, suites, groups, ALPN and resumption as
-  `server_config_with` does (resumption off unless `allow_resumption`) and request no client
-  certificate. `Built::non_defaults` is the policy's: a server that asks for no client certificate lists
+- `ClientAuth::None` handles versions, suites, groups, ALPN and resumption as `Required` does
+  (resumption off unless `allow_resumption`) and requests no client certificate. `Built::non_defaults` is the policy's: a server that asks for no client certificate lists
   nothing for it.
-- `client_config_without_identity*` verify the server by `Trust` exactly as `client_config*`
-  (pins or a store; roots; `AnyWithKeyProof`; CA is `Unsupported`) and present no
+- A `ClientBuilder` with no `identity` verifies the server by `Trust` as with one
+  (pins or a store; roots; `AnyWithKeyProof`; CA is `Unsupported`) and presents no
   certificate. A mutual-TLS server refuses such a client. Its `non_defaults` is the policy's.
 - The server finishes with `TlsHandshake::finish_unauthenticated` (below), or any rustls /
   tokio-rustls acceptor: there is no client verifier, so `with_source` has nothing to scope.
@@ -535,7 +572,7 @@ certificate, and hosts without an identity of their own.
 
 ```rust
 pub struct Tls;      // Clone, Default
-impl Tls { pub fn new() -> Tls; pub fn with_client(self, Arc<ClientConfig>) -> Tls; pub fn with_server(self, Arc<ServerConfig>) -> Tls; }
+impl Tls { pub fn new() -> Tls; pub fn client(self, Arc<ClientConfig>) -> Tls; pub fn server(self, Arc<ServerConfig>) -> Tls; }   // with_client, with_server: deprecated one release
 impl coqui_peer::Method for Tls { /* name() = "tls"; initiate(); respond(source: Option<SocketAddr>) */ }
 pub struct TlsHandshake;   // client(Arc<ClientConfig>), server(Arc<ServerConfig>, Option<SocketAddr>)
 impl TlsHandshake {
@@ -557,7 +594,7 @@ latter needs a reliable, ordered message channel) or the `tokio` forms.
 drives its handshake with `coqui_peer::complete_stream` / `complete_messages` (or the
 `receive`/`transmit` loop itself) and calls `finish_unauthenticated`: the connection, and
 `Some` verified peer only when the client sent a certificate. With a configuration from
-`server_config_without_client_auth*` it is always `None`, meaning not authenticated. Before
+`ClientAuth::None` it is always `None`, meaning not authenticated. Before
 completion it is `PeerError::Tls`.
 
 ## Pairing and rotation over TLS (`coqui_peer_tls`, `coqui_peer_tls::pair`)
@@ -573,6 +610,7 @@ pub use coqui_peer::{Clock, Random, Invitation, InvitationOptions, RotationOptio
 pub const PAIR_ALPN: &[u8] = b"coqui-pair/1";
 pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
 pub struct PairConfig { pub policy: Policy, pub alpn: Vec<u8>, pub timeout: Duration }  // Policy::default(), PAIR_ALPN, 15 min
+impl PairConfig { pub fn builder() -> PairConfigBuilder; }   // .policy(..) .alpn(..) .timeout(..) .build(); settings type with `guatiao`
 pub use coqui_peer::{ReadTimeout, WriteTimeout};   // set_read_timeout / set_write_timeout(&self, Option<Duration>); TcpStream, &TcpStream
 #[non_exhaustive] pub enum ResponderTrust { Unverified, Verified { trust: Box<Trust>, name: Option<ServerName<'static>> } }
 impl ResponderTrust { pub fn pinned(id: PeerId) -> ResponderTrust; }
@@ -742,7 +780,7 @@ key material; only `CaFile` names a path, the file it could not use.
 - `PeerError`, `Refusal`, `Trust`, `TlsVersion`, `CipherProfile`, `Crypto` and `ResponderTrust`
   are `#[non_exhaustive]`: a `match` needs a `_` arm.
 - With a policy ACL, a connection whose addresses the configuration cannot learn is refused
-  (`Refusal::AddressUnknown`): accept through `accept`, `accept_at`, `TlsHandshake::with_local`
+  (`Refusal::AddressUnknown`): accept through `accept`, `accept_at`, `TlsHandshake::local`
   or `with_addresses`, or build the configuration for the connection
   (`ServerConfigs::for_connection`). A `PeerAddr` implementation that does not override
   `local_addr` gives none.

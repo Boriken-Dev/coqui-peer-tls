@@ -49,12 +49,13 @@ cargo add coqui-peer-tls@0.0.0-alpha.1
 
 | Feature | Adds | Needed for | Default |
 | --- | --- | --- | --- |
-| `generate` | `rcgen`, `time` | `Identity::generate`, `generate_valid_for`, `generate_with`, `open_or_create` | off |
+| `generate` | `rcgen`, `time` | `Identity::generate`, `Identity::builder`, `open_or_create` | off |
 | `fields` | `x509-parser` | `CertificateFields`: a certificate's names, SANs (UPN included), serial and validity, as a map to pick identities from | off |
 | `ca` | `fields`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio`, `tokio-rustls`, `coqui-peer/tokio` | module `asynch`: async dial, accept, pairing and rotation | off |
 | `pin` | `coqui-peer/pin` | PIN pairing | off |
-| `serde` | `serde`, `coqui-peer/serde`, `coqui-net-acl/serde` | reading and writing a `Policy` and `PeerId` as text | off |
+| `guatiao` | `guatiao`, `guatiao-serde`, `coqui-net-acl/serde` | `TlsSettings`, `Policy` and `PairConfig` as guatiao values with a schema, read from TOML, JSON or YAML | off |
+| `serde` | `guatiao`, `serde`, `coqui-peer/serde` | the same types as serde types, and `PeerId` as text | off |
 | `acl` | `coqui-net-acl` | an access control list inside a `Policy` | off |
 | `platform-roots` | `rustls-platform-verifier` | `Roots::platform`: servers verified by the operating system | off |
 | `aws-lc` | rustls's aws-lc-rs provider (AWS-LC, built from C) | `crypto = "aws-lc"`: ML-KEM key exchange, ML-DSA, the `cnsa-2.0` profile | off |
@@ -69,13 +70,17 @@ Dial a peer you pinned, with an identity read from a file:
 
 ```rust,no_run
 use std::sync::Arc;
-use coqui_peer_tls::{Identity, Pins, Trust, client_config, dial};
+use coqui_peer_tls::{ClientBuilder, Identity, Pins, Trust, dial};
 
 let me = Identity::read("identity.pem".as_ref())?.expect("an identity file");
 let trust = Trust::Pinned(Pins::fixed([
     "sha256:630dcd2966c4336691125448bbb25b4ff412a49c732db2c8abc1b8581bd710dd".parse()?,
 ]));
-let config = client_config(&me, &trust, &[b"my-protocol/1"])?; // default: TLS 1.2 and 1.3
+let config = ClientBuilder::new(trust)
+    .identity(&me)
+    .alpn([b"my-protocol/1"])
+    .build()? // default policy: TLS 1.2 and 1.3
+    .config;
 let socket = std::net::TcpStream::connect("192.0.2.7:7000")?;
 let (stream, peer) = dial(Arc::new(config), socket)?;
 println!("connected to {}", peer.fingerprint);
@@ -87,11 +92,11 @@ Dial a server with a CA-issued certificate, verified by the web PKI for its name
 
 ```rust,no_run
 use std::sync::Arc;
-use coqui_peer_tls::{Roots, Trust, client_config_without_identity, dial_named};
+use coqui_peer_tls::{ClientBuilder, Roots, Trust, dial_named};
 use rustls::pki_types::ServerName;
 
 let trust = Trust::Roots(Roots::bundle_file("/etc/ssl/certs/ca-certificates.crt"));
-let config = client_config_without_identity(&trust, &[b"my-protocol/1"])?;
+let config = ClientBuilder::new(trust).alpn([b"my-protocol/1"]).build()?.config;
 let name = ServerName::try_from("example.com")?.to_owned();
 let socket = std::net::TcpStream::connect("example.com:443")?;
 let (stream, server) = dial_named(Arc::new(config), name, socket)?;
@@ -114,7 +119,8 @@ for the dialled name is trusted. The chain, the dates and the name are always ch
 ## Profiles and policy
 
 `Policy::default()` is `intermediate` and works as it is. `Policy::modern()`, `intermediate()`
-and `legacy()` are plain values; start from one and change any public field. `non_defaults()` listsevery setting looser than the default, as data; `client_config_with` and `server_config_with`
+and `legacy()` are plain values; start from one and change any public field. `non_defaults()` lists
+every setting looser than the default, as data; `ServerBuilder::build` and `ClientBuilder::build`
 return that list beside the configuration. Nothing is printed.
 
 | Field | `modern` | `intermediate` (default) | `legacy` |
@@ -164,46 +170,83 @@ on a resumed session, so a peer removed from the trust store could reconnect on 
 held. TLS 1.0, 1.1 and non-AEAD suites cannot be offered; MD5 pins are never accepted.
 
 ```rust,no_run
-use coqui_peer_tls::{Digest, Identity, Policy, Trust, server_config_with};
+use coqui_peer_tls::{ClientAuth, Digest, Identity, Policy, ServerBuilder};
 
 let identity = Identity::read("identity.pem".as_ref())?.expect("an identity file");
 let mut policy = Policy::default();
 policy.pin_digests.push(Digest::Sha1);
 policy.waiting.per_source = 4;
-let built = server_config_with(&identity, &Trust::AnyWithKeyProof, &[b"my-protocol/1"], &policy)?;
+let built = ServerBuilder::new(&identity, ClientAuth::None)
+    .alpn([b"my-protocol/1"])
+    .policy(policy)
+    .build()?;
 for setting in &built.non_defaults {
     eprintln!("{} = {} (default: {})", setting.setting, setting.value, setting.default);
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-With the `serde` feature a `Policy` also reads and writes a versioned text form (version 1),
-in the format you choose:
+## Building configurations
+
+One builder per configuration, the settings named for what they are, then `build()`:
+
+| To get | Write |
+| --- | --- |
+| a server that requires a pinned or CA-trusted client | `ServerBuilder::new(&identity, ClientAuth::Required(trust))` |
+| a server that asks for no client certificate | `ServerBuilder::new(&identity, ClientAuth::None)` |
+| a server whose clients a verifier of your own decides | `ServerBuilder::new(&identity, ClientAuth::Verifier(verifier))` |
+| a client | `ClientBuilder::new(trust)`, with `.identity(&me)` to present a certificate |
+| a client verified by a verifier of your own | `ClientBuilder::new(trust).verifier(verifier)` |
+| a server configuration per connection (quinn) | `ServerBuilder::new(..).configs()` |
+| a pairing configuration | `PairConfig::builder().alpn(..).timeout(..).policy(..).build()` |
+| a generated identity with a validity window | `Identity::builder().valid_for(..)`, or `.not_before(..).not_after(..)` |
+
+Each configuration builder has `.alpn(..)`, `.policy(..)` and, with the `guatiao` feature,
+`.settings(TlsSettings)`.
+
+## Settings as data
+
+With the `guatiao` feature the builders' settings are one type, `TlsSettings { alpn, policy }`,
+and `PairConfig` is its own. `TlsSettings`, `Policy` and `PairConfig` are guatiao values with a
+schema (`TlsSettings::schema()`) whose defaults are the real ones, so a file names only what
+differs from the intermediate preset, and an unknown key is refused. `guatiao-serde` reads
+TOML, JSON and YAML into them:
 
 ```toml
-policy_version = 1
-profile = "intermediate"        # a built-in preset to start from
+alpn = ["my-protocol/1"]
+
+[policy]
+name = "mine"                   # informational
 tls_versions = ["1.2", "1.3"]
 cipher_profiles = ["mozilla"]   # allowed algorithm profiles
 crypto = "ring"                 # or "aws-lc", with the `aws-lc` feature
 pin_digests = ["sha256", "sha384", "sha512"]
 allow_resumption = false
 require_ems = true
-waiting_per_source = 16
-waiting_total = 1000
-waiting_rerecord_secs = 60
 
-[acl]                           # optional, with the `acl` feature; see coqui-net-acl
+[policy.waiting]
+per_source = 16
+total = 1000
+rerecord_secs = 60
+
+[policy.acl]                    # optional, with the `acl` feature; see coqui-net-acl
 default = "deny"
 
-[[acl.rule]]
+[[policy.acl.rule]]
 action = "permit"
 source = "10.9.0.0/16"
 destination = "10.6.20.5"
 ```
 
-Every key is optional; absent keys keep the preset. Committed examples for every preset are in
-the repository's `tests/vectors/policy/`.
+```rust,ignore
+let settings: TlsSettings = guatiao_serde::text::toml::from_str_as(text, Presentation::new())?;
+let built = ServerBuilder::new(&identity, ClientAuth::None).settings(settings).build()?;
+```
+
+With `serde`, `Policy`, `TlsSettings` and `PairConfig` also implement `Serialize` and
+`Deserialize` over the same form. A consumer with its own default profile reads a document over
+it with `Policy::from_value_over` (`Policy::deserialize_over` with `serde`). Committed examples
+for every preset are in the repository's `tests/vectors/policy/`.
 
 ## Access control
 
@@ -212,7 +255,7 @@ under it: by address when the `ClientHello` arrives, before any certificate is s
 client certificate's fingerprint before the trust store is consulted, so a denied client is
 never recorded as waiting. Fingerprint rules may be written in any spelling a `PeerId` parses.
 The refusals are `Refusal::AddressDenied`, `PeerDenied` and `AddressUnknown`. For quinn,
-`ServerConfigs` builds a configuration per connection from its addresses, sharing one session
+`ServerBuilder::configs` gives `ServerConfigs`, which builds a configuration per connection from its addresses, sharing one session
 cache, and keeps the refusal its handshake ended with (`ConnectionConfig::refusal`), since
 quinn reports only the alert; `Trust::client_cert_verifier_for` is the verifier alone, and
 `Policy::admits_address` decides before the handshake. Under optional client authentication a
@@ -229,7 +272,7 @@ rule naming a fingerprint never admits a client.
 ## Development
 
 ```bash
-ALL=generate,ca,tokio,pin,serde,acl,platform-roots,fields,aws-lc   # every feature but fips
+ALL=generate,ca,tokio,pin,guatiao,serde,acl,platform-roots,fields,aws-lc   # every feature but fips
 cargo fmt --all --check
 cargo clippy --all-targets --features $ALL -- -D warnings
 cargo +1.89 clippy --all-targets --features $ALL -- -D warnings
