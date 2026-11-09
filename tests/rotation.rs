@@ -41,9 +41,10 @@ impl Hand {
 
 fn store(hand: &Hand) -> (tempfile::TempDir, TrustStore) {
     let directory = tempfile::tempdir().unwrap();
-    let store = TrustStore::open(directory.path())
-        .unwrap()
-        .with_clock(hand.clock());
+    let store = TrustStore::builder(directory.path())
+        .clock(hand.clock())
+        .build()
+        .unwrap();
     (directory, store)
 }
 
@@ -148,11 +149,16 @@ fn a_client_rotates_and_its_old_certificate_retires() {
 #[test]
 fn a_successor_waits_for_approval_when_the_store_requires_it() {
     let hand = Hand::new();
-    let (_directory, store) = store(&hand);
-    let store = store.with_rotation(RotationOptions {
-        require_approval: true,
-        ..RotationOptions::default()
-    });
+    let (_directory, _) = store(&hand);
+    let store = TrustStore::builder(_directory.path())
+        .clock(hand.clock())
+        .rotation({
+            let mut value = RotationOptions::default();
+            value.require_approval = true;
+            value
+        })
+        .build()
+        .unwrap();
     let server = Identity::generate().unwrap();
     let (old, new) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     store.accept_certificate(old.certificate_der()).unwrap();
@@ -298,11 +304,16 @@ async fn an_async_announcement_is_recorded() {
 #[test]
 fn a_client_that_requires_approval_records_the_servers_proof_and_waits() {
     let hand = Hand::new();
-    let (_directory, client_store) = store(&hand);
-    let client_store = client_store.with_rotation(RotationOptions {
-        require_approval: true,
-        ..RotationOptions::default()
-    });
+    let (_directory, _) = store(&hand);
+    let client_store = TrustStore::builder(_directory.path())
+        .clock(hand.clock())
+        .rotation({
+            let mut value = RotationOptions::default();
+            value.require_approval = true;
+            value
+        })
+        .build()
+        .unwrap();
     let client = Identity::generate().unwrap();
     let (old, new) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     client_store

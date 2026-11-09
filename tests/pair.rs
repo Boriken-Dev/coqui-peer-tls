@@ -52,9 +52,10 @@ struct Device {
 
 fn device(hand: &Hand) -> Device {
     let directory = tempfile::tempdir().unwrap();
-    let store = TrustStore::open(directory.path())
-        .unwrap()
-        .with_clock(hand.clock());
+    let store = TrustStore::builder(directory.path())
+        .clock(hand.clock())
+        .build()
+        .unwrap();
     Device {
         _directory: directory,
         identity: Identity::generate().unwrap(),
@@ -63,7 +64,10 @@ fn device(hand: &Hand) -> Device {
 }
 
 fn desk(hand: &Hand) -> PairingDesk {
-    PairingDesk::new(random()).with_clock(hand.clock())
+    PairingDesk::builder(random())
+        .clock(hand.clock())
+        .build()
+        .unwrap()
 }
 
 /// Accepts one pairing connection on a thread.
@@ -764,16 +768,19 @@ const EXPIRED: [u8; 3] = [1, 8, 2];
 fn a_joiner_that_stalls_is_told_expired_and_its_place_freed() {
     let hand = Hand::new();
     let (server, client) = (device(&hand), device(&hand));
-    let desk = PairingDesk::new(random())
-        .with_options(coqui_peer_tls::pair::PairingOptions {
-            pin_ttl: Duration::from_millis(300),
-            ..Default::default()
+    let desk = PairingDesk::builder(random())
+        .options({
+            let mut value = coqui_peer_tls::pair::PairingOptions::default();
+            value.pin_ttl = Duration::from_millis(300);
+            value
         })
-        .unwrap()
-        .with_limits(coqui_peer_tls::pair::DeskLimits {
-            pending_per_source: 1,
-            ..Default::default()
-        });
+        .limits({
+            let mut value = coqui_peer_tls::pair::DeskLimits::default();
+            value.pending_per_source = 1;
+            value
+        })
+        .build()
+        .unwrap();
     desk.show_pin().unwrap();
     let (address, served) = responder(&server, &desk, PairConfig::default());
     let frames = stalling_joiner(address, &client);
@@ -826,11 +833,13 @@ fn a_dialer_gives_up_after_its_timeout() {
 async fn async_a_joiner_that_stalls_is_told_expired() {
     let hand = Hand::new();
     let (server, client) = (device(&hand), device(&hand));
-    let desk = PairingDesk::new(random())
-        .with_options(coqui_peer_tls::pair::PairingOptions {
-            pin_ttl: Duration::from_millis(300),
-            ..Default::default()
+    let desk = PairingDesk::builder(random())
+        .options({
+            let mut value = coqui_peer_tls::pair::PairingOptions::default();
+            value.pin_ttl = Duration::from_millis(300);
+            value
         })
+        .build()
         .unwrap();
     desk.show_pin().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

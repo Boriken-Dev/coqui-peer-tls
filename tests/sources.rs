@@ -25,17 +25,21 @@ fn record(store: &TrustStore, identity: &Identity, source: &str) {
 
 #[test]
 fn one_source_filling_its_cap_does_not_block_another() {
-    let (_directory, store) = store();
+    let directory = tempfile::tempdir().unwrap();
     // coqui-peer refuses a newcomer at a full source and spaces one source's records by default; this asks for the
     // replacing, unspaced behaviour the test is about.
-    let store = store
-        .with_limits(WaitingLimits {
-            per_source: 2,
-            total: 100,
-            rerecord: Duration::from_secs(60),
+    let store = TrustStore::builder(directory.path())
+        .limits({
+            let mut value = WaitingLimits::default();
+            value.per_source = 2;
+            value.total = 100;
+            value.rerecord = Duration::from_secs(60);
+            value
         })
-        .with_when_full(coqui_peer::WhenFull::ReplaceOldest)
-        .with_record_interval(Duration::ZERO);
+        .when_full(coqui_peer::WhenFull::ReplaceOldest)
+        .record_interval(Duration::ZERO)
+        .build()
+        .unwrap();
     let noisy: Vec<Identity> = (0..3).map(|_| Identity::generate().unwrap()).collect();
     for identity in &noisy {
         record(&store, identity, "192.0.2.1:1000");
