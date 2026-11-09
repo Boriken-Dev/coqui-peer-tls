@@ -41,25 +41,25 @@ impl Drop for Restore {
     }
 }
 
-/// Runs `work` with `source` as the address the verifiers record waiting entries under, and
-/// decide a policy's access control list by, with no local address.
+/// Runs `work` with the connection's addresses in scope: `source` is where the verifiers record
+/// waiting entries and what a policy's access control list decides by, and `local` the address
+/// the connection arrived at, which the list needs for rules that name a destination or a port.
 ///
-/// [`accept_from`](crate::accept_from) and its async form call this around the handshake; a
-/// host that drives rustls itself wraps each call that can reach a verifier (for example
-/// `process_new_packets`). Outside it, entries are recorded without a source. A host that
-/// knows the local address too uses [`with_addresses`].
-pub fn with_source<R>(source: Option<SocketAddr>, work: impl FnOnce() -> R) -> R {
-    scoped(source, None, work).0
-}
-
-/// [`with_source`] with the local address the connection arrived at as well, which a policy's
-/// access control list needs for rules that name a destination or a port.
+/// The accept helpers call this around the handshake; a host that drives rustls itself wraps
+/// each call that can reach a verifier (for example `process_new_packets`). Outside it, entries
+/// are recorded without a source.
 pub fn with_addresses<R>(
     source: Option<SocketAddr>,
     local: Option<SocketAddr>,
     work: impl FnOnce() -> R,
 ) -> R {
     scoped(source, local, work).0
+}
+
+/// [`with_addresses`] with no local address.
+#[deprecated(note = "use `with_addresses(source, None, work)`")]
+pub fn with_source<R>(source: Option<SocketAddr>, work: impl FnOnce() -> R) -> R {
+    with_addresses(source, None, work)
 }
 
 /// Runs `work` in a scope of its own, and returns what it returned with the refusal a check

@@ -16,9 +16,10 @@ fn an_unusable_setting_fails_the_check_as_a_build_would() {
     empty.tls_versions.clear();
     assert!(matches!(empty.check(), Err(PeerError::Policy(_))));
 
-    let suites = Policy {
-        cipher_suites: Some(vec!["TLS_NULL_WITH_NULL_NULL".to_owned()]),
-        ..Policy::default()
+    let suites = {
+        let mut policy = Policy::default();
+        policy.cipher_suites = Some(vec!["TLS_NULL_WITH_NULL_NULL".to_owned()]);
+        policy
     };
     let refused = suites.check().expect_err("an unknown suite");
     assert!(
@@ -26,9 +27,10 @@ fn an_unusable_setting_fails_the_check_as_a_build_would() {
         "{refused}"
     );
 
-    let groups = Policy {
-        kx_groups: Some(Vec::new()),
-        ..Policy::default()
+    let groups = {
+        let mut policy = Policy::default();
+        policy.kx_groups = Some(Vec::new());
+        policy
     };
     assert!(matches!(groups.check(), Err(PeerError::Policy(_))));
 }
@@ -40,12 +42,13 @@ fn a_list_naming_something_that_is_no_peer_id_fails_the_check() {
 
     let mut rule = Rule::new(Action::Permit, "10.0.0.0/8".parse().expect("a network"));
     rule.fingerprint = Some("not-a-fingerprint".to_owned());
-    let policy = Policy {
-        acl: Some(Acl {
+    let policy = {
+        let mut policy = Policy::default();
+        policy.acl = Some(Acl {
             rules: vec![rule],
             default: Action::Deny,
-        }),
-        ..Policy::default()
+        });
+        policy
     };
     let refused = policy.check().expect_err("a rule that can never match");
     assert!(refused.to_string().contains("acl rule 0"), "{refused}");

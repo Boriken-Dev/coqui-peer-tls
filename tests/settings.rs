@@ -1,7 +1,7 @@
 //! The builders' settings as one value type: read from TOML, JSON and YAML through
 //! `guatiao-serde`, described by a schema whose defaults are the real ones, and handed to the
 //! builders whole. Run with `--all-features`.
-#![cfg(all(feature = "guatiao", feature = "generate"))]
+#![cfg(feature = "generate")]
 
 use std::time::Duration;
 
@@ -20,7 +20,6 @@ fn plain() -> Presentation {
 const TOML: &str = r#"alpn = ["h2", "coqui/1"]
 
 [policy]
-name = "mine"
 tls_versions = ["1.3"]
 allow_resumption = true
 
@@ -30,10 +29,12 @@ total = 7
 
 fn expected() -> TlsSettings {
     let mut policy = Policy::modern();
-    policy.name = "mine".to_owned();
     policy.allow_resumption = true;
     policy.waiting.total = 7;
-    TlsSettings::new(vec!["h2".to_owned(), "coqui/1".to_owned()], policy)
+    let mut settings = TlsSettings::default();
+    settings.alpn = vec!["h2".to_owned(), "coqui/1".to_owned()];
+    settings.policy = policy;
+    settings
 }
 
 #[test]
@@ -66,7 +67,7 @@ fn settings_round_trip_through_toml_json_and_yaml() {
 fn settings_read_from_json() {
     let settings: TlsSettings = json::from_str_as(
         r#"{"alpn": ["h2", "coqui/1"],
-            "policy": {"name": "mine", "tls_versions": ["1.3"], "allow_resumption": true,
+            "policy": {"tls_versions": ["1.3"], "allow_resumption": true,
                        "waiting": {"total": 7}}}"#,
         plain(),
     )
@@ -151,4 +152,80 @@ fn pair_config_is_its_own_settings_type() {
         json::from_str_as::<PairConfig>(&text, plain()).unwrap(),
         config
     );
+}
+
+#[test]
+fn an_alpn_entry_is_text_of_one_to_255_bytes() {
+    assert!(toml::from_str_as::<TlsSettings>("alpn = [\"\"]", plain()).is_err());
+    let long = "a".repeat(256);
+    assert!(toml::from_str_as::<TlsSettings>(&format!("alpn = [\"{long}\"]"), plain()).is_err());
+    let longest = "a".repeat(255);
+    let settings: TlsSettings =
+        toml::from_str_as(&format!("alpn = [\"{longest}\"]"), plain()).unwrap();
+    assert_eq!(settings.alpn, [longest]);
+    assert!(toml::from_str_as::<PairConfig>("alpn = \"\"", plain()).is_err());
+}
+
+#[test]
+fn the_last_setter_wins_between_settings_alpn_and_policy() {
+    let server = Identity::generate().unwrap();
+    let mut settings = TlsSettings::default();
+    settings.alpn = vec!["from-settings/1".to_owned()];
+    settings.policy = Policy::modern();
+    let after = ServerBuilder::new(&server, ClientAuth::None)
+        .alpn([b"early/1"])
+        .settings(settings.clone())
+        .build()
+        .unwrap();
+    assert_eq!(
+        after.config.alpn_protocols,
+        vec![b"from-settings/1".to_vec()]
+    );
+    let before = ServerBuilder::new(&server, ClientAuth::None)
+        .settings(settings)
+        .alpn([b"late/1"])
+        .policy(Policy::legacy())
+        .build()
+        .unwrap();
+    assert_eq!(before.config.alpn_protocols, vec![b"late/1".to_vec()]);
+    assert_eq!(before.non_defaults.len(), 2);
+}
+
+#[test]
+fn pair_config_round_trips_as_text_with_its_timeout() {
+    let mut config = PairConfig::default();
+    config.alpn = b"mine/1".to_vec();
+    config.timeout = Duration::from_millis(2500);
+    config.policy = Policy::modern();
+    let text = toml::to_string_of(&config, plain()).unwrap();
+    assert_eq!(
+        toml::from_str_as::<PairConfig>(&text, plain()).unwrap(),
+        config
+    );
+    let text = json::to_string_pretty_of(&config, plain()).unwrap();
+    assert_eq!(
+        json::from_str_as::<PairConfig>(&text, plain()).unwrap(),
+        config
+    );
+    let text = yaml::to_string_of(&config, plain()).unwrap();
+    assert_eq!(
+        yaml::from_str_as::<PairConfig>(&text, plain()).unwrap(),
+        config
+    );
+}
+
+/// The derives give each settings type the value traits and the usual ones.
+#[test]
+fn the_settings_types_carry_the_derived_traits() {
+    fn value_type<
+        T: ToValue + FromValue + Schema + Clone + Default + PartialEq + core::fmt::Debug,
+    >() {
+    }
+    fn plain_data<T: Send + Sync>() {}
+    value_type::<TlsSettings>();
+    value_type::<Policy>();
+    value_type::<PairConfig>();
+    plain_data::<TlsSettings>();
+    plain_data::<Policy>();
+    plain_data::<PairConfig>();
 }

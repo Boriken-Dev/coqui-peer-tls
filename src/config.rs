@@ -15,9 +15,8 @@ use crate::connection::{Client, Keeping, ServerConfigs, Slot};
 use crate::error::PeerError;
 use crate::identity::Identity;
 use crate::policy::Policy;
-#[cfg(feature = "guatiao")]
 use crate::settings::TlsSettings;
-use crate::trust::Trust;
+use crate::trust::{PeerServerVerifier, Trust};
 use coqui_peer::NonDefault;
 
 /// rustls's ring provider with its defaults. The configurations built here take the provider a
@@ -27,14 +26,14 @@ pub fn crypto_provider() -> Arc<CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())
 }
 
-/// A built configuration and the settings of its [`Policy`] that are looser than the default
+/// A built configuration and the settings of its [`Policy`] that differ from the default
 /// policy's, so a host can surface them. Nothing is printed by this crate.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct Built<T> {
     /// The configuration.
     pub config: T,
-    /// Every setting looser than the default policy's; empty under the default and `modern`
-    /// profiles.
+    /// Every setting that differs from the default policy's; empty under the default policy.
     pub non_defaults: Vec<NonDefault>,
 }
 
@@ -69,6 +68,35 @@ impl fmt::Debug for ClientAuth {
         match self {
             Self::None => formatter.write_str("None"),
             Self::Required(trust) => formatter.debug_tuple("Required").field(trust).finish(),
+            Self::Verifier(_) => formatter.write_str("Verifier(..)"),
+        }
+    }
+}
+
+/// How a client verifies the server.
+///
+/// The value [`ClientBuilder::new`] takes: a [`Trust`] converts into it, so no default hides the
+/// choice.
+#[derive(Clone)]
+#[non_exhaustive]
+pub enum ServerAuth {
+    /// Verify the server by this trust: pinned, by [`Roots`](crate::Roots) for the name dialled
+    /// ([`dial_named`](crate::dial_named)), pinned or roots, or any certificate with key proof.
+    Trust(Trust),
+    /// Verify the server with a verifier of the host's own.
+    Verifier(Arc<dyn ServerCertVerifier>),
+}
+
+impl From<Trust> for ServerAuth {
+    fn from(trust: Trust) -> Self {
+        Self::Trust(trust)
+    }
+}
+
+impl fmt::Debug for ServerAuth {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Trust(trust) => formatter.debug_tuple("Trust").field(trust).finish(),
             Self::Verifier(_) => formatter.write_str("Verifier(..)"),
         }
     }
@@ -123,15 +151,16 @@ impl<'a> ServerBuilder<'a> {
         self
     }
 
-    /// The ALPN list and the policy from `settings`, as a file or a form gave them.
-    #[cfg(feature = "guatiao")]
+    /// The ALPN list and the policy from `settings`, as a file or a form gave them. Replaces any
+    /// set before by [`alpn`](Self::alpn) and [`policy`](Self::policy), and is replaced by those
+    /// called after it.
     pub fn settings(mut self, settings: TlsSettings) -> Self {
         self.alpn = settings.alpn_bytes();
         self.policy = settings.policy;
         self
     }
 
-    /// Every setting of the policy looser than the default, as the built configuration
+    /// Every setting of the policy that differs from the default, as the built configuration
     /// reports it.
     pub fn non_defaults(&self) -> Vec<NonDefault> {
         self.policy.non_defaults()
@@ -187,27 +216,23 @@ impl<'a> ServerBuilder<'a> {
 /// Builds a client configuration: [`ClientBuilder::new`], the settings, then
 /// [`build`](Self::build).
 ///
-/// The server is verified by the trust given to `new`: pinned, by [`Roots`](crate::Roots) for
-/// the name dialled ([`dial_named`](crate::dial_named)), pinned or roots, or any certificate with
-/// key proof; or by [`verifier`](Self::verifier). Session resumption is off unless
-/// [`Policy::allow_resumption`] is set, which then keeps rustls's default session cache.
+/// The server is verified as the [`ServerAuth`] given to `new` says. Session resumption is off
+/// unless [`Policy::allow_resumption`] is set, which then keeps rustls's default session cache.
 #[derive(Debug, Clone)]
 #[must_use]
 pub struct ClientBuilder<'a> {
-    trust: Trust,
-    verifier: Option<Arc<dyn ServerCertVerifier>>,
+    server: ServerAuth,
     identity: Option<&'a Identity>,
     alpn: Vec<Vec<u8>>,
     policy: Policy,
 }
 
 impl<'a> ClientBuilder<'a> {
-    /// A builder for a client that verifies the server by `trust`, presents no certificate, offers
-    /// no ALPN and runs under the default policy.
-    pub fn new(trust: Trust) -> Self {
+    /// A builder for a client that verifies the server as `server` says (a [`Trust`] converts),
+    /// presents no certificate, offers no ALPN and runs under the default policy.
+    pub fn new(server: impl Into<ServerAuth>) -> Self {
         Self {
-            trust,
-            verifier: None,
+            server: server.into(),
             identity: None,
             alpn: Vec::new(),
             policy: Policy::default(),
@@ -219,13 +244,6 @@ impl<'a> ClientBuilder<'a> {
     /// client certificate refuses it.
     pub fn identity(mut self, identity: &'a Identity) -> Self {
         self.identity = Some(identity);
-        self
-    }
-
-    /// Verifies the server with `verifier`, a verifier of the host's own, instead of the trust
-    /// given to `new`, which is then not read.
-    pub fn verifier(mut self, verifier: Arc<dyn ServerCertVerifier>) -> Self {
-        self.verifier = Some(verifier);
         self
     }
 
@@ -248,15 +266,16 @@ impl<'a> ClientBuilder<'a> {
         self
     }
 
-    /// The ALPN list and the policy from `settings`, as a file or a form gave them.
-    #[cfg(feature = "guatiao")]
+    /// The ALPN list and the policy from `settings`, as a file or a form gave them. Replaces
+    /// any set before by [`alpn`](Self::alpn) and [`policy`](Self::policy), and is replaced by
+    /// those called after it.
     pub fn settings(mut self, settings: TlsSettings) -> Self {
         self.alpn = settings.alpn_bytes();
         self.policy = settings.policy;
         self
     }
 
-    /// Every setting of the policy looser than the default, as the built configuration
+    /// Every setting of the policy that differs from the default, as the built configuration
     /// reports it.
     pub fn non_defaults(&self) -> Vec<NonDefault> {
         self.policy.non_defaults()
@@ -271,9 +290,9 @@ impl<'a> ClientBuilder<'a> {
     /// [`PeerError::Certificate`] when the roots cannot be loaded; [`PeerError::Certificate`] or
     /// [`PeerError::Tls`] when the configuration cannot be built.
     pub fn build(self) -> Result<Built<ClientConfig>, PeerError> {
-        let verifier: Arc<dyn ServerCertVerifier> = match self.verifier {
-            Some(verifier) => verifier,
-            None => self.trust.server_cert_verifier_with(&self.policy)?,
+        let verifier: Arc<dyn ServerCertVerifier> = match self.server {
+            ServerAuth::Trust(trust) => PeerServerVerifier::new(&trust, &self.policy)?,
+            ServerAuth::Verifier(verifier) => verifier,
         };
         let selection = self.policy.selection()?;
         let builder = ClientConfig::builder_with_provider(Arc::clone(&selection.provider))
@@ -306,7 +325,7 @@ impl<'a> ClientBuilder<'a> {
 /// # Errors
 ///
 /// As [`ClientBuilder::build`].
-#[deprecated(since = "0.0.0", note = "use `ClientBuilder`")]
+#[deprecated(note = "use `ClientBuilder`")]
 pub fn client_config(
     identity: &Identity,
     trust: &Trust,
@@ -324,7 +343,7 @@ pub fn client_config(
 /// # Errors
 ///
 /// As [`ClientBuilder::build`].
-#[deprecated(since = "0.0.0", note = "use `ClientBuilder`")]
+#[deprecated(note = "use `ClientBuilder`")]
 pub fn client_config_with(
     identity: &Identity,
     trust: &Trust,
@@ -343,7 +362,7 @@ pub fn client_config_with(
 /// # Errors
 ///
 /// As [`ClientBuilder::build`].
-#[deprecated(since = "0.0.0", note = "use `ClientBuilder`")]
+#[deprecated(note = "use `ClientBuilder`")]
 pub fn client_config_without_identity(
     trust: &Trust,
     alpn: &[&[u8]],
@@ -359,7 +378,7 @@ pub fn client_config_without_identity(
 /// # Errors
 ///
 /// As [`ClientBuilder::build`].
-#[deprecated(since = "0.0.0", note = "use `ClientBuilder`")]
+#[deprecated(note = "use `ClientBuilder`")]
 pub fn client_config_without_identity_with(
     trust: &Trust,
     alpn: &[&[u8]],
@@ -377,15 +396,14 @@ pub fn client_config_without_identity_with(
 /// # Errors
 ///
 /// As [`ClientBuilder::build`].
-#[deprecated(since = "0.0.0", note = "use `ClientBuilder::verifier`")]
+#[deprecated(note = "use `ClientBuilder::new(ServerAuth::Verifier(..))`")]
 pub fn client_config_with_verifier(
     identity: Option<&Identity>,
     verifier: Arc<dyn ServerCertVerifier>,
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ClientConfig>, PeerError> {
-    let mut builder = ClientBuilder::new(Trust::AnyWithKeyProof)
-        .verifier(verifier)
+    let mut builder = ClientBuilder::new(ServerAuth::Verifier(verifier))
         .alpn(alpn)
         .policy(policy.clone());
     if let Some(identity) = identity {
@@ -400,7 +418,7 @@ pub fn client_config_with_verifier(
 /// # Errors
 ///
 /// As [`ServerBuilder::build`].
-#[deprecated(since = "0.0.0", note = "use `ServerBuilder`")]
+#[deprecated(note = "use `ServerBuilder`")]
 pub fn server_config(
     identity: &Identity,
     trust: &Trust,
@@ -417,7 +435,7 @@ pub fn server_config(
 /// # Errors
 ///
 /// As [`ServerBuilder::build`].
-#[deprecated(since = "0.0.0", note = "use `ServerBuilder`")]
+#[deprecated(note = "use `ServerBuilder`")]
 pub fn server_config_with(
     identity: &Identity,
     trust: &Trust,
@@ -436,7 +454,7 @@ pub fn server_config_with(
 /// # Errors
 ///
 /// As [`ServerBuilder::build`].
-#[deprecated(since = "0.0.0", note = "use `ServerBuilder` with `ClientAuth::None`")]
+#[deprecated(note = "use `ServerBuilder` with `ClientAuth::None`")]
 pub fn server_config_without_client_auth(
     identity: &Identity,
     alpn: &[&[u8]],
@@ -447,12 +465,12 @@ pub fn server_config_without_client_auth(
         .map(|built| built.config)
 }
 
-/// [`server_config_without_client_auth`] under `policy`.
+/// `server_config_without_client_auth` under `policy`.
 ///
 /// # Errors
 ///
 /// As [`ServerBuilder::build`].
-#[deprecated(since = "0.0.0", note = "use `ServerBuilder` with `ClientAuth::None`")]
+#[deprecated(note = "use `ServerBuilder` with `ClientAuth::None`")]
 pub fn server_config_without_client_auth_with(
     identity: &Identity,
     alpn: &[&[u8]],
@@ -469,10 +487,7 @@ pub fn server_config_without_client_auth_with(
 /// # Errors
 ///
 /// As [`ServerBuilder::build`].
-#[deprecated(
-    since = "0.0.0",
-    note = "use `ServerBuilder` with `ClientAuth::Verifier`"
-)]
+#[deprecated(note = "use `ServerBuilder` with `ClientAuth::Verifier`")]
 pub fn server_config_with_verifier(
     identity: &Identity,
     verifier: Arc<dyn ClientCertVerifier>,

@@ -274,10 +274,8 @@ fn pairing_runs_under_the_devices_own_tls_1_2_policy() {
     let (server, client, desk) = (device(&hand), device(&hand), desk(&hand));
     let mut policy = coqui_peer_tls::Policy::intermediate();
     policy.tls_versions = vec![coqui_peer_tls::TlsVersion::V1_2];
-    let config = PairConfig {
-        policy,
-        ..PairConfig::default()
-    };
+    let mut config = PairConfig::default();
+    config.policy = policy;
     let shown = desk.show_pin().unwrap();
     let (joined, served) = typed(&server, &client, &desk, &shown.pin, &config);
     joined.unwrap();
@@ -798,9 +796,10 @@ fn a_dialer_gives_up_after_its_timeout() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let held = thread::spawn(move || listener.accept().map(|(socket, _)| socket));
-    let config = PairConfig {
-        timeout: Duration::from_millis(200),
-        ..PairConfig::default()
+    let config = {
+        let mut config = PairConfig::default();
+        config.timeout = Duration::from_millis(200);
+        config
     };
     let shown = Pin::parse(&CodeAlphabet::pin(), "000000").unwrap();
     let result = pair_dial(

@@ -160,16 +160,30 @@ async fn resumption_is_an_opt_in_reported_as_a_non_default() {
         );
         for _ in 0..2 {
             let (accepted, dialed) = link(&server_config, &client_config).await;
-            assert_eq!(accepted.unwrap(), HandshakeKind::Full, "{}", policy.name);
-            assert_eq!(dialed.unwrap(), HandshakeKind::Full, "{}", policy.name);
+            assert_eq!(
+                accepted.unwrap(),
+                HandshakeKind::Full,
+                "{:?}",
+                policy.tls_versions
+            );
+            assert_eq!(
+                dialed.unwrap(),
+                HandshakeKind::Full,
+                "{:?}",
+                policy.tls_versions
+            );
         }
     }
 
     let mut policy = Policy::modern();
     policy.allow_resumption = true;
     let built = server_config_with(&server, &client_pin, &[ALPN], &policy).unwrap();
-    assert_eq!(built.non_defaults.len(), 1);
-    assert_eq!(built.non_defaults[0].setting, "allow_resumption");
+    let settings: Vec<&str> = built
+        .non_defaults
+        .iter()
+        .map(|non_default| non_default.setting.as_str())
+        .collect();
+    assert_eq!(settings, ["allow_resumption", "tls_versions"]);
     assert_eq!(built.non_defaults[0].value, "true");
     let server_config = Arc::new(built.config);
     let client_config = Arc::new(
@@ -235,8 +249,8 @@ async fn server_tls_configurations_resume_only_when_allowed() {
         );
         for _ in 0..2 {
             let (accepted, dialed) = link_server_tls(&server_config, &client_config).await;
-            assert_eq!(accepted, HandshakeKind::Full, "{}", policy.name);
-            assert_eq!(dialed, HandshakeKind::Full, "{}", policy.name);
+            assert_eq!(accepted, HandshakeKind::Full, "{:?}", policy.tls_versions);
+            assert_eq!(dialed, HandshakeKind::Full, "{:?}", policy.tls_versions);
         }
     }
 
@@ -248,10 +262,10 @@ async fn server_tls_configurations_resume_only_when_allowed() {
         .iter()
         .map(|non_default| non_default.setting.as_str())
         .collect();
-    assert_eq!(settings, ["allow_resumption"]);
+    assert_eq!(settings, ["allow_resumption", "tls_versions"]);
     let server_config = Arc::new(built.config);
     let built = client_config_without_identity_with(&server_pin, &[ALPN], &policy).unwrap();
-    assert_eq!(built.non_defaults.len(), 1);
+    assert_eq!(built.non_defaults.len(), 2);
     let client_config = Arc::new(built.config);
     let (accepted, _) = link_server_tls(&server_config, &client_config).await;
     assert_eq!(accepted, HandshakeKind::Full);

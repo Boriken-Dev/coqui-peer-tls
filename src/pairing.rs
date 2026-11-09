@@ -22,7 +22,7 @@ use crate::config::{ClientAuth, ClientBuilder, ServerBuilder, crypto_provider};
 use crate::error::PeerError;
 use crate::identity::{Identity, PeerIdentity};
 use crate::policy::Policy;
-use crate::stream::{PeerAddr, SERVER_NAME, accept_from_as, dial_named};
+use crate::stream::{Addressed, PeerAddr, SERVER_NAME, accept_from_as, dial_named};
 use crate::trust::{Pins, Trust};
 
 /// The default ALPN of a pairing connection.
@@ -35,72 +35,29 @@ pub const EXPORTER_LABEL: &[u8] = b"EXPORTER-coqui-pair";
 /// The TLS side of pairing: the device's own [`Policy`] and the ALPN that marks a pairing
 /// connection. Nothing here sets a TLS version or suite; the policy does.
 ///
-/// [`PairConfig::builder`] sets it by name; with the `guatiao` feature it is also the settings
-/// type a file or a form fills (`alpn` as text, `timeout` as `[secs, nanos]` or seconds).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "guatiao",
-    derive(guatiao::ToValue, guatiao::FromValue, guatiao::Schema),
-    map(deny_unknown_fields)
-)]
+/// Plain data: start from [`Default`] and assign the fields. It is a guatiao value, the type a
+/// file or a form fills (`alpn` as text, `timeout` as a number of seconds, `[secs, nanos]` or
+/// `{secs, nanos}`), and `#[non_exhaustive]`.
+#[derive(Debug, Clone, PartialEq, Eq, guatiao::ToValue, guatiao::FromValue, guatiao::Schema)]
+#[map(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PairConfig {
     /// The policy both pairing configurations are built with. Default [`Policy::default`].
-    #[cfg_attr(feature = "guatiao", map(default))]
+    #[map(default)]
     pub policy: Policy,
     /// The pairing ALPN; only a connection that negotiated it carries a pairing exchange, and
     /// only the configurations built here admit a key-proven certificate nobody trusts yet.
     /// Default [`PAIR_ALPN`].
-    #[cfg_attr(
-        feature = "guatiao",
-        map(default = PAIR_ALPN.to_vec(), with = crate::settings::alpn_text)
-    )]
+    #[map(default = PAIR_ALPN.to_vec(), with = crate::settings::alpn_text)]
     pub alpn: Vec<u8>,
     /// How long one side's whole exchange may take, the TLS handshake included: the joiner's
     /// dial and finish together, the responder's accept. `Duration::MAX` waits forever. Default
     /// 15 minutes, longer than the default `device_ttl` an operator has to approve.
-    #[cfg_attr(feature = "guatiao", map(default = DEFAULT_TIMEOUT))]
+    #[map(default = DEFAULT_TIMEOUT)]
     pub timeout: Duration,
 }
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-
-impl PairConfig {
-    /// A builder that starts from the defaults.
-    pub fn builder() -> PairConfigBuilder {
-        PairConfigBuilder(Self::default())
-    }
-}
-
-/// Builds a [`PairConfig`] by setting name: [`PairConfig::builder`], the settings, then
-/// [`build`](Self::build).
-#[derive(Debug, Clone)]
-#[must_use]
-pub struct PairConfigBuilder(PairConfig);
-
-impl PairConfigBuilder {
-    /// The policy both pairing configurations are built with.
-    pub fn policy(mut self, policy: Policy) -> Self {
-        self.0.policy = policy;
-        self
-    }
-
-    /// The pairing ALPN.
-    pub fn alpn(mut self, alpn: impl Into<Vec<u8>>) -> Self {
-        self.0.alpn = alpn.into();
-        self
-    }
-
-    /// How long one side's whole exchange may take; `Duration::MAX` waits forever.
-    pub fn timeout(mut self, timeout: Duration) -> Self {
-        self.0.timeout = timeout;
-        self
-    }
-
-    /// The settings.
-    pub fn build(self) -> PairConfig {
-        self.0
-    }
-}
 
 impl Default for PairConfig {
     fn default() -> Self {
@@ -416,6 +373,7 @@ pub fn pair_accept<S: Read + Write + PeerAddr + ReadTimeout + WriteTimeout>(
 /// # Errors
 ///
 /// As [`pair_accept`].
+#[deprecated(note = "wrap the stream in `Addressed::new(stream, source)` and use `pair_accept`")]
 pub fn pair_accept_from<S: Read + Write + ReadTimeout + WriteTimeout>(
     stream: S,
     source: SocketAddr,
@@ -424,7 +382,13 @@ pub fn pair_accept_from<S: Read + Write + ReadTimeout + WriteTimeout>(
     desk: &PairingDesk,
     config: &PairConfig,
 ) -> Result<Paired, PeerError> {
-    pair_accept_as(stream, (Some(source), None), identity, store, desk, config)
+    pair_accept(
+        Addressed::new(stream, source),
+        identity,
+        store,
+        desk,
+        config,
+    )
 }
 
 fn pair_accept_as<S: Read + Write + ReadTimeout + WriteTimeout>(

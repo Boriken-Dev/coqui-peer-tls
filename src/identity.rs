@@ -226,13 +226,16 @@ impl Identity {
 }
 
 /// Generates a self-signed ECDSA P-256 identity without writing it: [`Identity::builder`], the
-/// validity, then [`build`](Self::build).
+/// validity, then [`generate`](Self::generate).
 ///
 /// With nothing set the certificate is valid for rcgen's default period (decades), as
 /// [`Identity::generate`] makes it. Every generated certificate has the common name
 /// `coqui-peer`, a DNS subjectAltName [`SERVER_NAME`](crate::SERVER_NAME), a
 /// subjectKeyIdentifier and basicConstraints `CA:FALSE`. Peers pin it by fingerprint, so the
 /// name is not checked. Times are whole seconds: both are truncated.
+///
+/// The end of the validity is one setting: [`not_after`](Self::not_after) and
+/// [`valid_for`](Self::valid_for) each set it, and the last one called wins.
 ///
 /// For WebTransport's `serverCertificateHashes`, which accepts only a certificate whose whole
 /// validity period is at most 14 days, use `valid_for(Duration::from_secs(14 * 86_400))` at most
@@ -243,8 +246,15 @@ impl Identity {
 #[must_use]
 pub struct IdentityBuilder {
     not_before: Option<SystemTime>,
-    not_after: Option<SystemTime>,
-    valid_for: Option<Duration>,
+    end: Option<End>,
+}
+
+/// Where the validity ends.
+#[cfg(feature = "generate")]
+#[derive(Debug, Clone, Copy)]
+enum End {
+    At(SystemTime),
+    After(Duration),
 }
 
 #[cfg(feature = "generate")]
@@ -255,16 +265,16 @@ impl IdentityBuilder {
         self
     }
 
-    /// The last instant the certificate is valid. Not with [`valid_for`](Self::valid_for).
+    /// The last instant the certificate is valid. Replaces [`valid_for`](Self::valid_for).
     pub fn not_after(mut self, at: SystemTime) -> Self {
-        self.not_after = Some(at);
+        self.end = Some(End::At(at));
         self
     }
 
     /// How long the certificate is valid from `not_before`, from now when that is not set.
-    /// Not with [`not_after`](Self::not_after).
+    /// Replaces [`not_after`](Self::not_after).
     pub fn valid_for(mut self, validity: Duration) -> Self {
-        self.valid_for = Some(validity);
+        self.end = Some(End::After(validity));
         self
     }
 
@@ -272,10 +282,10 @@ impl IdentityBuilder {
     ///
     /// # Errors
     ///
-    /// [`PeerError::Certificate`] when `valid_for` is under one second or comes with
-    /// `not_after`, when `not_after` is not at least one second after `not_before`, when either
-    /// is before 1970 or out of range, or when key generation fails.
-    pub fn build(self) -> Result<Identity, PeerError> {
+    /// [`PeerError::Certificate`] when `valid_for` is under one second, when `not_after` is not
+    /// at least one second after `not_before`, when either is before 1970 or out of range, or
+    /// when key generation fails.
+    pub fn generate(self) -> Result<Identity, PeerError> {
         let seconds = |at: SystemTime| -> Result<time::OffsetDateTime, PeerError> {
             let since = at
                 .duration_since(UNIX_EPOCH)
@@ -283,9 +293,8 @@ impl IdentityBuilder {
             let since = i64::try_from(since.as_secs()).map_err(|_| PeerError::Certificate)?;
             time::OffsetDateTime::from_unix_timestamp(since).map_err(|_| PeerError::Certificate)
         };
-        let (not_before, not_after) = match self.valid_for {
-            Some(_) if self.not_after.is_some() => return Err(PeerError::Certificate),
-            Some(validity) => {
+        let (not_before, not_after) = match self.end {
+            Some(End::After(validity)) => {
                 if validity < Duration::from_secs(1) {
                     return Err(PeerError::Certificate);
                 }
@@ -293,7 +302,8 @@ impl IdentityBuilder {
                 let end = start.checked_add(validity).ok_or(PeerError::Certificate)?;
                 (Some(start), Some(end))
             }
-            None => (self.not_before, self.not_after),
+            Some(End::At(end)) => (self.not_before, Some(end)),
+            None => (self.not_before, None),
         };
         let mut parameters = Identity::parameters()?;
         if let Some(at) = not_before {
@@ -338,26 +348,23 @@ impl Identity {
     ///
     /// # Errors
     ///
-    /// As [`IdentityBuilder::build`].
-    #[deprecated(since = "0.0.0", note = "use `Identity::builder().valid_for(..)`")]
+    /// As [`IdentityBuilder::generate`].
+    #[deprecated(note = "use `Identity::builder().valid_for(..)`")]
     pub fn generate_valid_for(validity: Duration) -> Result<Self, PeerError> {
-        Self::builder().valid_for(validity).build()
+        Self::builder().valid_for(validity).generate()
     }
 
     /// Creates a self-signed ECDSA P-256 identity valid from `not_before` to `not_after`.
     ///
     /// # Errors
     ///
-    /// As [`IdentityBuilder::build`].
-    #[deprecated(
-        since = "0.0.0",
-        note = "use `Identity::builder().not_before(..).not_after(..)`"
-    )]
+    /// As [`IdentityBuilder::generate`].
+    #[deprecated(note = "use `Identity::builder().not_before(..).not_after(..)`")]
     pub fn generate_with(not_before: SystemTime, not_after: SystemTime) -> Result<Self, PeerError> {
         Self::builder()
             .not_before(not_before)
             .not_after(not_after)
-            .build()
+            .generate()
     }
 
     /// rcgen writes the subjectKeyIdentifier only beside basicConstraints, hence
@@ -421,7 +428,7 @@ mod tests {
             .as_secs();
         let identity = Identity::builder()
             .valid_for(Duration::from_secs(14 * DAY))
-            .build()
+            .generate()
             .unwrap();
         let after = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -441,7 +448,7 @@ mod tests {
         let identity = Identity::builder()
             .not_before(start)
             .not_after(end)
-            .build()
+            .generate()
             .unwrap();
         assert_eq!(
             window(&identity),
@@ -459,12 +466,12 @@ mod tests {
             Identity::generate().unwrap(),
             Identity::builder()
                 .valid_for(Duration::from_secs(14 * DAY))
-                .build()
+                .generate()
                 .unwrap(),
             Identity::builder()
                 .not_before(start)
                 .not_after(start + Duration::from_secs(DAY))
-                .build()
+                .generate()
                 .unwrap(),
         ] {
             let (_, certificate) =
@@ -499,13 +506,13 @@ mod tests {
     #[test]
     fn an_empty_or_inverted_window_is_refused() {
         assert!(matches!(
-            Identity::builder().valid_for(Duration::ZERO).build(),
+            Identity::builder().valid_for(Duration::ZERO).generate(),
             Err(PeerError::Certificate)
         ));
         assert!(matches!(
             Identity::builder()
                 .valid_for(Duration::from_millis(999))
-                .build(),
+                .generate(),
             Err(PeerError::Certificate)
         ));
         let now = SystemTime::now();
@@ -513,7 +520,7 @@ mod tests {
             Identity::builder()
                 .not_before(now)
                 .not_after(now - Duration::from_secs(60))
-                .build(),
+                .generate(),
             Err(PeerError::Certificate)
         ));
     }

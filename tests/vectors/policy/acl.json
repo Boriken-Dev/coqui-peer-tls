@@ -1,5 +1,4 @@
 {
-  "name": "intermediate",
   "tls_versions": [
     "1.2",
     "1.3"
@@ -27,10 +26,12 @@
   "waiting": {
     "per_source": 8,
     "total": 1000,
-    "rerecord_secs": 60
+    "rerecord": [
+      60,
+      0
+    ]
   },
   "acl": {
-    "default": "deny",
     "rule": [
       {
         "action": "permit",
@@ -42,12 +43,15 @@
       {
         "action": "permit",
         "source": "any",
-        "fingerprint": "sha256:abababababababababababababababababababababababababababababababab"
+        "fingerprint": "sha256:abababababababababababababababababababababababababababababababab",
+        "log": false
       },
       {
         "action": "deny",
-        "source": "any"
+        "source": "any",
+        "log": false
       }
-    ]
+    ],
+    "default": "deny"
   }
 }

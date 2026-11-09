@@ -18,9 +18,10 @@ use rustls::{Connection, SignatureScheme};
 const ALPN: &[u8] = b"profiles-test/1";
 
 fn with(profiles: &[CipherProfile]) -> Policy {
-    Policy {
-        cipher_profiles: profiles.to_vec(),
-        ..Policy::default()
+    {
+        let mut policy = Policy::default();
+        policy.cipher_profiles = profiles.to_vec();
+        policy
     }
 }
 
@@ -125,17 +126,19 @@ fn fips_140_3_compliant_offers_no_chacha20_x25519_alone_or_ed25519() {
 fn fips_140_3_compliant_refuses_a_chacha20_only_or_x25519_only_peer() -> Result<(), PeerError> {
     let (server, client) = (Identity::generate()?, Identity::generate()?);
     let fips = with(&[CipherProfile::Fips1403Compliant]);
-    let chacha = Policy {
-        cipher_suites: Some(vec![
+    let chacha = {
+        let mut policy = Policy::default();
+        policy.cipher_suites = Some(vec![
             "TLS13_CHACHA20_POLY1305_SHA256".to_owned(),
             "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256".to_owned(),
-        ]),
-        ..Policy::default()
+        ]);
+        policy
     };
     assert!(connect(&fips, &server, &chacha, &client).is_err());
-    let x25519 = Policy {
-        kx_groups: Some(vec!["X25519".to_owned()]),
-        ..Policy::default()
+    let x25519 = {
+        let mut policy = Policy::default();
+        policy.kx_groups = Some(vec!["X25519".to_owned()]);
+        policy
     };
     assert!(connect(&fips, &server, &x25519, &client).is_err());
     // A default peer meets it.
@@ -172,9 +175,10 @@ fn cnsa_1_refuses_a_p256_only_peer_and_meets_a_p384_one() -> Result<(), PeerErro
     let (server, client) = (p384(), p384());
     let cnsa = with(&[CipherProfile::Cnsa1]);
     assert_eq!(groups(&cnsa), ["secp384r1"]);
-    let p256 = Policy {
-        kx_groups: Some(vec!["secp256r1".to_owned()]),
-        ..Policy::default()
+    let p256 = {
+        let mut policy = Policy::default();
+        policy.kx_groups = Some(vec!["secp256r1".to_owned()]);
+        policy
     };
     assert!(connect(&cnsa, &server, &p256, &client).is_err());
     let session = connect(&cnsa, &server, &cnsa, &client)?;
@@ -210,9 +214,10 @@ fn a_profile_set_leaving_no_suite_for_a_version_drops_it() {
             .iter()
             .all(|suite| suite.starts_with("TLS_ECDHE"))
     );
-    let empty = Policy {
-        cipher_profiles: Vec::new(),
-        ..Policy::default()
+    let empty = {
+        let mut policy = Policy::default();
+        policy.cipher_profiles = Vec::new();
+        policy
     };
     assert!(matches!(empty.check(), Err(PeerError::Policy(_))));
 }
@@ -231,9 +236,10 @@ fn the_validated_profile_needs_the_fips_feature() {
 #[cfg(not(feature = "aws-lc"))]
 #[test]
 fn aws_lc_needs_its_feature() {
-    let policy = Policy {
-        crypto: coqui_peer_tls::Crypto::AwsLc,
-        ..Policy::default()
+    let policy = {
+        let mut policy = Policy::default();
+        policy.crypto = coqui_peer_tls::Crypto::AwsLc;
+        policy
     };
     const { assert!(!coqui_peer_tls::Crypto::AWS_LC_AVAILABLE) };
     assert!(matches!(policy.check(), Err(PeerError::Policy(_))));
@@ -245,9 +251,10 @@ mod aws_lc {
     use coqui_peer_tls::Crypto;
 
     fn on_aws_lc(profiles: &[CipherProfile]) -> Policy {
-        Policy {
-            crypto: Crypto::AwsLc,
-            ..with(profiles)
+        {
+            let mut policy = with(profiles);
+            policy.crypto = Crypto::AwsLc;
+            policy
         }
     }
 
@@ -325,9 +332,10 @@ mod fips {
     fn a_validated_configuration_rustls_does_not_report_fips_is_refused() -> Result<(), PeerError> {
         let identity = Identity::generate()?;
         // TLS 1.2 without the extended master secret is not FIPS.
-        let loose = Policy {
-            require_ems: false,
-            ..with(&[CipherProfile::Fips1403Validated])
+        let loose = {
+            let mut policy = with(&[CipherProfile::Fips1403Validated]);
+            policy.require_ems = false;
+            policy
         };
         let Err(PeerError::Policy(message)) =
             server_config_with(&identity, &Trust::AnyWithKeyProof, &[ALPN], &loose)

@@ -3,7 +3,7 @@
 //!
 //! Regenerating them is a format change:
 //! `cargo test -p coqui-peer-tls --all-features --test policy_vectors -- --ignored regenerate`
-#![cfg(all(feature = "guatiao", feature = "acl"))]
+#![cfg(feature = "acl")]
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -40,10 +40,11 @@ fn policies() -> Vec<(&'static str, Policy)> {
         rules: vec![permit, named, Rule::new(Action::Deny, IpNet::Any)],
         default: Action::Deny,
     });
-    let profiles = Policy {
-        cipher_profiles: vec![CipherProfile::Fips1403Compliant, CipherProfile::Cnsa1],
-        crypto: Crypto::AwsLc,
-        ..Policy::default()
+    let profiles = {
+        let mut policy = Policy::default();
+        policy.cipher_profiles = vec![CipherProfile::Fips1403Compliant, CipherProfile::Cnsa1];
+        policy.crypto = Crypto::AwsLc;
+        policy
     };
     vec![
         ("modern", Policy::modern()),
@@ -94,11 +95,9 @@ fn each_vector_reads_back_to_its_policy_in_both_encodings_byte_for_byte() {
 
 #[test]
 fn a_document_names_what_differs_from_the_intermediate_preset_and_nothing_else() {
-    let policy = from_toml(
-        "name = \"mine\"\ncheck_validity = false\npin_digests = [\"sha256\"]\nallow_resumption = true\n",
-    )
-    .unwrap();
-    assert_eq!(policy.name, "mine");
+    let policy =
+        from_toml("check_validity = false\npin_digests = [\"sha256\"]\nallow_resumption = true\n")
+            .unwrap();
     assert!(!policy.check_validity);
     assert!(policy.allow_resumption);
     assert_eq!(policy.tls_versions.len(), 2);
@@ -160,8 +159,8 @@ fn regenerate() {
 #[test]
 fn a_consumer_reads_a_document_over_its_own_profile() {
     let mut mine = Policy::intermediate();
-    mine.name = "mine".to_owned();
     mine.waiting.total = 50;
+    mine.waiting.per_source = 3;
     let document = guatiao_serde::text::toml::from_str(
         "check_validity = false",
         guatiao::Alloc::rust(),
@@ -169,7 +168,6 @@ fn a_consumer_reads_a_document_over_its_own_profile() {
     )
     .unwrap();
     let policy = Policy::from_value_over(&mine, &document).unwrap();
-    assert_eq!(policy.name, "mine");
     assert_eq!(policy.waiting.total, 50);
     assert!(!policy.check_validity);
     assert_eq!(policy.tls_versions.len(), 2);
@@ -193,4 +191,112 @@ fn the_serde_impls_forward_to_the_same_form() {
     .unwrap();
     assert!(!over.check_validity);
     assert_eq!(over.tls_versions, Policy::modern().tls_versions);
+}
+
+fn value_of(text: &str) -> guatiao::Value {
+    guatiao_serde::text::toml::from_str(text, guatiao::Alloc::rust(), plain()).unwrap()
+}
+
+#[test]
+fn a_nested_key_over_a_base_replaces_that_key_and_keeps_its_siblings() {
+    let mut mine = Policy::intermediate();
+    mine.waiting.total = 50;
+    mine.waiting.per_source = 3;
+    mine.pin_digests = vec![coqui_peer_tls::Digest::Sha256];
+    let policy = Policy::from_value_over(
+        &mine,
+        &value_of(
+            "[waiting]
+per_source = 9
+",
+        ),
+    )
+    .unwrap();
+    assert_eq!(policy.waiting.per_source, 9);
+    assert_eq!(policy.waiting.total, 50);
+    assert_eq!(policy.waiting.rerecord, mine.waiting.rerecord);
+    assert_eq!(policy.pin_digests, mine.pin_digests);
+    // A list replaces whole.
+    let policy = Policy::from_value_over(&mine, &value_of("pin_digests = [\"sha384\"]")).unwrap();
+    assert_eq!(policy.pin_digests, [coqui_peer_tls::Digest::Sha384]);
+    // A duration is a number of seconds in a hand-written document.
+    let policy = Policy::from_value_over(
+        &mine,
+        &value_of(
+            "[waiting]
+rerecord = 5",
+        ),
+    )
+    .unwrap();
+    assert_eq!(policy.waiting.rerecord, core::time::Duration::from_secs(5));
+}
+
+/// The earlier text form still reads through `from_value_over`, over the base given.
+#[test]
+fn the_earlier_keys_read_over_a_base() {
+    let mut mine = Policy::modern();
+    mine.waiting.total = 50;
+    let document = value_of(
+        "policy_version = 1
+profile = \"legacy\"
+waiting_per_source = 4
+waiting_rerecord_secs = 7
+",
+    );
+    let policy = Policy::from_value_over(&mine, &document).unwrap();
+    assert_eq!(policy.tls_versions, Policy::modern().tls_versions);
+    assert_eq!(policy.waiting.per_source, 4);
+    assert_eq!(policy.waiting.total, 50);
+    assert_eq!(policy.waiting.rerecord, core::time::Duration::from_secs(7));
+}
+
+#[test]
+fn non_defaults_name_every_changed_setting_by_its_key_path() {
+    assert!(Policy::default().non_defaults().is_empty());
+    let mut policy = Policy::default();
+    policy.cipher_suites = Some(vec!["TLS13_AES_256_GCM_SHA384".to_owned()]);
+    policy.kx_groups = Some(vec!["X25519".to_owned()]);
+    policy.cipher_profiles = vec![CipherProfile::Cnsa1];
+    policy.crypto = Crypto::AwsLc;
+    policy.waiting.per_source = 100;
+    policy.waiting.total = 5_000;
+    policy.waiting.rerecord = core::time::Duration::from_secs(1);
+    let settings: Vec<String> = policy
+        .non_defaults()
+        .into_iter()
+        .map(|setting| setting.setting)
+        .collect();
+    assert_eq!(
+        settings,
+        [
+            "cipher_profiles",
+            "cipher_suites",
+            "crypto",
+            "kx_groups",
+            "waiting.per_source",
+            "waiting.rerecord",
+            "waiting.total"
+        ]
+    );
+}
+
+/// The committed alpha.1 documents decode to the policies they described.
+#[cfg(feature = "serde")]
+#[test]
+fn the_alpha_1_documents_still_decode() {
+    for (name, policy) in policies() {
+        let text =
+            fs::read_to_string(directory().join("alpha1").join(format!("{name}.toml"))).unwrap();
+        assert_eq!(::toml::from_str::<Policy>(&text).unwrap(), policy, "{name}");
+        let over = Policy::deserialize_over(
+            Policy::modern(),
+            ::toml::Deserializer::parse(&text).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(over.waiting, policy.waiting, "{name}");
+    }
+    // An unknown profile is still refused there.
+    assert!(::toml::from_str::<Policy>("profile = \"bespoke\"").is_err());
+    // A version other than 1 is ignored, as the key is.
+    assert!(::toml::from_str::<Policy>("policy_version = 2").is_ok());
 }

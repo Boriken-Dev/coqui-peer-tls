@@ -73,7 +73,7 @@ impl ServerConfigs {
     /// # Errors
     ///
     /// As [`ServerBuilder::configs`].
-    #[deprecated(since = "0.0.0", note = "use `ServerBuilder::configs`")]
+    #[deprecated(note = "use `ServerBuilder::configs`")]
     pub fn new(
         identity: &Identity,
         trust: &Trust,
@@ -91,10 +91,7 @@ impl ServerConfigs {
     /// # Errors
     ///
     /// As [`ServerBuilder::configs`].
-    #[deprecated(
-        since = "0.0.0",
-        note = "use `ServerBuilder` with `ClientAuth::Verifier`, then `configs`"
-    )]
+    #[deprecated(note = "use `ServerBuilder` with `ClientAuth::Verifier`, then `configs`")]
     pub fn with_verifier(
         identity: &Identity,
         verifier: Arc<dyn ClientCertVerifier>,
@@ -112,10 +109,7 @@ impl ServerConfigs {
     /// # Errors
     ///
     /// As [`ServerBuilder::configs`].
-    #[deprecated(
-        since = "0.0.0",
-        note = "use `ServerBuilder` with `ClientAuth::None`, then `configs`"
-    )]
+    #[deprecated(note = "use `ServerBuilder` with `ClientAuth::None`, then `configs`")]
     pub fn without_client_auth(
         identity: &Identity,
         alpn: &[&[u8]],
@@ -127,14 +121,14 @@ impl ServerConfigs {
             .configs()
     }
 
-    /// Every setting of the policy looser than the default, as the configuration builders
+    /// Every setting of the policy that differs from the default, as the configuration builders
     /// report it.
     pub fn non_defaults(&self) -> &[NonDefault] {
         &self.non_defaults
     }
 
     /// The old name of [`non_defaults`](Self::non_defaults).
-    #[deprecated(since = "0.0.0", note = "renamed to `non_defaults`")]
+    #[deprecated(note = "renamed to `non_defaults`")]
     pub fn weakened(&self) -> &[NonDefault] {
         self.non_defaults()
     }

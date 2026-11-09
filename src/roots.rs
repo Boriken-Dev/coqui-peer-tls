@@ -56,7 +56,7 @@ impl Roots {
     }
 
     /// The CA certificates in the PEM file at `path`, read when the verifier is built (by
-    /// [`Trust::server_cert_verifier_with`](crate::Trust::server_cert_verifier_with) or a
+    /// [`PeerServerVerifier::new`](crate::PeerServerVerifier::new) or a
     /// client configuration), as by [`bundle_pem`](Roots::bundle_pem).
     pub fn bundle_file(path: impl Into<PathBuf>) -> Self {
         Self(RootsKind::File(path.into()))

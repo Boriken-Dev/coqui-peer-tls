@@ -12,6 +12,11 @@ fn assert_send_sync<T: Send + Sync>() {}
 #[test]
 fn every_public_type_is_send_and_sync() {
     assert_send_sync::<Built<rustls::ServerConfig>>();
+    assert_send_sync::<coqui_peer_tls::Addressed<std::net::TcpStream>>();
+    assert_send_sync::<coqui_peer_tls::ClientAuth>();
+    assert_send_sync::<coqui_peer_tls::ServerAuth>();
+    assert_send_sync::<coqui_peer_tls::PeerClientVerifierBuilder>();
+    assert_send_sync::<coqui_peer_tls::TlsSettings>();
     assert_send_sync::<Identity>();
     assert_send_sync::<PairConfig>();
     assert_send_sync::<PeerClientVerifier>();
@@ -61,7 +66,7 @@ fn the_default_server_name_is_server_name() {
 
 #[test]
 fn a_policy_reports_non_defaults_with_coqui_peers_type() {
-    let mut policy = Policy::modern();
+    let mut policy = Policy::default();
     policy.allow_resumption = true;
     let listed: Vec<coqui_peer::NonDefault> = policy.non_defaults();
     assert_eq!(
@@ -77,7 +82,7 @@ fn a_policy_reports_non_defaults_with_coqui_peers_type() {
 #[cfg(feature = "acl")]
 #[test]
 fn an_acl_non_default_is_converted_field_for_field() {
-    let mut policy = Policy::modern();
+    let mut policy = Policy::default();
     policy.acl = Some(coqui_net_acl::Acl {
         rules: Vec::new(),
         default: coqui_net_acl::Action::Permit,
@@ -90,7 +95,7 @@ fn an_acl_non_default_is_converted_field_for_field() {
 
 #[test]
 fn a_policy_holds_its_waiting_limits_as_one_value() {
-    let mut policy = Policy::modern();
+    let mut policy = Policy::default();
     assert_eq!(policy.waiting, coqui_peer::WaitingLimits::default());
     policy.waiting.total = 5_000;
     policy.waiting.rerecord = core::time::Duration::from_secs(5);
@@ -99,7 +104,7 @@ fn a_policy_holds_its_waiting_limits_as_one_value() {
         .into_iter()
         .map(|w| w.setting)
         .collect();
-    assert_eq!(settings, ["waiting_total", "waiting_rerecord_secs"]);
+    assert_eq!(settings, ["waiting.rerecord", "waiting.total"]);
 }
 
 #[cfg(feature = "ca")]
@@ -113,7 +118,9 @@ fn a_ca_file_that_cannot_be_read_is_named_in_the_error() {
         san: Vec::new(),
         ip_in_dns: true,
     });
-    let refused = trust.client_cert_verifier().expect_err("no file");
+    let refused = PeerClientVerifier::builder(&trust)
+        .build()
+        .expect_err("no file");
     assert!(matches!(
         &refused,
         PeerError::CaFile { path: Some(named), certificate: None, read: Some(_) } if *named == path

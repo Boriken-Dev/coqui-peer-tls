@@ -8,16 +8,9 @@ use crate::error::PeerError;
 use crate::profiles::{CipherProfile, Crypto};
 use coqui_peer::{Digest, NonDefault, PeerId, WaitingLimits};
 
-/// The optional access control list under a name guatiao's derive does not read as an `Option`,
-/// so a `with` module converts it whole. The same type as `Option<Acl>`.
-#[cfg(feature = "acl")]
-type MaybeAcl = Option<coqui_net_acl::Acl>;
-
-/// The version of the serialized form of [`Policy`] before it became a guatiao value.
-#[deprecated(
-    since = "0.0.0",
-    note = "the text form no longer carries a version key"
-)]
+/// The `policy_version` of the 0.0.0-alpha.1 text form. A document may still name it; the key is
+/// ignored.
+#[deprecated(note = "the text form carries no version key")]
 pub const POLICY_VERSION: u32 = 1;
 
 /// A TLS protocol version. rustls offers 1.2 and 1.3 only: SSL 3, TLS 1.0 and 1.1 cannot be
@@ -68,25 +61,20 @@ impl FromStr for TlsVersion {
 ///
 /// Start from [`Policy::modern`], [`Policy::intermediate`], [`Policy::legacy`] or a policy of
 /// your own, then change any field. [`Default`] is intermediate (TLS 1.2 and 1.3). Nothing is
-/// silently non-default: [`non_defaults`](Policy::non_defaults) lists every setting looser than the
-/// default, and the configuration builders return that list.
+/// silently non-default: [`non_defaults`](Policy::non_defaults) lists every setting that differs from
+/// the default, and the configuration builders return that list.
 ///
-/// With the `guatiao` feature a policy is a guatiao value with a schema whose `default`s are the
-/// intermediate preset's: a document names only what differs, and an unknown key is refused.
-/// With `serde` it also reads and writes through any serde format.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "guatiao",
-    derive(guatiao::ToValue, guatiao::FromValue, guatiao::Schema),
-    map(deny_unknown_fields)
-)]
+/// A policy is a guatiao value with a schema whose `default`s are the intermediate preset's: a
+/// document names only what differs, and an unknown key is refused. With the `serde` feature it
+/// also reads and writes through any serde format.
+///
+/// The struct is `#[non_exhaustive]`: start from a preset and assign the fields to change.
+#[derive(Debug, Clone, PartialEq, Eq, guatiao::ToValue, guatiao::FromValue, guatiao::Schema)]
+#[map(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Policy {
-    /// A name for this policy, such as the preset it started from (`modern`, `intermediate`,
-    /// `legacy`). Informational: it changes nothing, and a consumer may name its own.
-    #[cfg_attr(feature = "guatiao", map(default = base().name))]
-    pub name: String,
     /// TLS versions offered and accepted. Non-empty.
-    #[cfg_attr(feature = "guatiao", map(default = base().tls_versions, with = crate::settings::texts))]
+    #[map(default = base().tls_versions, with = crate::settings::texts)]
     pub tls_versions: Vec<TlsVersion>,
     /// An allow-list of cipher suites by IANA name, for example `TLS13_AES_256_GCM_SHA384`.
     /// `None` allows every suite the cipher profiles give for [`tls_versions`](Self::tls_versions).
@@ -99,50 +87,50 @@ pub struct Policy {
     /// first listed, narrowed by the versions, the provider, [`cipher_suites`](Self::cipher_suites)
     /// and [`kx_groups`](Self::kx_groups). Every preset allows `[CipherProfile::Mozilla]`. Text
     /// key `cipher_profiles`.
-    #[cfg_attr(feature = "guatiao", map(default = base().cipher_profiles, with = crate::settings::texts))]
+    #[map(default = base().cipher_profiles, with = crate::settings::texts)]
     pub cipher_profiles: Vec<CipherProfile>,
     /// The crypto provider; `Crypto::Ring` in every preset. Text key `crypto`.
-    #[cfg_attr(feature = "guatiao", map(default, as_text))]
+    #[map(default = base().crypto, as_text)]
     pub crypto: Crypto,
     /// Digests a pin may use. Pins are compared in constant time whatever their digest.
-    #[cfg_attr(feature = "guatiao", map(default = base().pin_digests, with = crate::settings::texts))]
+    #[map(default = base().pin_digests)]
     pub pin_digests: Vec<Digest>,
     /// Whether a pinned certificate must be inside its validity dates.
-    #[cfg_attr(feature = "guatiao", map(default = base().check_validity))]
+    #[map(default = base().check_validity)]
     pub check_validity: bool,
     /// Whether a pinned peer may present a chain; strict refuses one.
-    #[cfg_attr(feature = "guatiao", map(default = base().allow_chain_when_pinned))]
+    #[map(default = base().allow_chain_when_pinned)]
     pub allow_chain_when_pinned: bool,
     /// Whether TLS sessions may be resumed. A resumed handshake skips the certificate
     /// verifiers, so a peer removed from the trust store or no longer pinned can reconnect
     /// on a session it already holds, and the access control list's fingerprint rules are not
     /// checked again (its address rules are). Every preset leaves it off; `non_defaults` reports it.
-    #[cfg_attr(feature = "guatiao", map(default = base().allow_resumption))]
+    #[map(default = base().allow_resumption)]
     pub allow_resumption: bool,
     /// Whether a TLS 1.2 connection must use the extended master secret (RFC 7627). Without it
     /// a TLS 1.2 session's keys and exporter are not bound to its handshake, which an attacker
     /// can use to synchronise two sessions (the triple handshake). `modern` and `intermediate`
     /// set it; `legacy` does not, for TLS 1.2 stacks older than RFC 7627. TLS 1.3 needs nothing
     /// like it.
-    #[cfg_attr(feature = "guatiao", map(default = base().require_ems))]
+    #[map(default = base().require_ems)]
     pub require_ems: bool,
     /// The bounds of a store-backed pin set's waiting queue: entries per source, entries in
     /// all, and how long before the same certificate from the same source is recorded again.
-    /// In the text form: `waiting_per_source`, `waiting_total` and `waiting_rerecord_secs`
-    /// (whole seconds).
-    #[cfg_attr(feature = "guatiao", map(default = base().waiting, with = crate::settings::waiting))]
+    /// In the text form a table: `per_source`, `total` and `rerecord` (a duration, a number of
+    /// seconds in a hand-written document).
+    #[map(default = base().waiting)]
     pub waiting: WaitingLimits,
     /// An ordered access control list for connecting clients, applied by every server
     /// configuration built under this policy: by address when the `ClientHello` arrives
     /// ([`Refusal::AddressDenied`](crate::Refusal::AddressDenied)) and by the client
     /// certificate's fingerprint before the trust store is consulted
     /// ([`Refusal::PeerDenied`](crate::Refusal::PeerDenied)). Its fingerprints may be written
-    /// in any spelling a [`PeerId`] parses, and are made canonical where a policy is read or
-    /// a configuration built; a rule naming something else, or a digest other than SHA-256,
-    /// is an error there. `None` for none.
+    /// in any spelling a [`PeerId`] parses, and are made canonical where a configuration is
+    /// built or a policy is read through [`from_value_over`](Policy::from_value_over) or serde; a
+    /// rule naming something else, or a digest other than SHA-256, is an error there and in
+    /// [`check`](Policy::check). `None` for none.
     #[cfg(feature = "acl")]
-    #[cfg_attr(feature = "guatiao", map(default, skip_serializing_if = Option::is_none, with = crate::settings::acl))]
-    pub acl: MaybeAcl,
+    pub acl: Option<coqui_net_acl::Acl>,
 }
 
 impl Default for Policy {
@@ -161,7 +149,6 @@ impl Policy {
     /// cannot speak 1.3.
     pub fn intermediate() -> Self {
         Self {
-            name: "intermediate".to_owned(),
             tls_versions: vec![TlsVersion::V1_2, TlsVersion::V1_3],
             cipher_suites: None,
             kx_groups: None,
@@ -184,7 +171,6 @@ impl Policy {
     /// certificate unencrypted).
     pub fn modern() -> Self {
         Self {
-            name: "modern".to_owned(),
             tls_versions: vec![TlsVersion::V1_3],
             ..Self::intermediate()
         }
@@ -195,7 +181,6 @@ impl Policy {
     /// TLS 1.3 `ClientHello` at all is served by setting `tls_versions` to TLS 1.2 alone.
     pub fn legacy() -> Self {
         let mut policy = Self::intermediate();
-        policy.name = "legacy".to_owned();
         policy.pin_digests.push(Digest::Sha1);
         policy.require_ems = false;
         policy
@@ -227,90 +212,49 @@ fn list<T: fmt::Display>(items: &[T]) -> String {
 }
 
 impl Policy {
-    /// Every setting looser than the default (intermediate) preset, as plain data. Empty for
-    /// `intermediate` and `modern`; `legacy` reports `pin_digests` and `require_ems`.
+    /// Every setting that differs from the default (intermediate) preset, as plain data named by
+    /// its key (`waiting.per_source`, `tls_versions`): the places where this policy's guatiao
+    /// value departs from the schema's defaults. Empty for `intermediate`; `modern` reports
+    /// `tls_versions` and `legacy` reports `pin_digests` and `require_ems`. Values are rendered
+    /// as [`NonDefault::from_difference`] renders them. With the `acl` feature, the list's own
+    /// non-default settings are added (`acl.default`).
     pub fn non_defaults(&self) -> Vec<NonDefault> {
-        self.non_defaults_against(&Self::default())
+        self.differences(None)
     }
 
     /// The old name of [`non_defaults`](Self::non_defaults).
-    #[deprecated(since = "0.0.0", note = "renamed to `non_defaults`")]
+    #[deprecated(note = "renamed to `non_defaults`")]
     pub fn weakened(&self) -> Vec<NonDefault> {
         self.non_defaults()
     }
 
-    /// Every setting looser than `baseline`, as plain data, for a consumer whose own baseline
-    /// is stricter than the default (`non_defaults_against(&Policy::modern())` reports TLS 1.2).
+    /// As [`non_defaults`](Self::non_defaults), against `baseline` instead of the defaults, for a
+    /// consumer whose own baseline differs from them (`non_defaults_against(&Policy::modern())`
+    /// reports TLS 1.2).
     pub fn non_defaults_against(&self, baseline: &Self) -> Vec<NonDefault> {
-        let strict = baseline;
-        let mut found = Vec::new();
-        let mut note = |setting: &str, value: String, strict: String| {
-            found.push(NonDefault {
-                setting: setting.to_owned(),
-                value,
-                default: strict,
-            });
-        };
-        if self
-            .tls_versions
-            .iter()
-            .any(|v| !strict.tls_versions.contains(v))
-        {
-            note(
-                "tls_versions",
-                list(&self.tls_versions),
-                list(&strict.tls_versions),
-            );
-        }
-        if self
-            .pin_digests
-            .iter()
-            .any(|d| !strict.pin_digests.contains(d))
-        {
-            note(
-                "pin_digests",
-                list(&self.pin_digests),
-                list(&strict.pin_digests),
-            );
-        }
-        if !self.check_validity {
-            note("check_validity", "false".to_owned(), "true".to_owned());
-        }
-        if self.allow_chain_when_pinned {
-            note(
-                "allow_chain_when_pinned",
-                "true".to_owned(),
-                "false".to_owned(),
-            );
-        }
-        if self.allow_resumption && !strict.allow_resumption {
-            note("allow_resumption", "true".to_owned(), "false".to_owned());
-        }
-        if !self.require_ems && strict.require_ems {
-            note("require_ems", "false".to_owned(), "true".to_owned());
-        }
-        let (waiting, strict_waiting) = (self.waiting, strict.waiting);
-        if waiting.per_source > strict_waiting.per_source {
-            note(
-                "waiting_per_source",
-                waiting.per_source.to_string(),
-                strict_waiting.per_source.to_string(),
-            );
-        }
-        if waiting.total > strict_waiting.total {
-            note(
-                "waiting_total",
-                waiting.total.to_string(),
-                strict_waiting.total.to_string(),
-            );
-        }
-        if waiting.rerecord < strict_waiting.rerecord {
-            note(
-                "waiting_rerecord_secs",
-                waiting.rerecord.as_secs().to_string(),
-                strict_waiting.rerecord.as_secs().to_string(),
-            );
-        }
+        self.differences(Some(baseline))
+    }
+
+    /// The generic walk: the schema, this policy's value and the baseline's (the schema's
+    /// defaults when `None`). Both are values of a derived type, so the walk cannot fail unless
+    /// the allocator does.
+    fn differences(&self, baseline: Option<&Self>) -> Vec<NonDefault> {
+        use guatiao::{Schema, ToValue};
+        const PLACEHOLDER: &str = "***";
+        let unbuildable = "a policy is a value that builds";
+        let schema = Policy::schema().expect(unbuildable);
+        let schema = guatiao::schema::SchemaRef::new(&schema).expect(unbuildable);
+        let value = self.to_value().expect(unbuildable);
+        let baseline = baseline.map(|baseline| baseline.to_value().expect(unbuildable));
+        #[cfg_attr(not(feature = "acl"), expect(unused_mut))]
+        let mut found: Vec<NonDefault> =
+            guatiao::schema::differences(schema, &value, baseline.as_ref(), PLACEHOLDER)
+                .expect(unbuildable)
+                .iter()
+                // The list is coqui-net-acl's to report, below.
+                .filter(|difference| difference.path.first().is_none_or(|key| key != "acl"))
+                .map(NonDefault::from_difference)
+                .collect();
         #[cfg(feature = "acl")]
         if let Some(acl) = &self.acl {
             // coqui-net-acl has no dependencies and keeps a NonDefault of its own, field for field.
@@ -324,7 +268,7 @@ impl Policy {
     }
 
     /// The old name of [`non_defaults_against`](Self::non_defaults_against).
-    #[deprecated(since = "0.0.0", note = "renamed to `non_defaults_against`")]
+    #[deprecated(note = "renamed to `non_defaults_against`")]
     pub fn weakened_against(&self, baseline: &Self) -> Vec<NonDefault> {
         self.non_defaults_against(baseline)
     }
@@ -441,40 +385,101 @@ impl Policy {
 }
 
 /// The preset every field of a document defaults to.
-#[cfg(feature = "guatiao")]
 fn base() -> Policy {
     Policy::intermediate()
 }
 
-#[cfg(feature = "guatiao")]
 impl Policy {
     /// Reads a policy document over `base` instead of the intermediate preset: the keys it
-    /// names replace the base's, and the rest are kept. A consumer with its own default
-    /// profile reads its configuration with this.
+    /// names replace the base's (a table such as `waiting` key by key, a list whole), and the
+    /// rest are kept. A consumer with its own default profile reads its configuration with
+    /// this.
+    ///
+    /// The keys of the 0.0.0-alpha.1 text form are read too, for one release: `policy_version`
+    /// and `profile` are ignored (the base is the preset), and the flat `waiting_per_source`,
+    /// `waiting_total` and `waiting_rerecord_secs` are the `waiting` table.
     ///
     /// # Errors
     ///
-    /// The reader's refusal of an unknown key or a value of the wrong type or form.
+    /// The reader's refusal of an unknown key or a value of the wrong type or form, and, with the
+    /// `acl` feature, of a rule whose fingerprint is not a SHA-256 peer id; the list's
+    /// fingerprints are made canonical.
     pub fn from_value_over(
         base: &Policy,
         document: &guatiao::Value,
     ) -> Result<Policy, guatiao::MapError> {
-        use guatiao::{FromValue, Map, ToValue};
-        let wrong = |_| guatiao::MapError::BadValue {
+        use guatiao::{FromValue, MergeMode, ToValue};
+        let unreadable = |error: &dyn fmt::Display| guatiao::MapError::BadValue {
             key: String::new(),
-            expected: "a policy that can be written as a value".to_owned(),
+            expected: error.to_string(),
         };
-        let mut merged = Map::from_value(&base.to_value().map_err(wrong)?)?;
-        for entry in Map::from_value(document)?.iter() {
-            merged.set(entry.key(), entry.value().clone());
+        let document = current_keys(document)?;
+        let base = base.to_value().map_err(|error| unreadable(&error))?;
+        let merged = MergeMode::Substitute
+            .merge(&base, &document, guatiao::Alloc::rust())
+            .map_err(|error| unreadable(&error))?;
+        #[cfg_attr(not(feature = "acl"), expect(unused_mut))]
+        let mut policy = Policy::from_value(&merged)?;
+        #[cfg(feature = "acl")]
+        if let Some(acl) = &policy.acl {
+            policy.acl = Some(crate::gate::canonical(acl).map_err(|error| unreadable(&error))?);
         }
-        Policy::from_value(&guatiao::Value::from(merged))
+        Ok(policy)
     }
+
+    /// The preset a 0.0.0-alpha.1 document names with `profile`, or the default.
+    #[cfg(feature = "serde")]
+    fn named_preset(document: &guatiao::Value) -> Result<Policy, guatiao::MapError> {
+        use guatiao::{FromValue, Map};
+        let map = Map::from_value(document)?;
+        match map.get("profile") {
+            Some(name) => {
+                let name = String::from_value(name)?;
+                Policy::preset(&name).map_err(|error| guatiao::MapError::BadValue {
+                    key: "profile".to_owned(),
+                    expected: error.to_string(),
+                })
+            }
+            None => Ok(Policy::default()),
+        }
+    }
+}
+
+/// `document` with the keys of the 0.0.0-alpha.1 text form rewritten to the current ones:
+/// `policy_version` and `profile` dropped, and the flat `waiting_*` keys moved into `waiting`.
+/// A document in the current form passes through unchanged.
+fn current_keys(document: &guatiao::Value) -> Result<guatiao::Value, guatiao::MapError> {
+    use guatiao::{FromValue, Map, Value};
+    let source = Map::from_value(document)?;
+    let mut waiting = match source.get("waiting") {
+        Some(table) => Map::from_value(table)?,
+        None => Map::new(),
+    };
+    let mut flat = false;
+    let mut out = Map::new();
+    for entry in source.iter() {
+        let moved = match entry.key() {
+            "policy_version" | "profile" => continue,
+            "waiting_per_source" => "per_source",
+            "waiting_total" => "total",
+            "waiting_rerecord_secs" => "rerecord",
+            key => {
+                out.set(key, entry.value().clone());
+                continue;
+            }
+        };
+        waiting.set(moved, entry.value().clone());
+        flat = true;
+    }
+    if flat {
+        out.set("waiting", Value::from(waiting));
+    }
+    Ok(Value::from(out))
 }
 
 #[cfg(feature = "serde")]
 mod text {
-    use guatiao_serde::{BridgeError, Presentation, Walked, from_deserializer};
+    use guatiao_serde::{Presentation, Walked};
     use serde::de::Error as _;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -482,7 +487,8 @@ mod text {
 
     impl Policy {
         /// Reads a policy document over `base` instead of the intermediate preset: the keys it
-        /// names replace the base's, and the rest are kept.
+        /// names replace the base's, and the rest are kept. See
+        /// [`from_value_over`](Policy::from_value_over) for the keys of the 0.0.0-alpha.1 text form.
         ///
         /// # Errors
         ///
@@ -505,14 +511,14 @@ mod text {
     }
 
     impl<'de> Deserialize<'de> for Policy {
-        /// Reads the guatiao form: every key optional, over the intermediate preset.
+        /// Reads the guatiao form over the intermediate preset, or over the preset a `profile`
+        /// key of the 0.0.0-alpha.1 text form names.
         fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            from_deserializer::<Policy, D>(deserializer, Presentation::new()).map_err(|error| {
-                match error {
-                    BridgeError::Format(error) => error,
-                    BridgeError::Refused(error) => D::Error::custom(error),
-                }
-            })
+            use serde::de::DeserializeSeed;
+            let document =
+                guatiao_serde::ValueSeed::new(guatiao::Alloc::rust()).deserialize(deserializer)?;
+            let base = Policy::named_preset(&document).map_err(D::Error::custom)?;
+            Policy::from_value_over(&base, &document).map_err(D::Error::custom)
         }
     }
 }

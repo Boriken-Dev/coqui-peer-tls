@@ -9,36 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- **Builders.** `ServerBuilder::new(&identity, ClientAuth)` and `ClientBuilder::new(trust)` build
-  a configuration by setting name (`alpn`, `policy`, `identity`, `verifier`, `settings`), then
-  `build()`; `ServerBuilder::configs()` gives the `ServerConfigs` of a listener. The choice the old
-  function names encoded is a value: `ClientAuth::{None, Required(Trust), Verifier(..)}`.
-  `PairConfig::builder()` and `Identity::builder()` (`not_before`, `not_after`, `valid_for`) the
-  same way.
-- Feature `guatiao`: `TlsSettings { alpn, policy }`, `Policy` and `PairConfig` derive guatiao's
-  `ToValue`, `FromValue` and `Schema`, so TOML, JSON and YAML read into them through
-  `guatiao-serde` and the schema carries the defaults; builders take `settings(TlsSettings)`.
-  `Policy::from_value_over` reads a document over a base policy.
+- **Builders.** `ServerBuilder::new(&identity, ClientAuth)` and `ClientBuilder::new(impl
+  Into<ServerAuth>)` build a configuration by setting name (`alpn`, `policy`, `identity`,
+  `settings`), then `build()`; `ServerBuilder::configs()` gives the `ServerConfigs` of a listener.
+  The choices the old function names encoded are values: `ClientAuth::{None, Required(Trust),
+  Verifier(..)}` for a server and `ServerAuth::{Trust(Trust), Verifier(..)}` for a client (a
+  `Trust` converts into it). `Identity::builder()` (`not_before`, `not_after`, `valid_for`, then
+  `generate()`) does the same for a generated identity; `valid_for` and `not_after` set one end,
+  and the last called wins.
+- `TlsSettings { alpn, policy }`, `Policy` and `PairConfig` derive guatiao's `ToValue`, `FromValue`
+  and `Schema` in every build, so TOML, JSON and YAML read into them through `guatiao-serde` and
+  the schema carries the defaults; builders take `settings(TlsSettings)`. `alpn` entries are text
+  of 1 to 255 bytes. `Policy::from_value_over` reads a document over a base policy, merging key by
+  key.
+- `PeerServerVerifier::new(&trust, &policy)` and `PeerClientVerifier::builder(&trust)` (`policy`,
+  `addresses`, `build`) are the verifiers; `Addressed::new(io, source).local(local)` wraps a stream
+  that cannot name its addresses, for `accept`, `pair_accept` and their async forms.
+- Coqui-net-acl's `Acl`, coqui-peer's `WaitingLimits` and `Digest` are guatiao values in their own
+  crates.
 
 ### Deprecated
 
-- Kept one release as one-line wrappers over the builders: `server_config`, `server_config_with`,
+- Kept one release, as wrappers over the new forms: `server_config`, `server_config_with`,
   `server_config_with_verifier`, `server_config_without_client_auth`,
   `server_config_without_client_auth_with`, `client_config`, `client_config_with`,
   `client_config_with_verifier`, `client_config_without_identity`,
   `client_config_without_identity_with`, `ServerConfigs::{new, with_verifier,
-  without_client_auth}`, `Identity::{generate_valid_for, generate_with}`, `Tls::{with_client,
-  with_server}` (now `client`, `server`), `TlsHandshake::with_local` (now `local`) and
-  `POLICY_VERSION`.
+  without_client_auth}`, `Trust::{client_cert_verifier, client_cert_verifier_with,
+  client_cert_verifier_for, server_cert_verifier, server_cert_verifier_with}`, `accept_from`,
+  `accept_at`, `asynch::{accept_from, accept_at, accept_with_from, pair_accept_from}`,
+  `pair_accept_from`, `with_source`, `Identity::{generate_valid_for, generate_with}`,
+  `Tls::{with_client, with_server}` (now `client`, `server`), `TlsHandshake::with_local` (now
+  `local`) and `POLICY_VERSION`.
 
 ### Changed
 
-- **Breaking: the text form of `Policy` is the guatiao form.** The `serde` feature now forwards to it
-  (it implies `guatiao`). The keys `policy_version` and `profile` are gone (a preset is a function,
-  or a document that writes its values; `name` replaces `profile` as free text), and the flat
-  `waiting_per_source`, `waiting_total` and `waiting_rerecord_secs` are the table `waiting`
-  (`per_source`, `total`, `rerecord_secs`). An old key is an unknown key and is refused. The
-  vectors in `tests/vectors/policy/` are regenerated.
+- **Breaking: the text form of `Policy` is the guatiao form.** The `serde` feature forwards to it.
+  The flat `waiting_per_source`, `waiting_total` and `waiting_rerecord_secs` are the table `waiting`
+  (`per_source`, `total`, `rerecord`, a duration: a number of seconds, `[secs, nanos]` or
+  `{secs, nanos}`). The earlier form's `policy_version`, `profile` and flat `waiting_*` keys still
+  read through `Policy`'s `Deserialize` and `from_value_over` for one release, then go; `profile`
+  picks the preset the document applies over there. The vectors in `tests/vectors/policy/` are
+  regenerated.
+- **Breaking: `Policy`, `PairConfig` and `Built` are `#[non_exhaustive]`.** Start from a preset or
+  `Default` and assign fields; a struct literal no longer compiles outside the crate.
+- **Breaking: the `guatiao` types are in every build.** `guatiao` is a normal dependency; `serde`
+  is the only optional layer.
+- **Breaking: `Policy::non_defaults` is the places where the policy departs from the schema's
+  defaults** (`guatiao::schema::differences`), not a hand-kept list of looser settings. It names a
+  setting by its key path (`waiting.per_source`), reports `crypto`, `cipher_profiles`,
+  `cipher_suites` and `kx_groups`, which it never did, and reports a stricter setting too, so
+  `Policy::modern()` lists `tls_versions`. Values are text, or compact JSON for a list or a
+  duration (`["1.3"]`, `[60,0]`); `non_defaults_against(&base)` compares with `base`.
 - **Breaking: a weakened setting is a non-default setting.** `Policy::weakened` and `weakened_against` are
   `non_defaults` and `non_defaults_against`, `ServerConfigs::weakened` is `non_defaults`, and the public field
   `Built::weakened` is `Built::non_defaults` (no alias is possible for a field). The entries are coqui-peer's
@@ -47,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- **Breaking:** `Policy::name`, which was informational and changed nothing.
 - **Breaking:** the `client_auth = none` entry that every server-TLS configuration added to its list, and
   `CLIENT_AUTH_SETTING` with it: choosing the server-TLS function is the choice, not a setting left off its default.
 

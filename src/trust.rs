@@ -228,18 +228,16 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// As [`client_cert_verifier_with`](Trust::client_cert_verifier_with).
+    /// As `client_cert_verifier_with`.
+    #[deprecated(note = "use `PeerClientVerifier::builder(trust).build()`")]
     pub fn client_cert_verifier(&self) -> Result<Arc<PeerClientVerifier>, PeerError> {
-        self.client_cert_verifier_with(&Policy::default())
+        self.unaddressed_client_verifier(&Policy::default())
     }
 
     /// The verifier a server uses for client certificates.
     ///
     /// It has no connection's addresses, so it cannot apply a policy's access control list:
-    /// a policy with one is refused rather than ignored. Hand the policy to a configuration
-    /// builder ([`server_config_with`](crate::server_config_with),
-    /// [`ServerConfigs`](crate::ServerConfigs)), which applies it, or use
-    /// [`client_cert_verifier_for`](Trust::client_cert_verifier_for).
+    /// a policy with one is refused rather than ignored.
     ///
     /// # Errors
     ///
@@ -248,7 +246,36 @@ impl Trust {
     /// [`PeerError::CaFile`] / [`PeerError::TrustPattern`] when the CA file or globs
     /// are unusable; [`PeerError::Policy`] when a pin uses a digest the policy refuses, the
     /// policy cannot build a crypto provider, or the policy has an access control list.
+    #[deprecated(note = "use `PeerClientVerifier::builder(trust).policy(..).build()`")]
     pub fn client_cert_verifier_with(
+        &self,
+        policy: &Policy,
+    ) -> Result<Arc<PeerClientVerifier>, PeerError> {
+        self.unaddressed_client_verifier(policy)
+    }
+
+    /// The verifier a server uses for one connection's client certificate, from `source` to
+    /// `local`.
+    ///
+    /// # Errors
+    ///
+    /// As [`PeerClientVerifierBuilder::build`].
+    #[deprecated(
+        note = "use `PeerClientVerifier::builder(trust).policy(..).addresses(source, local).build()`"
+    )]
+    pub fn client_cert_verifier_for(
+        &self,
+        policy: &Policy,
+        source: SocketAddr,
+        local: SocketAddr,
+    ) -> Result<Arc<dyn ClientCertVerifier>, PeerError> {
+        PeerClientVerifier::builder(self)
+            .policy(policy.clone())
+            .addresses(source, local)
+            .build()
+    }
+
+    fn unaddressed_client_verifier(
         &self,
         policy: &Policy,
     ) -> Result<Arc<PeerClientVerifier>, PeerError> {
@@ -256,53 +283,11 @@ impl Trust {
         if policy.acl.is_some() {
             return Err(PeerError::Policy(
                 "a client verifier without addresses cannot apply the policy's acl; build a \
-                 server configuration or use client_cert_verifier_for"
+                 server configuration or give the verifier addresses"
                     .to_owned(),
             ));
         }
         self.client_verifier(policy, None).map(Arc::new)
-    }
-
-    /// The verifier a server uses for one connection's client certificate, from `source` to
-    /// `local`: for a host whose connections reach rustls without this crate's accept helpers,
-    /// such as quinn, which runs the verifier on threads of its own.
-    ///
-    /// Waiting entries are recorded under `source`. With the `acl` feature, a policy's access
-    /// control list is applied to the certificate's fingerprint from these addresses before
-    /// the pins or the store are consulted ([`Refusal::PeerDenied`]), so a denied client is
-    /// never recorded as waiting. The list's address rules are not applied here; a host checks
-    /// them before the handshake with [`Policy::admits_address`], or uses
-    /// [`ServerConfigs::for_connection`](crate::ServerConfigs::for_connection), which applies
-    /// both.
-    ///
-    /// # Errors
-    ///
-    /// As [`client_cert_verifier_with`](Trust::client_cert_verifier_with), and
-    /// [`PeerError::Policy`] when a rule of the access control list names something that is not
-    /// a SHA-256 peer id.
-    pub fn client_cert_verifier_for(
-        &self,
-        policy: &Policy,
-        source: SocketAddr,
-        local: SocketAddr,
-    ) -> Result<Arc<dyn ClientCertVerifier>, PeerError> {
-        let verifier: Arc<dyn ClientCertVerifier> =
-            Arc::new(self.client_verifier(policy, Some(source))?);
-        #[cfg(feature = "acl")]
-        if let Some(acl) = &policy.acl {
-            let gate = crate::gate::Gate::new(
-                Arc::new(crate::gate::canonical(acl)?),
-                Some((source, local)),
-                None,
-            );
-            return Ok(Arc::new(crate::gate::PeerGate {
-                inner: verifier,
-                gate,
-            }));
-        }
-        #[cfg(not(feature = "acl"))]
-        let _ = local;
-        Ok(verifier)
     }
 
     /// The client verifier, recording waiting entries under `source` when it is given and
@@ -409,45 +394,23 @@ impl Trust {
     ///
     /// # Errors
     ///
-    /// As [`server_cert_verifier_with`](Trust::server_cert_verifier_with).
+    /// As [`PeerServerVerifier::new`].
+    #[deprecated(note = "use `PeerServerVerifier::new(trust, &Policy::default())`")]
     pub fn server_cert_verifier(&self) -> Result<Arc<PeerServerVerifier>, PeerError> {
-        self.server_cert_verifier_with(&Policy::default())
+        PeerServerVerifier::new(self, &Policy::default())
     }
 
     /// The verifier a client uses for the server certificate.
     ///
     /// # Errors
     ///
-    /// [`PeerError::Unsupported`] for CA policies, which only servers apply;
-    /// [`PeerError::Policy`] when a pin uses a digest the policy refuses;
-    /// [`PeerError::Io`] when a roots bundle file cannot be read, [`PeerError::Certificate`]
-    /// when it holds no certificate or one that cannot be a root, or the platform verifier
-    /// cannot start.
+    /// As [`PeerServerVerifier::new`].
+    #[deprecated(note = "use `PeerServerVerifier::new`")]
     pub fn server_cert_verifier_with(
         &self,
         policy: &Policy,
     ) -> Result<Arc<PeerServerVerifier>, PeerError> {
-        let provider = policy.crypto_provider()?;
-        let (pins, roots, any) = match self {
-            Self::Pinned(pins) => (Some(pins.clone()), None, false),
-            Self::AnyWithKeyProof => (None, None, true),
-            Self::Roots(roots) => (None, Some(roots.verifier(&provider)?), false),
-            Self::PinnedOrRoots { pins, roots } => {
-                (Some(pins.clone()), Some(roots.verifier(&provider)?), false)
-            }
-            #[cfg(feature = "ca")]
-            Self::Ca(_) | Self::PinnedOrCa { .. } => return Err(PeerError::Unsupported),
-        };
-        if let Some(pins) = &pins {
-            pins.check_digests(policy)?;
-        }
-        Ok(Arc::new(PeerServerVerifier {
-            pins,
-            roots,
-            any,
-            checks: PinnedChecks::of(policy),
-            provider,
-        }))
+        PeerServerVerifier::new(self, policy)
     }
 }
 
@@ -468,6 +431,39 @@ pub struct PeerServerVerifier {
 }
 
 impl PeerServerVerifier {
+    /// The verifier a client uses for the server certificate, for `trust` under `policy`.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Unsupported`] for CA policies, which only servers apply;
+    /// [`PeerError::Policy`] when a pin uses a digest the policy refuses;
+    /// [`PeerError::Io`] when a roots bundle file cannot be read, [`PeerError::Certificate`]
+    /// when it holds no certificate or one that cannot be a root, or the platform verifier
+    /// cannot start.
+    pub fn new(trust: &Trust, policy: &Policy) -> Result<Arc<Self>, PeerError> {
+        let provider = policy.crypto_provider()?;
+        let (pins, roots, any) = match trust {
+            Trust::Pinned(pins) => (Some(pins.clone()), None, false),
+            Trust::AnyWithKeyProof => (None, None, true),
+            Trust::Roots(roots) => (None, Some(roots.verifier(&provider)?), false),
+            Trust::PinnedOrRoots { pins, roots } => {
+                (Some(pins.clone()), Some(roots.verifier(&provider)?), false)
+            }
+            #[cfg(feature = "ca")]
+            Trust::Ca(_) | Trust::PinnedOrCa { .. } => return Err(PeerError::Unsupported),
+        };
+        if let Some(pins) = &pins {
+            pins.check_digests(policy)?;
+        }
+        Ok(Arc::new(Self {
+            pins,
+            roots,
+            any,
+            checks: PinnedChecks::of(policy),
+            provider,
+        }))
+    }
+
     /// After a valid signature: a pending successor the server just proved is recorded as
     /// proven, and promoted unless the store waits for approval, when it is refused.
     fn settle_successor(&self, certificate: &CertificateDer<'_>) -> Result<(), rustls::Error> {
@@ -583,6 +579,79 @@ struct ClientParts {
     provider: Arc<CryptoProvider>,
 }
 
+/// Builds a [`PeerClientVerifier`]: [`PeerClientVerifier::builder`], the policy and the
+/// addresses, then [`build`](Self::build).
+#[derive(Debug, Clone)]
+#[must_use]
+pub struct PeerClientVerifierBuilder {
+    trust: Trust,
+    policy: Policy,
+    addresses: Option<(SocketAddr, SocketAddr)>,
+}
+
+impl PeerClientVerifierBuilder {
+    /// The policy the verifier decides under. Default [`Policy::default`].
+    pub fn policy(mut self, policy: Policy) -> Self {
+        self.policy = policy;
+        self
+    }
+
+    /// The addresses of one connection, from `source` to `local`, for a host whose
+    /// connections reach rustls without this crate's accept helpers, such as quinn, which runs
+    /// the verifier on threads of its own.
+    ///
+    /// Waiting entries are recorded under `source`. With the `acl` feature, a policy's access
+    /// control list is applied to the certificate's fingerprint from these addresses before
+    /// the pins or the store are consulted ([`Refusal::PeerDenied`]), so a denied client is
+    /// never recorded as waiting. The list's address rules are not applied here; a host checks
+    /// them before the handshake with [`Policy::admits_address`], or uses
+    /// [`ServerConfigs::for_connection`](crate::ServerConfigs::for_connection), which applies
+    /// both. Without addresses, a verifier reads the scope the accept helpers set.
+    pub fn addresses(mut self, source: SocketAddr, local: SocketAddr) -> Self {
+        self.addresses = Some((source, local));
+        self
+    }
+
+    /// The verifier.
+    ///
+    /// # Errors
+    ///
+    /// [`PeerError::Unsupported`] for [`Roots`](Trust::Roots) and
+    /// [`PinnedOrRoots`](Trust::PinnedOrRoots), which only clients apply;
+    /// [`PeerError::CaFile`] / [`PeerError::TrustPattern`] when the CA file or globs
+    /// are unusable; [`PeerError::Policy`] when a pin uses a digest the policy refuses, the
+    /// policy cannot build a crypto provider, a rule of its access control list names something
+    /// that is not a SHA-256 peer id, or it has an access control list and no addresses were
+    /// given: a verifier without addresses cannot apply one, so it is refused rather than
+    /// ignored.
+    pub fn build(self) -> Result<Arc<dyn ClientCertVerifier>, PeerError> {
+        let source = self.addresses.map(|(source, _)| source);
+        #[cfg(feature = "acl")]
+        if self.policy.acl.is_some() && self.addresses.is_none() {
+            return Err(PeerError::Policy(
+                "a client verifier without addresses cannot apply the policy's acl; build a \
+                 server configuration or give the verifier addresses"
+                    .to_owned(),
+            ));
+        }
+        let verifier: Arc<dyn ClientCertVerifier> =
+            Arc::new(self.trust.client_verifier(&self.policy, source)?);
+        #[cfg(feature = "acl")]
+        if let (Some(acl), Some(addresses)) = (&self.policy.acl, self.addresses) {
+            let gate = crate::gate::Gate::new(
+                Arc::new(crate::gate::canonical(acl)?),
+                Some(addresses),
+                None,
+            );
+            return Ok(Arc::new(crate::gate::PeerGate {
+                inner: verifier,
+                gate,
+            }));
+        }
+        Ok(verifier)
+    }
+}
+
 /// How long a CA-trusted certificate waits for its signature before being forgotten.
 #[cfg(feature = "ca")]
 const CA_TRUSTED_TTL: Duration = Duration::from_secs(30);
@@ -591,6 +660,15 @@ const CA_TRUSTED_TTL: Duration = Duration::from_secs(30);
 const CA_TRUSTED_MAX: usize = 4096;
 
 impl PeerClientVerifier {
+    /// A builder for the verifier a server uses for client certificates under `trust`.
+    pub fn builder(trust: &Trust) -> PeerClientVerifierBuilder {
+        PeerClientVerifierBuilder {
+            trust: trust.clone(),
+            policy: Policy::default(),
+            addresses: None,
+        }
+    }
+
     /// The same verifier for one connection, recording waiting entries under `source`.
     pub(crate) fn for_source(&self, source: SocketAddr) -> Self {
         Self {

@@ -3,10 +3,12 @@
 use alloc::sync::Arc;
 use core::net::SocketAddr;
 
+use core::pin::Pin;
+use core::task::{Context, Poll};
 use rustls::pki_types::ServerName;
 use rustls::server::ClientHello;
 use rustls::{ClientConfig, ServerConfig};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::{TlsConnector, client, server};
 
 use core::time::Duration;
@@ -23,7 +25,7 @@ use crate::error::Refusal;
 use crate::identity::{Identity, PeerIdentity};
 use crate::pairing::{PairConfig, ResponderTrust, ends, left, sooner};
 use crate::source::scoped;
-use crate::stream::{PeerAddr, default_server_name, handshake_error, identity_of};
+use crate::stream::{Addressed, PeerAddr, default_server_name, handshake_error, identity_of};
 
 /// Dials a peer over `io`, completing the handshake before returning. The server name sent
 /// is [`SERVER_NAME`](crate::SERVER_NAME); [`dial_named`] sends another.
@@ -74,6 +76,34 @@ impl PeerAddr for tokio::net::TcpStream {
     }
 }
 
+impl<S: AsyncRead + Unpin> AsyncRead for Addressed<S> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(Addressed::get_mut(Pin::get_mut(self))).poll_read(context, buffer)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Addressed<S> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(Addressed::get_mut(Pin::get_mut(self))).poll_write(context, buffer)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(Addressed::get_mut(Pin::get_mut(self))).poll_flush(context)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(Addressed::get_mut(Pin::get_mut(self))).poll_shutdown(context)
+    }
+}
+
 /// Polls `future` with the connection's addresses in scope, since the verifiers' and the
 /// address check's callbacks run inside the poll; returns its output and the refusal the
 /// address check recorded.
@@ -119,6 +149,7 @@ where
 ///
 /// [`PeerError::Io`] when the handshake fails; [`PeerError::refusal`] says why this side
 /// refused the peer certificate, when it did.
+#[deprecated(note = "wrap the stream in `Addressed::new(io, source)` and use `accept`")]
 pub async fn accept_from<S>(
     config: Arc<ServerConfig>,
     io: S,
@@ -130,12 +161,15 @@ where
     accept_as(config, io, Some(source), None).await
 }
 
-/// [`accept_from`] with the local address the connection arrived at as well, as
-/// [`crate::accept_at`].
+/// As `accept_from`, with the local address the connection arrived at as well, as
+/// `crate::accept_at`.
 ///
 /// # Errors
 ///
 /// As [`accept`].
+#[deprecated(
+    note = "wrap the stream in `Addressed::new(io, source).local(local)` and use `accept`"
+)]
 pub async fn accept_at<S>(
     config: Arc<ServerConfig>,
     io: S,
@@ -192,6 +226,7 @@ where
 ///
 /// [`PeerError::Io`] when the hello cannot be read or the handshake fails;
 /// [`PeerError::refusal`] says why this side refused the peer certificate, when it did.
+#[deprecated(note = "wrap the stream in `Addressed::new(io, source)` and use `accept_with`")]
 pub async fn accept_with_from<S>(
     io: S,
     source: SocketAddr,
@@ -362,6 +397,7 @@ where
 /// # Errors
 ///
 /// As [`crate::pair_accept`].
+#[deprecated(note = "wrap the stream in `Addressed::new(stream, source)` and use `pair_accept`")]
 pub async fn pair_accept_from<S>(
     stream: S,
     source: SocketAddr,
@@ -373,7 +409,14 @@ pub async fn pair_accept_from<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    pair_accept_as(stream, (Some(source), None), identity, store, desk, config).await
+    pair_accept(
+        Addressed::new(stream, source),
+        identity,
+        store,
+        desk,
+        config,
+    )
+    .await
 }
 
 async fn pair_accept_as<S>(

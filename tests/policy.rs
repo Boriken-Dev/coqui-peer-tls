@@ -92,7 +92,6 @@ async fn connect(
 async fn each_profile_builds_a_working_pair() {
     // A consumer's own profile is just a function returning a policy.
     let mut mine = Policy::modern();
-    mine.name = "mine".to_owned();
     mine.pin_digests = vec![Digest::Sha256];
     for policy in [
         Policy::modern(),
@@ -102,8 +101,13 @@ async fn each_profile_builds_a_working_pair() {
     ] {
         let (version, _) = connect(&policy, &policy)
             .await
-            .unwrap_or_else(|| panic!("{} pair failed", policy.name));
-        assert_eq!(version, rustls::ProtocolVersion::TLSv1_3, "{}", policy.name);
+            .unwrap_or_else(|| panic!("{:?} pair failed", policy.tls_versions));
+        assert_eq!(
+            version,
+            rustls::ProtocolVersion::TLSv1_3,
+            "{:?}",
+            policy.tls_versions
+        );
     }
 }
 
@@ -235,6 +239,7 @@ async fn a_sha1_pin_is_accepted_only_when_the_policy_allows_it() {
     let Built {
         config: server_config,
         non_defaults,
+        ..
     } = server_config_with(&server, &sha1_pin(&client), &[ALPN], &legacy).unwrap();
     assert!(non_defaults.iter().any(|w| w.setting == "pin_digests"));
     let Built {
@@ -247,18 +252,26 @@ async fn a_sha1_pin_is_accepted_only_when_the_policy_allows_it() {
     assert!(server_config_with(&server, &sha384, &[ALPN], &strict).is_ok());
 }
 
+fn settings(policy: &Policy) -> Vec<String> {
+    policy
+        .non_defaults()
+        .into_iter()
+        .map(|setting| setting.setting)
+        .collect()
+}
+
 #[test]
 fn non_default_settings_are_reported_as_plain_data() {
     assert!(Policy::default().non_defaults().is_empty());
     assert!(Policy::intermediate().non_defaults().is_empty());
-    assert!(Policy::modern().non_defaults().is_empty());
-    let legacy: Vec<String> = Policy::legacy()
-        .non_defaults()
-        .into_iter()
-        .map(|w| w.setting)
-        .collect();
-    assert_eq!(legacy, ["pin_digests", "require_ems"]);
-    // Against a stricter baseline of the consumer's own, TLS 1.2 is reported.
+    assert_eq!(settings(&Policy::modern()), ["tls_versions"]);
+    assert_eq!(settings(&Policy::legacy()), ["pin_digests", "require_ems"]);
+    let modern = Policy::modern().non_defaults();
+    assert_eq!(
+        (modern[0].value.as_str(), modern[0].default.as_str()),
+        ("[\"1.3\"]", "[\"1.2\",\"1.3\"]")
+    );
+    // Against a baseline of the consumer's own, the difference is the other way.
     let against_modern = Policy::default().non_defaults_against(&Policy::modern());
     assert_eq!(against_modern.len(), 1);
     assert_eq!(
@@ -267,38 +280,112 @@ fn non_default_settings_are_reported_as_plain_data() {
             against_modern[0].value.as_str(),
             against_modern[0].default.as_str()
         ),
-        ("tls_versions", "1.2,1.3", "1.3")
+        ("tls_versions", "[\"1.2\",\"1.3\"]", "[\"1.3\"]")
+    );
+    assert!(
+        Policy::modern()
+            .non_defaults_against(&Policy::modern())
+            .is_empty()
     );
     let mut policy = Policy::legacy();
     policy.check_validity = false;
     policy.allow_chain_when_pinned = true;
     policy.allow_resumption = true;
     policy.waiting.per_source = 64;
-    let settings: Vec<String> = policy
-        .non_defaults()
-        .into_iter()
-        .map(|w| w.setting)
-        .collect();
     assert_eq!(
-        settings,
+        settings(&policy),
         [
-            "pin_digests",
-            "check_validity",
             "allow_chain_when_pinned",
             "allow_resumption",
+            "check_validity",
+            "pin_digests",
             "require_ems",
-            "waiting_per_source"
+            "waiting.per_source"
         ]
     );
     // The builders hand the same list back.
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     let built = client_config_with(&client, &pinned(&server), &[ALPN], &policy).unwrap();
     assert_eq!(built.non_defaults, policy.non_defaults());
-    // Fields are plain: stricter-than-default overrides are not non-default settings.
-    let mut tighter = Policy::modern();
-    tighter.pin_digests = vec![Digest::Sha256];
+}
+
+/// Each setting, changed alone, reports itself by its key and nothing else.
+#[test]
+fn each_changed_key_reports_itself() {
+    let changes: Vec<(&str, Policy)> = vec![
+        ("tls_versions", {
+            let mut policy = Policy::default();
+            policy.tls_versions = vec![coqui_peer_tls::TlsVersion::V1_3];
+            policy
+        }),
+        ("cipher_suites", {
+            let mut policy = Policy::default();
+            policy.cipher_suites = Some(vec!["TLS13_AES_256_GCM_SHA384".to_owned()]);
+            policy
+        }),
+        ("kx_groups", {
+            let mut policy = Policy::default();
+            policy.kx_groups = Some(vec!["X25519".to_owned()]);
+            policy
+        }),
+        ("cipher_profiles", {
+            let mut policy = Policy::default();
+            policy.cipher_profiles = vec![coqui_peer_tls::CipherProfile::Cnsa1];
+            policy
+        }),
+        ("crypto", {
+            let mut policy = Policy::default();
+            policy.crypto = coqui_peer_tls::Crypto::AwsLc;
+            policy
+        }),
+        ("pin_digests", {
+            let mut policy = Policy::default();
+            policy.pin_digests = vec![Digest::Sha256];
+            policy
+        }),
+        ("check_validity", {
+            let mut policy = Policy::default();
+            policy.check_validity = false;
+            policy
+        }),
+        ("allow_chain_when_pinned", {
+            let mut policy = Policy::default();
+            policy.allow_chain_when_pinned = true;
+            policy
+        }),
+        ("allow_resumption", {
+            let mut policy = Policy::default();
+            policy.allow_resumption = true;
+            policy
+        }),
+        ("require_ems", {
+            let mut policy = Policy::default();
+            policy.require_ems = false;
+            policy
+        }),
+        ("waiting.per_source", {
+            let mut policy = Policy::default();
+            policy.waiting.per_source = 4;
+            policy
+        }),
+        ("waiting.total", {
+            let mut policy = Policy::default();
+            policy.waiting.total = 5;
+            policy
+        }),
+        ("waiting.rerecord", {
+            let mut policy = Policy::default();
+            policy.waiting.rerecord = core::time::Duration::from_secs(5);
+            policy
+        }),
+    ];
+    for (key, policy) in changes {
+        assert_eq!(settings(&policy), [key], "{key}");
+    }
+    // Stricter and looser alike: a difference is a difference.
+    let mut tighter = Policy::default();
     tighter.waiting.per_source = 4;
-    assert!(tighter.non_defaults().is_empty());
+    assert_eq!(settings(&tighter), ["waiting.per_source"]);
 }
 
 #[tokio::test]
@@ -333,7 +420,7 @@ async fn validity_checking_can_be_switched_off_by_policy() {
 fn the_extended_master_secret_is_required_unless_the_policy_says_otherwise() {
     assert!(!Policy::legacy().require_ems);
     for preset in [Policy::modern(), Policy::intermediate()] {
-        assert!(preset.require_ems, "{}", preset.name);
+        assert!(preset.require_ems);
         assert!(
             !preset
                 .non_defaults()

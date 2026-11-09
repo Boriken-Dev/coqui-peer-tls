@@ -50,14 +50,14 @@ impl Tls {
     }
 
     /// The old name of [`client`](Self::client).
-    #[deprecated(since = "0.0.0", note = "renamed to `client`")]
+    #[deprecated(note = "renamed to `client`")]
     #[must_use]
     pub fn with_client(self, config: Arc<ClientConfig>) -> Self {
         self.client(config)
     }
 
     /// The old name of [`server`](Self::server).
-    #[deprecated(since = "0.0.0", note = "renamed to `server`")]
+    #[deprecated(note = "renamed to `server`")]
     #[must_use]
     pub fn with_server(self, config: Arc<ServerConfig>) -> Self {
         self.server(config)
@@ -153,7 +153,7 @@ impl TlsHandshake {
     }
 
     /// The old name of [`local`](Self::local).
-    #[deprecated(since = "0.0.0", note = "renamed to `local`")]
+    #[deprecated(note = "renamed to `local`")]
     #[must_use]
     pub fn with_local(self, local: SocketAddr) -> Self {
         self.local(local)
@@ -162,7 +162,7 @@ impl TlsHandshake {
     /// Finishes a completed handshake whose peer may have presented no certificate: the
     /// connection, and the peer's verified certificate when it sent one.
     ///
-    /// A server built with [`server_config_without_client_auth`](crate::server_config_without_client_auth)
+    /// A server built with [`ClientAuth::None`](crate::ClientAuth::None)
     /// asks for none, so its peer is always `None` and [`Handshake::finish`], which needs a
     /// peer, fails there. **`None` means the client is not authenticated**: the application
     /// must authenticate it inside the connection before trusting it. Drive the handshake with

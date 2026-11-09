@@ -6,7 +6,7 @@ use std::path::Path;
 
 /// `(file under src/, the item)` pairs that may hold process-wide state.
 const ALLOWED: &[(&str, &str)] = &[
-    // The connection's addresses, scoped by `with_source` around the calls rustls makes into a
+    // The connection's addresses, scoped by `with_addresses` around the calls rustls makes into a
     // verifier on this thread.
     ("source.rs", "thread_local!"),
     ("source.rs", "static CURRENT"),

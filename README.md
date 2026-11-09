@@ -29,7 +29,7 @@ and the sans-IO handshake trait; this crate adds X.509 and rustls. See the
 - **Key rotation**: a peer announces its successor certificate; store-backed pins promote it
   once proven and retire the old one after a window you choose.
 - **Policy**: `intermediate` by default (TLS 1.2 and 1.3), with `modern` (TLS 1.3 only) and
-  `legacy` presets; settings looser than the default are reported as data, never refused. A policy can carry an access control list,
+  `legacy` presets; settings that differ from the default are reported as data, never refused. A policy can carry an access control list,
   applied by address at the `ClientHello` and by fingerprint before the trust store.
 - **Your own stack**: the rustls verifiers as values, configurations around a verifier of your
   own, per-connection configurations for quinn, and the identity's chain and key.
@@ -54,15 +54,15 @@ cargo add coqui-peer-tls@0.0.0-alpha.1
 | `ca` | `fields`, `globset` | `Trust::Ca`, `Trust::PinnedOrCa`, `CaPolicy` | off |
 | `tokio` | `tokio`, `tokio-rustls`, `coqui-peer/tokio` | module `asynch`: async dial, accept, pairing and rotation | off |
 | `pin` | `coqui-peer/pin` | PIN pairing | off |
-| `guatiao` | `guatiao`, `guatiao-serde`, `coqui-net-acl/serde` | `TlsSettings`, `Policy` and `PairConfig` as guatiao values with a schema, read from TOML, JSON or YAML | off |
-| `serde` | `guatiao`, `serde`, `coqui-peer/serde` | the same types as serde types, and `PeerId` as text | off |
+| `serde` | `serde`, `guatiao-serde`, `coqui-peer/serde` | `TlsSettings`, `Policy` and `PairConfig` as serde types over their guatiao form, and `PeerId` as text | off |
 | `acl` | `coqui-net-acl` | an access control list inside a `Policy` | off |
 | `platform-roots` | `rustls-platform-verifier` | `Roots::platform`: servers verified by the operating system | off |
 | `aws-lc` | rustls's aws-lc-rs provider (AWS-LC, built from C) | `crypto = "aws-lc"`: ML-KEM key exchange, ML-DSA, the `cnsa-2.0` profile | off |
 | `fips` | `aws-lc` and rustls's `fips` (AWS-LC's FIPS module) | the `fips-140-3-validated` profile; global, see Development | off |
 
-Rust 1.89 or later. A default build depends on `coqui-peer`, `rustls` (0.23.27 or later, ring
-provider) and `rustls-webpki`, which rustls already uses.
+Rust 1.89 or later. A default build depends on `coqui-peer`, `guatiao` (the settings types'
+value form), `rustls` (0.23.27 or later, ring provider) and `rustls-webpki`, which rustls
+already uses.
 
 ## Quick start
 
@@ -111,17 +111,19 @@ for the dialled name is trusted. The chain, the dates and the name are always ch
 
 | Module | Purpose |
 | --- | --- |
-| `coqui_peer_tls` | `Identity`, `PeerIdentity`; `Trust`, `Pins`, `CaPolicy`, `Roots` and their verifiers; `Policy`; the configuration builders, `Built`, and `ServerConfigs` / `ConnectionConfig` for a configuration per connection; `dial`, `accept` and their variants; `Tls` and `TlsHandshake`; pairing over TLS; rotation; `PeerError`, `Refusal`; re-exports of `coqui-peer`'s ids, store and `Weakening`. |
+| `coqui_peer_tls` | `Identity`, `PeerIdentity`; `Trust`, `Pins`, `CaPolicy`, `Roots` and their verifiers; `Policy`; the configuration builders (`ServerBuilder`, `ClientBuilder`, `ClientAuth`, `ServerAuth`), `Built`, and `ServerConfigs` / `ConnectionConfig` for a configuration per connection; `dial`, `accept`, `Addressed` and their variants; `Tls` and `TlsHandshake`; pairing over TLS; rotation; `PeerError`, `Refusal`; re-exports of `coqui-peer`'s ids, store and `Weakening`. |
 | `coqui_peer_tls::asynch` | Async dial, accept, pairing and rotation over tokio (`tokio`). |
 | `coqui_peer_tls::pair` | `coqui-peer`'s pairing exchange, re-exported. |
 | `coqui_peer_tls::acl` | `coqui-net-acl`, re-exported (`acl`). |
 
 ## Profiles and policy
-
 `Policy::default()` is `intermediate` and works as it is. `Policy::modern()`, `intermediate()`
-and `legacy()` are plain values; start from one and change any public field. `non_defaults()` lists
-every setting looser than the default, as data; `ServerBuilder::build` and `ClientBuilder::build`
-return that list beside the configuration. Nothing is printed.
+and `legacy()` are plain values; start from one and assign the public fields to change (`Policy`
+is `#[non_exhaustive]`). `non_defaults()` lists every setting that differs from the default, as data
+named by key (`waiting.per_source`): the places where the policy departs from the schema's defaults
+(`modern` reports `tls_versions`, `legacy` `pin_digests` and `require_ems`), and
+`non_defaults_against(&base)` does the same against a base of your own. `ServerBuilder::build` and
+`ClientBuilder::build` return that list beside the configuration. Nothing is printed.
 
 | Field | `modern` | `intermediate` (default) | `legacy` |
 | --- | --- | --- | --- |
@@ -170,13 +172,13 @@ on a resumed session, so a peer removed from the trust store could reconnect on 
 held. TLS 1.0, 1.1 and non-AEAD suites cannot be offered; MD5 pins are never accepted.
 
 ```rust,no_run
-use coqui_peer_tls::{ClientAuth, Digest, Identity, Policy, ServerBuilder};
+use coqui_peer_tls::{ClientAuth, Digest, Identity, Policy, ServerBuilder, Trust};
 
 let identity = Identity::read("identity.pem".as_ref())?.expect("an identity file");
 let mut policy = Policy::default();
 policy.pin_digests.push(Digest::Sha1);
 policy.waiting.per_source = 4;
-let built = ServerBuilder::new(&identity, ClientAuth::None)
+let built = ServerBuilder::new(&identity, ClientAuth::Required(Trust::AnyWithKeyProof))
     .alpn([b"my-protocol/1"])
     .policy(policy)
     .build()?;
@@ -196,27 +198,29 @@ One builder per configuration, the settings named for what they are, then `build
 | a server that asks for no client certificate | `ServerBuilder::new(&identity, ClientAuth::None)` |
 | a server whose clients a verifier of your own decides | `ServerBuilder::new(&identity, ClientAuth::Verifier(verifier))` |
 | a client | `ClientBuilder::new(trust)`, with `.identity(&me)` to present a certificate |
-| a client verified by a verifier of your own | `ClientBuilder::new(trust).verifier(verifier)` |
+| a client verified by a verifier of your own | `ClientBuilder::new(ServerAuth::Verifier(verifier))` |
 | a server configuration per connection (quinn) | `ServerBuilder::new(..).configs()` |
-| a pairing configuration | `PairConfig::builder().alpn(..).timeout(..).policy(..).build()` |
-| a generated identity with a validity window | `Identity::builder().valid_for(..)`, or `.not_before(..).not_after(..)` |
+| a server's client verifier for one connection | `PeerClientVerifier::builder(&trust).policy(p).addresses(source, local).build()` |
+| a client's server verifier | `PeerServerVerifier::new(&trust, &policy)` |
+| a stream that cannot name its addresses | `accept(config, Addressed::new(io, source).local(local))` |
+| a pairing configuration | `PairConfig::default()`, then assign `alpn`, `timeout` or `policy` |
+| a generated identity with a validity window | `Identity::builder().valid_for(..).generate()`, or `.not_before(..).not_after(..)` |
 
-Each configuration builder has `.alpn(..)`, `.policy(..)` and, with the `guatiao` feature,
-`.settings(TlsSettings)`.
+Each configuration builder has `.alpn(..)`, `.policy(..)` and `.settings(TlsSettings)`; the last
+one called wins, and `settings` replaces both.
 
 ## Settings as data
 
-With the `guatiao` feature the builders' settings are one type, `TlsSettings { alpn, policy }`,
-and `PairConfig` is its own. `TlsSettings`, `Policy` and `PairConfig` are guatiao values with a
+The builders' settings are one type, `TlsSettings { alpn, policy }`, and `PairConfig` is its own
+plain-data type. `TlsSettings`, `Policy` and `PairConfig` are guatiao values with a
 schema (`TlsSettings::schema()`) whose defaults are the real ones, so a file names only what
-differs from the intermediate preset, and an unknown key is refused. `guatiao-serde` reads
-TOML, JSON and YAML into them:
+differs from the intermediate preset, and an unknown key is refused. `alpn` entries are text of 1
+to 255 bytes. `guatiao-serde` reads TOML, JSON and YAML into them:
 
 ```toml
 alpn = ["my-protocol/1"]
 
 [policy]
-name = "mine"                   # informational
 tls_versions = ["1.2", "1.3"]
 cipher_profiles = ["mozilla"]   # allowed algorithm profiles
 crypto = "ring"                 # or "aws-lc", with the `aws-lc` feature
@@ -227,7 +231,7 @@ require_ems = true
 [policy.waiting]
 per_source = 16
 total = 1000
-rerecord_secs = 60
+rerecord = 60                   # a duration: seconds, [secs, nanos] or {secs, nanos}
 
 [policy.acl]                    # optional, with the `acl` feature; see coqui-net-acl
 default = "deny"
@@ -245,8 +249,13 @@ let built = ServerBuilder::new(&identity, ClientAuth::None).settings(settings).b
 
 With `serde`, `Policy`, `TlsSettings` and `PairConfig` also implement `Serialize` and
 `Deserialize` over the same form. A consumer with its own default profile reads a document over
-it with `Policy::from_value_over` (`Policy::deserialize_over` with `serde`). Committed examples
-for every preset are in the repository's `tests/vectors/policy/`.
+it with `Policy::from_value_over` (`Policy::deserialize_over` with `serde`), which merges the
+document into the base key by key, a table such as `waiting` included. Committed examples for
+every preset are in the repository's `tests/vectors/policy/`.
+
+The text form of 0.0.0-alpha.1 (`policy_version`, `profile`, the flat `waiting_per_source`,
+`waiting_total` and `waiting_rerecord_secs`) still reads through `Deserialize` and
+`from_value_over`, for one more release; write the current form.
 
 ## Access control
 
@@ -257,7 +266,7 @@ never recorded as waiting. Fingerprint rules may be written in any spelling a `P
 The refusals are `Refusal::AddressDenied`, `PeerDenied` and `AddressUnknown`. For quinn,
 `ServerBuilder::configs` gives `ServerConfigs`, which builds a configuration per connection from its addresses, sharing one session
 cache, and keeps the refusal its handshake ended with (`ConnectionConfig::refusal`), since
-quinn reports only the alert; `Trust::client_cert_verifier_for` is the verifier alone, and
+quinn reports only the alert; `PeerClientVerifier::builder` with `addresses` is the verifier alone, and
 `Policy::admits_address` decides before the handshake. Under optional client authentication a
 rule naming a fingerprint never admits a client.
 
@@ -272,7 +281,7 @@ rule naming a fingerprint never admits a client.
 ## Development
 
 ```bash
-ALL=generate,ca,tokio,pin,guatiao,serde,acl,platform-roots,fields,aws-lc   # every feature but fips
+ALL=generate,ca,tokio,pin,serde,acl,platform-roots,fields,aws-lc   # every feature but fips
 cargo fmt --all --check
 cargo clippy --all-targets --features $ALL -- -D warnings
 cargo +1.89 clippy --all-targets --features $ALL -- -D warnings

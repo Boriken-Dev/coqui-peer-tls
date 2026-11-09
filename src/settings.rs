@@ -1,5 +1,5 @@
 //! The settings of the configuration builders as one value type, and the field conversions the
-//! settings types share. Behind the `guatiao` feature.
+//! settings types share.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -18,16 +18,16 @@ use crate::policy::Policy;
 /// takes them as arguments. Every key is optional; an absent one is the default (no ALPN,
 /// [`Policy::default`]), and an unknown key is refused.
 ///
-/// With the `guatiao` feature this reads and writes as a guatiao value
-/// (`TlsSettings::from_value`, `to_value`, `schema`), and `guatiao_serde::text::{toml, json,
-/// yaml}` read and write its text.
+/// The type is a guatiao value (`TlsSettings::from_value`, `to_value`, `schema`), and
+/// `guatiao_serde::text::{toml, json, yaml}` read and write its text. It is `#[non_exhaustive]`:
+/// start from [`Default`] and assign the fields.
 #[derive(ToValue, FromValue, Schema, Debug, Clone, Default, PartialEq, Eq)]
 #[map(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct TlsSettings {
-    /// The application protocols offered, most preferred first, as text (`h2`, `coqui/1`). A
-    /// protocol that is not text is set with the builder's `alpn`.
-    #[map(default)]
+    /// The application protocols offered, most preferred first, as text (`h2`, `coqui/1`), each
+    /// 1 to 255 bytes. A protocol that is not text is set with the builder's `alpn`.
+    #[map(default, with = alpn_list)]
     pub alpn: Vec<String>,
     /// The policy configurations are built under.
     #[map(default)]
@@ -35,11 +35,6 @@ pub struct TlsSettings {
 }
 
 impl TlsSettings {
-    /// Settings that offer `alpn` under `policy`.
-    pub fn new(alpn: Vec<String>, policy: Policy) -> Self {
-        Self { alpn, policy }
-    }
-
     /// The protocols as the bytes a configuration carries.
     pub(crate) fn alpn_bytes(&self) -> Vec<Vec<u8>> {
         self.alpn
@@ -53,6 +48,38 @@ fn bad(expected: String) -> MapError {
     MapError::BadValue {
         key: String::new(),
         expected,
+    }
+}
+
+/// The longest application protocol name, in bytes.
+const ALPN_MAX: usize = 255;
+
+/// `#[map(with = ..)]` for a list of application protocol names, each 1 to 255 bytes.
+pub(crate) mod alpn_list {
+    use super::*;
+
+    pub(crate) fn to_value_in(items: &[String], alloc: Alloc) -> Result<Value, ValueError> {
+        items.to_value_in(alloc)
+    }
+
+    pub(crate) fn from_value(value: &Value) -> Result<Vec<String>, MapError> {
+        let items = Vec::<String>::from_value(value)?;
+        if items
+            .iter()
+            .any(|item| item.is_empty() || item.len() > ALPN_MAX)
+        {
+            return Err(bad("protocol names of 1 to 255 bytes".to_owned()));
+        }
+        Ok(items)
+    }
+
+    pub(crate) fn kind(alloc: Alloc) -> KindBuilder {
+        KindBuilder::list_in(
+            alloc,
+            String::kind(alloc)
+                .min_length(1)
+                .max_length(ALPN_MAX as u64),
+        )
     }
 }
 
@@ -83,81 +110,7 @@ pub(crate) mod texts {
     }
 }
 
-/// `#[map(with = ..)]` for the optional access control list, which has a serde form and no
-/// guatiao one.
-#[cfg(feature = "acl")]
-pub(crate) mod acl {
-    use super::*;
-
-    use coqui_net_acl::Acl;
-
-    pub(crate) use guatiao_serde::adapt::to_value_in;
-
-    /// Reads the list and writes its fingerprints in canonical form, as a configuration build
-    /// does; a rule naming something else is refused here.
-    pub(crate) fn from_value(value: &Value) -> Result<Option<Acl>, MapError> {
-        match guatiao_serde::adapt::from_value::<Option<Acl>>(value)? {
-            Some(acl) => crate::gate::canonical(&acl)
-                .map(Some)
-                .map_err(|error| bad(error.to_string())),
-            None => Ok(None),
-        }
-    }
-
-    pub(crate) fn kind(alloc: Alloc) -> KindBuilder {
-        KindBuilder::any_in(alloc).description("an ordered access control list; absent for none")
-    }
-}
-
-/// `#[map(with = ..)]` for [`WaitingLimits`](coqui_peer::WaitingLimits): a map of its three
-/// bounds, the interval in whole seconds.
-pub(crate) mod waiting {
-    use super::*;
-    use coqui_peer::WaitingLimits;
-    use core::time::Duration;
-
-    #[derive(ToValue, FromValue, Schema)]
-    #[map(deny_unknown_fields)]
-    struct Bounds {
-        /// Entries kept for one source.
-        #[map(default = defaults().per_source)]
-        per_source: usize,
-        /// Entries kept in all.
-        #[map(default = defaults().total)]
-        total: usize,
-        /// Seconds before the same certificate from the same source is recorded again.
-        #[map(default = defaults().rerecord.as_secs())]
-        rerecord_secs: u64,
-    }
-
-    fn defaults() -> WaitingLimits {
-        WaitingLimits::default()
-    }
-
-    pub(crate) fn to_value_in(limits: &WaitingLimits, alloc: Alloc) -> Result<Value, ValueError> {
-        Bounds {
-            per_source: limits.per_source,
-            total: limits.total,
-            rerecord_secs: limits.rerecord.as_secs(),
-        }
-        .to_value_in(alloc)
-    }
-
-    pub(crate) fn from_value(value: &Value) -> Result<WaitingLimits, MapError> {
-        let bounds = Bounds::from_value(value)?;
-        Ok(WaitingLimits {
-            per_source: bounds.per_source,
-            total: bounds.total,
-            rerecord: Duration::from_secs(bounds.rerecord_secs),
-        })
-    }
-
-    pub(crate) fn kind(alloc: Alloc) -> KindBuilder {
-        Bounds::kind(alloc)
-    }
-}
-
-/// `#[map(with = ..)]` for the pairing ALPN, bytes held as text.
+/// `#[map(with = ..)]` for the pairing ALPN, bytes held as text of 1 to 255 bytes.
 pub(crate) mod alpn_text {
     use super::*;
 
@@ -168,10 +121,16 @@ pub(crate) mod alpn_text {
     }
 
     pub(crate) fn from_value(value: &Value) -> Result<Vec<u8>, MapError> {
-        Ok(String::from_value(value)?.into_bytes())
+        let alpn = String::from_value(value)?.into_bytes();
+        if alpn.is_empty() || alpn.len() > ALPN_MAX {
+            return Err(bad("a protocol name of 1 to 255 bytes".to_owned()));
+        }
+        Ok(alpn)
     }
 
     pub(crate) fn kind(alloc: Alloc) -> KindBuilder {
-        String::kind(alloc).min_length(1)
+        String::kind(alloc)
+            .min_length(1)
+            .max_length(ALPN_MAX as u64)
     }
 }
