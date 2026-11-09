@@ -3,6 +3,8 @@
 
 #![allow(dead_code)]
 
+pub mod configs;
+
 const STORED: [&str; 2] = ["-----BEGIN PKCS8-----", "-----END PKCS8-----"];
 const PEM: [&str; 2] = ["-----BEGIN PRIVATE KEY-----", "-----END PRIVATE KEY-----"];
 

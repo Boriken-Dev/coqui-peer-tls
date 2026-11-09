@@ -56,12 +56,6 @@ pub fn with_addresses<R>(
     scoped(source, local, work).0
 }
 
-/// [`with_addresses`] with no local address.
-#[deprecated(note = "use `with_addresses(source, None, work)`")]
-pub fn with_source<R>(source: Option<SocketAddr>, work: impl FnOnce() -> R) -> R {
-    with_addresses(source, None, work)
-}
-
 /// Runs `work` in a scope of its own, and returns what it returned with the refusal a check
 /// inside it recorded.
 pub(crate) fn scoped<R>(

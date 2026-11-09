@@ -1,20 +1,21 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Key rotation over TLS: a peer announces its successor certificate over a connection its
 //! current one authenticated; the first handshake that proves the successor promotes it, and
 //! the old certificate is refused from its retirement time on. Clients and servers alike.
 #![cfg(all(feature = "generate", feature = "tokio"))]
 
+mod support;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use support::configs::{client_config, server_config};
 
 use coqui_peer_tls::{
     Clock, Identity, PeerError, PeerId, PeerIdentity, Pins, Refusal, RotationEvent,
-    RotationOptions, Trust, TrustStore, TrustStoreExt, accept, announce, asynch, client_config,
-    dial, receive_announcement, server_config,
+    RotationOptions, Trust, TrustStore, TrustStoreExt, accept, announce, asynch, dial,
+    receive_announcement,
 };
 
 const APP: &[u8] = b"app/1";
@@ -257,7 +258,11 @@ fn an_announcement_from_a_peer_that_is_not_accepted_is_refused() {
 #[test]
 fn renewal_is_due_within_the_margin() {
     let now = SystemTime::now();
-    let identity = Identity::generate_with(now, now + Duration::from_secs(3600)).unwrap();
+    let identity = Identity::builder()
+        .not_before(now)
+        .not_after(now + Duration::from_secs(3600))
+        .generate()
+        .unwrap();
     assert!(!identity.renew_before_at(Duration::from_secs(1800), now));
     assert!(identity.renew_before_at(Duration::from_secs(3600), now));
     assert!(identity.renew_before_at(Duration::ZERO, now + Duration::from_secs(3600)));

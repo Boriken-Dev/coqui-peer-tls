@@ -11,22 +11,20 @@ use rustls::pki_types::{CertificateDer, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
 use rustls::{DigitallySignedStruct, DistinguishedName, ServerConfig, SignatureScheme};
 
-use crate::config::{Base, ClientAuth, ServerBuilder};
+use crate::config::Base;
 use crate::error::{PeerError, Refusal};
-use crate::identity::Identity;
-use crate::policy::Policy;
-use crate::trust::{PeerClientVerifier, Trust};
+use crate::trust::PeerClientVerifier;
 use coqui_peer::NonDefault;
 
 /// The server configurations of one listener whose connections reach rustls without this
 /// crate's accept helpers, such as quinn, which runs the verifier on threads of its own and
 /// takes a configuration per incoming connection.
 ///
-/// Built once, by [`ServerBuilder::configs`], from the identity, ALPN list and [`Policy`]
+/// Built once, by [`ServerBuilder::configs`](crate::ServerBuilder::configs), from the identity, ALPN list and [`Policy`](crate::Policy)
 /// (checked then), it gives a
 /// configuration for each connection's addresses with [`for_connection`](Self::for_connection).
 /// Those configurations share one session cache and ticketer, so with
-/// [`Policy::allow_resumption`] a client resumes across connections; waiting entries are
+/// [`Policy::allow_resumption`](crate::Policy::allow_resumption) a client resumes across connections; waiting entries are
 /// recorded under the connection's source, and a policy's access control list is decided from
 /// its addresses. Cloning is cheap and shares the session state.
 #[derive(Clone)]
@@ -67,70 +65,10 @@ impl ServerConfigs {
         }
     }
 
-    /// Configurations that present `identity` and require a client certificate `trust`
-    /// accepts.
-    ///
-    /// # Errors
-    ///
-    /// As [`ServerBuilder::configs`].
-    #[deprecated(note = "use `ServerBuilder::configs`")]
-    pub fn new(
-        identity: &Identity,
-        trust: &Trust,
-        alpn: &[&[u8]],
-        policy: &Policy,
-    ) -> Result<Self, PeerError> {
-        ServerBuilder::new(identity, ClientAuth::Required(trust.clone()))
-            .alpn(alpn)
-            .policy(policy.clone())
-            .configs()
-    }
-
-    /// Configurations that verify clients with the host's own `verifier`.
-    ///
-    /// # Errors
-    ///
-    /// As [`ServerBuilder::configs`].
-    #[deprecated(note = "use `ServerBuilder` with `ClientAuth::Verifier`, then `configs`")]
-    pub fn with_verifier(
-        identity: &Identity,
-        verifier: Arc<dyn ClientCertVerifier>,
-        alpn: &[&[u8]],
-        policy: &Policy,
-    ) -> Result<Self, PeerError> {
-        ServerBuilder::new(identity, ClientAuth::Verifier(verifier))
-            .alpn(alpn)
-            .policy(policy.clone())
-            .configs()
-    }
-
-    /// Server-TLS configurations that ask for no client certificate.
-    ///
-    /// # Errors
-    ///
-    /// As [`ServerBuilder::configs`].
-    #[deprecated(note = "use `ServerBuilder` with `ClientAuth::None`, then `configs`")]
-    pub fn without_client_auth(
-        identity: &Identity,
-        alpn: &[&[u8]],
-        policy: &Policy,
-    ) -> Result<Self, PeerError> {
-        ServerBuilder::new(identity, ClientAuth::None)
-            .alpn(alpn)
-            .policy(policy.clone())
-            .configs()
-    }
-
     /// Every setting of the policy that differs from the default, as the configuration builders
     /// report it.
     pub fn non_defaults(&self) -> &[NonDefault] {
         &self.non_defaults
-    }
-
-    /// The old name of [`non_defaults`](Self::non_defaults).
-    #[deprecated(note = "renamed to `non_defaults`")]
-    pub fn weakened(&self) -> &[NonDefault] {
-        self.non_defaults()
     }
 
     /// The configuration of one connection from `source` to `local`.

@@ -8,11 +8,6 @@ use crate::error::PeerError;
 use crate::profiles::{CipherProfile, Crypto};
 use coqui_peer::{Digest, NonDefault, PeerId, WaitingLimits};
 
-/// The `policy_version` of the 0.0.0-alpha.1 text form. A document may still name it; the key is
-/// ignored.
-#[deprecated(note = "the text form carries no version key")]
-pub const POLICY_VERSION: u32 = 1;
-
 /// A TLS protocol version. rustls offers 1.2 and 1.3 only: SSL 3, TLS 1.0 and 1.1 cannot be
 /// offered by this crate, and asking for them is an error, never ignored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -222,12 +217,6 @@ impl Policy {
         self.differences(None)
     }
 
-    /// The old name of [`non_defaults`](Self::non_defaults).
-    #[deprecated(note = "renamed to `non_defaults`")]
-    pub fn weakened(&self) -> Vec<NonDefault> {
-        self.non_defaults()
-    }
-
     /// As [`non_defaults`](Self::non_defaults), against `baseline` instead of the defaults, for a
     /// consumer whose own baseline differs from them (`non_defaults_against(&Policy::modern())`
     /// reports TLS 1.2).
@@ -265,12 +254,6 @@ impl Policy {
             );
         }
         found
-    }
-
-    /// The old name of [`non_defaults_against`](Self::non_defaults_against).
-    #[deprecated(note = "renamed to `non_defaults_against`")]
-    pub fn weakened_against(&self, baseline: &Self) -> Vec<NonDefault> {
-        self.non_defaults_against(baseline)
     }
 
     /// Whether the access control list admits, by address, a client from `source` to `local`
@@ -395,10 +378,6 @@ impl Policy {
     /// rest are kept. A consumer with its own default profile reads its configuration with
     /// this.
     ///
-    /// The keys of the 0.0.0-alpha.1 text form are read too, for one release: `policy_version`
-    /// and `profile` are ignored (the base is the preset), and the flat `waiting_per_source`,
-    /// `waiting_total` and `waiting_rerecord_secs` are the `waiting` table.
-    ///
     /// # Errors
     ///
     /// The reader's refusal of an unknown key or a value of the wrong type or form, and, with the
@@ -413,10 +392,9 @@ impl Policy {
             key: String::new(),
             expected: error.to_string(),
         };
-        let document = current_keys(document)?;
         let base = base.to_value().map_err(|error| unreadable(&error))?;
         let merged = MergeMode::Substitute
-            .merge(&base, &document, guatiao::Alloc::rust())
+            .merge(&base, document, guatiao::Alloc::rust())
             .map_err(|error| unreadable(&error))?;
         #[cfg_attr(not(feature = "acl"), expect(unused_mut))]
         let mut policy = Policy::from_value(&merged)?;
@@ -426,55 +404,6 @@ impl Policy {
         }
         Ok(policy)
     }
-
-    /// The preset a 0.0.0-alpha.1 document names with `profile`, or the default.
-    #[cfg(feature = "serde")]
-    fn named_preset(document: &guatiao::Value) -> Result<Policy, guatiao::MapError> {
-        use guatiao::{FromValue, Map};
-        let map = Map::from_value(document)?;
-        match map.get("profile") {
-            Some(name) => {
-                let name = String::from_value(name)?;
-                Policy::preset(&name).map_err(|error| guatiao::MapError::BadValue {
-                    key: "profile".to_owned(),
-                    expected: error.to_string(),
-                })
-            }
-            None => Ok(Policy::default()),
-        }
-    }
-}
-
-/// `document` with the keys of the 0.0.0-alpha.1 text form rewritten to the current ones:
-/// `policy_version` and `profile` dropped, and the flat `waiting_*` keys moved into `waiting`.
-/// A document in the current form passes through unchanged.
-fn current_keys(document: &guatiao::Value) -> Result<guatiao::Value, guatiao::MapError> {
-    use guatiao::{FromValue, Map, Value};
-    let source = Map::from_value(document)?;
-    let mut waiting = match source.get("waiting") {
-        Some(table) => Map::from_value(table)?,
-        None => Map::new(),
-    };
-    let mut flat = false;
-    let mut out = Map::new();
-    for entry in source.iter() {
-        let moved = match entry.key() {
-            "policy_version" | "profile" => continue,
-            "waiting_per_source" => "per_source",
-            "waiting_total" => "total",
-            "waiting_rerecord_secs" => "rerecord",
-            key => {
-                out.set(key, entry.value().clone());
-                continue;
-            }
-        };
-        waiting.set(moved, entry.value().clone());
-        flat = true;
-    }
-    if flat {
-        out.set("waiting", Value::from(waiting));
-    }
-    Ok(Value::from(out))
 }
 
 #[cfg(feature = "serde")]
@@ -487,8 +416,7 @@ mod text {
 
     impl Policy {
         /// Reads a policy document over `base` instead of the intermediate preset: the keys it
-        /// names replace the base's, and the rest are kept. See
-        /// [`from_value_over`](Policy::from_value_over) for the keys of the 0.0.0-alpha.1 text form.
+        /// names replace the base's, and the rest are kept.
         ///
         /// # Errors
         ///
@@ -511,14 +439,12 @@ mod text {
     }
 
     impl<'de> Deserialize<'de> for Policy {
-        /// Reads the guatiao form over the intermediate preset, or over the preset a `profile`
-        /// key of the 0.0.0-alpha.1 text form names.
+        /// Reads the guatiao form over the intermediate preset.
         fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
             use serde::de::DeserializeSeed;
             let document =
                 guatiao_serde::ValueSeed::new(guatiao::Alloc::rust()).deserialize(deserializer)?;
-            let base = Policy::named_preset(&document).map_err(D::Error::custom)?;
-            Policy::from_value_over(&base, &document).map_err(D::Error::custom)
+            Policy::from_value_over(&super::base(), &document).map_err(D::Error::custom)
         }
     }
 }

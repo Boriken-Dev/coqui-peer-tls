@@ -1,17 +1,20 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A client verifying a server by the web PKI: a chain to the roots, validity dates and the
 //! server name dialled. Every certificate comes from a throwaway test CA.
 
+mod support;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use support::configs::{
+    client_config_without_identity, client_config_without_identity_with, server_config,
+    server_config_without_client_auth, server_config_without_client_auth_with,
+};
 
 use coqui_peer::Handshake;
 use coqui_peer_tls::{
     Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal, Roots, TlsHandshake, Trust,
-    client_config_without_identity, client_config_without_identity_with, dial, dial_named,
-    server_config, server_config_without_client_auth, server_config_without_client_auth_with,
+    dial, dial_named,
 };
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DnType, IsCa, Issuer, KeyPair, date_time_ymd,

@@ -1,13 +1,13 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Profiles and policy: what each preset negotiates, what overrides restrict, and what is
 //! reported as weaker. Run with `--all-features`.
 #![cfg(all(feature = "generate", feature = "tokio"))]
 
+mod support;
 use std::sync::Arc;
+use support::configs::{client_config_with, server_config_with};
 
 use coqui_peer_tls::{
-    Built, Digest, Identity, PeerError, Pins, Policy, TlsVersion, Trust, asynch,
-    client_config_with, server_config_with,
+    Addressed, Built, Digest, Identity, PeerError, Pins, Policy, TlsVersion, Trust, asynch,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -24,10 +24,12 @@ async fn exchange(
 ) -> bool {
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
-        let (mut stream, _) =
-            asynch::accept_from(Arc::new(server_config), far, ([192, 0, 2, 1], 1).into())
-                .await
-                .ok()?;
+        let (mut stream, _) = asynch::accept(
+            Arc::new(server_config),
+            Addressed::new(far, ([192, 0, 2, 1], 1).into()),
+        )
+        .await
+        .ok()?;
         let mut byte = [0u8; 4];
         stream.read_exact(&mut byte).await.ok()?;
         stream.write_all(&byte).await.ok()?;
@@ -61,10 +63,12 @@ async fn connect(
     } = client_config_with(&client, &pinned(&server), &[ALPN], client_policy).ok()?;
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
-        let (mut stream, _) =
-            asynch::accept_from(Arc::new(server_config), far, ([192, 0, 2, 1], 1).into())
-                .await
-                .ok()?;
+        let (mut stream, _) = asynch::accept(
+            Arc::new(server_config),
+            Addressed::new(far, ([192, 0, 2, 1], 1).into()),
+        )
+        .await
+        .ok()?;
         let mut byte = [0u8; 4];
         stream.read_exact(&mut byte).await.ok()?;
         stream.write_all(&byte).await.ok()?;
@@ -444,16 +448,4 @@ fn the_extended_master_secret_is_required_unless_the_policy_says_otherwise() {
         assert_eq!(client.config.require_ems, policy.require_ems);
         assert_eq!(server.config.require_ems, policy.require_ems);
     }
-}
-
-#[test]
-#[allow(deprecated)]
-fn the_old_names_answer_the_new_ones() {
-    let mut policy = Policy::modern();
-    policy.allow_resumption = true;
-    assert_eq!(policy.weakened(), policy.non_defaults());
-    assert_eq!(
-        policy.weakened_against(&Policy::modern()),
-        policy.non_defaults_against(&Policy::modern())
-    );
 }

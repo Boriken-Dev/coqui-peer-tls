@@ -37,19 +37,10 @@ mod x509;
 
 pub use certificate::{METHOD, TrustStoreExt, certificate_key};
 pub use config::{Built, ClientAuth, ClientBuilder, ServerAuth, ServerBuilder, crypto_provider};
-#[allow(deprecated)]
-pub use config::{
-    client_config, client_config_with, client_config_with_verifier, client_config_without_identity,
-    client_config_without_identity_with, server_config, server_config_with,
-    server_config_with_verifier, server_config_without_client_auth,
-    server_config_without_client_auth_with,
-};
 pub use connection::{ConnectionConfig, ServerConfigs};
 #[cfg(feature = "acl")]
 pub use coqui_net_acl as acl;
 pub use coqui_peer::NonDefault;
-#[allow(deprecated)]
-pub use coqui_peer::Weakening;
 pub use coqui_peer::pair;
 pub use coqui_peer::{
     Clock, Digest, Invitation, InvitationOptions, KeyMaterial, PeerId, Random, ReadTimeout,
@@ -62,24 +53,16 @@ pub use handshake::{Tls, TlsHandshake};
 #[cfg(feature = "generate")]
 pub use identity::IdentityBuilder;
 pub use identity::{Identity, PeerIdentity};
-#[allow(deprecated)]
-pub use pairing::pair_accept_from;
 pub use pairing::{
     EXPORTER_LABEL, PAIR_ALPN, PairConfig, PairDial, ResponderTrust, announce, pair_accept,
     pair_client_config, pair_dial, pair_server_config, random, receive_announcement,
 };
-#[allow(deprecated)]
-pub use policy::POLICY_VERSION;
 pub use policy::{Policy, TlsVersion};
 pub use profiles::{CipherProfile, Crypto};
 pub use roots::Roots;
 pub use settings::TlsSettings;
 pub use source::with_addresses;
-#[allow(deprecated)]
-pub use source::with_source;
 pub use stream::{Addressed, PeerAddr, SERVER_NAME, accept, default_server_name, dial, dial_named};
-#[allow(deprecated)]
-pub use stream::{accept_at, accept_from};
 #[cfg(feature = "ca")]
 pub use trust::CaPolicy;
 pub use trust::{PeerClientVerifier, PeerClientVerifierBuilder, PeerServerVerifier, Pins, Trust};

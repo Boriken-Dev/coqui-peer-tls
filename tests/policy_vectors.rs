@@ -231,25 +231,6 @@ rerecord = 5",
     assert_eq!(policy.waiting.rerecord, core::time::Duration::from_secs(5));
 }
 
-/// The earlier text form still reads through `from_value_over`, over the base given.
-#[test]
-fn the_earlier_keys_read_over_a_base() {
-    let mut mine = Policy::modern();
-    mine.waiting.total = 50;
-    let document = value_of(
-        "policy_version = 1
-profile = \"legacy\"
-waiting_per_source = 4
-waiting_rerecord_secs = 7
-",
-    );
-    let policy = Policy::from_value_over(&mine, &document).unwrap();
-    assert_eq!(policy.tls_versions, Policy::modern().tls_versions);
-    assert_eq!(policy.waiting.per_source, 4);
-    assert_eq!(policy.waiting.total, 50);
-    assert_eq!(policy.waiting.rerecord, core::time::Duration::from_secs(7));
-}
-
 #[test]
 fn non_defaults_name_every_changed_setting_by_its_key_path() {
     assert!(Policy::default().non_defaults().is_empty());
@@ -280,23 +261,19 @@ fn non_defaults_name_every_changed_setting_by_its_key_path() {
     );
 }
 
-/// The committed alpha.1 documents decode to the policies they described.
-#[cfg(feature = "serde")]
+/// The alpha.1 keys are unknown keys: a stored document is rewritten once.
 #[test]
-fn the_alpha_1_documents_still_decode() {
-    for (name, policy) in policies() {
-        let text =
-            fs::read_to_string(directory().join("alpha1").join(format!("{name}.toml"))).unwrap();
-        assert_eq!(::toml::from_str::<Policy>(&text).unwrap(), policy, "{name}");
-        let over = Policy::deserialize_over(
-            Policy::modern(),
-            ::toml::Deserializer::parse(&text).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(over.waiting, policy.waiting, "{name}");
+fn the_alpha_1_keys_are_refused() {
+    for document in [
+        "policy_version = 1",
+        "profile = \"legacy\"",
+        "waiting_per_source = 4",
+        "waiting_total = 4",
+        "waiting_rerecord_secs = 4",
+    ] {
+        assert!(
+            Policy::from_value_over(&Policy::default(), &value_of(document)).is_err(),
+            "{document}"
+        );
     }
-    // An unknown profile is still refused there.
-    assert!(::toml::from_str::<Policy>("profile = \"bespoke\"").is_err());
-    // A version other than 1 is ignored, as the key is.
-    assert!(::toml::from_str::<Policy>("policy_version = 2").is_ok());
 }

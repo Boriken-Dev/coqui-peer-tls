@@ -103,7 +103,11 @@ impl Pins {
 
     fn with_limits(&self, limits: WaitingLimits) -> Self {
         match &self.0 {
-            PinsKind::Store(store) => Self(PinsKind::Store(store.clone().with_limits(limits))),
+            PinsKind::Store(store) => {
+                let mut waiting = store.settings().waiting;
+                waiting.limits = limits;
+                Self(PinsKind::Store(store.clone().waiting_queue(waiting)))
+            }
             PinsKind::Fixed(_) => self.clone(),
         }
     }
@@ -224,72 +228,6 @@ impl PinnedChecks {
 }
 
 impl Trust {
-    /// The verifier a server uses for client certificates, under the default policy.
-    ///
-    /// # Errors
-    ///
-    /// As `client_cert_verifier_with`.
-    #[deprecated(note = "use `PeerClientVerifier::builder(trust).build()`")]
-    pub fn client_cert_verifier(&self) -> Result<Arc<PeerClientVerifier>, PeerError> {
-        self.unaddressed_client_verifier(&Policy::default())
-    }
-
-    /// The verifier a server uses for client certificates.
-    ///
-    /// It has no connection's addresses, so it cannot apply a policy's access control list:
-    /// a policy with one is refused rather than ignored.
-    ///
-    /// # Errors
-    ///
-    /// [`PeerError::Unsupported`] for [`Roots`](Trust::Roots) and
-    /// [`PinnedOrRoots`](Trust::PinnedOrRoots), which only clients apply;
-    /// [`PeerError::CaFile`] / [`PeerError::TrustPattern`] when the CA file or globs
-    /// are unusable; [`PeerError::Policy`] when a pin uses a digest the policy refuses, the
-    /// policy cannot build a crypto provider, or the policy has an access control list.
-    #[deprecated(note = "use `PeerClientVerifier::builder(trust).policy(..).build()`")]
-    pub fn client_cert_verifier_with(
-        &self,
-        policy: &Policy,
-    ) -> Result<Arc<PeerClientVerifier>, PeerError> {
-        self.unaddressed_client_verifier(policy)
-    }
-
-    /// The verifier a server uses for one connection's client certificate, from `source` to
-    /// `local`.
-    ///
-    /// # Errors
-    ///
-    /// As [`PeerClientVerifierBuilder::build`].
-    #[deprecated(
-        note = "use `PeerClientVerifier::builder(trust).policy(..).addresses(source, local).build()`"
-    )]
-    pub fn client_cert_verifier_for(
-        &self,
-        policy: &Policy,
-        source: SocketAddr,
-        local: SocketAddr,
-    ) -> Result<Arc<dyn ClientCertVerifier>, PeerError> {
-        PeerClientVerifier::builder(self)
-            .policy(policy.clone())
-            .addresses(source, local)
-            .build()
-    }
-
-    fn unaddressed_client_verifier(
-        &self,
-        policy: &Policy,
-    ) -> Result<Arc<PeerClientVerifier>, PeerError> {
-        #[cfg(feature = "acl")]
-        if policy.acl.is_some() {
-            return Err(PeerError::Policy(
-                "a client verifier without addresses cannot apply the policy's acl; build a \
-                 server configuration or give the verifier addresses"
-                    .to_owned(),
-            ));
-        }
-        self.client_verifier(policy, None).map(Arc::new)
-    }
-
     /// The client verifier, recording waiting entries under `source` when it is given and
     /// under the scope's otherwise.
     pub(crate) fn client_verifier(
@@ -388,29 +326,6 @@ impl Trust {
             .as_ref()
             .map_or(Refusal::NotPinned, Pins::refusal);
         Err(refused(refusal.into_rustls()))
-    }
-
-    /// The verifier a client uses for the server certificate, under the default policy.
-    ///
-    /// # Errors
-    ///
-    /// As [`PeerServerVerifier::new`].
-    #[deprecated(note = "use `PeerServerVerifier::new(trust, &Policy::default())`")]
-    pub fn server_cert_verifier(&self) -> Result<Arc<PeerServerVerifier>, PeerError> {
-        PeerServerVerifier::new(self, &Policy::default())
-    }
-
-    /// The verifier a client uses for the server certificate.
-    ///
-    /// # Errors
-    ///
-    /// As [`PeerServerVerifier::new`].
-    #[deprecated(note = "use `PeerServerVerifier::new`")]
-    pub fn server_cert_verifier_with(
-        &self,
-        policy: &Policy,
-    ) -> Result<Arc<PeerServerVerifier>, PeerError> {
-        PeerServerVerifier::new(self, policy)
     }
 }
 

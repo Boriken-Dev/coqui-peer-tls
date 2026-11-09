@@ -1,17 +1,15 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A refused certificate is a typed `Refusal` inside `rustls::Error::InvalidCertificate`, which
 //! the refusing side reads back from the rustls error or from `PeerError::refusal`.
 #![cfg(all(feature = "generate", feature = "tokio"))]
 
+mod support;
 use std::sync::Arc;
+use support::configs::{TrustVerifiers, client_config, server_config};
 
 use coqui_peer_tls::{
-    Identity, PeerError, Pins, Refusal, Trust, TrustStore, TrustStoreExt, asynch, client_config,
-    server_config,
+    Addressed, Identity, PeerError, Pins, Refusal, Trust, TrustStore, TrustStoreExt, asynch,
 };
-use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::server::danger::ClientCertVerifier;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const ALPN: &[u8] = b"refusal-test/1";
@@ -142,8 +140,11 @@ async fn link(
 ) -> (Result<(), PeerError>, Result<(), PeerError>) {
     let (near, far) = tokio::io::duplex(16384);
     let accepting = tokio::spawn(async move {
-        let (mut stream, _) =
-            asynch::accept_from(Arc::new(server), far, ([192, 0, 2, 1], 1).into()).await?;
+        let (mut stream, _) = asynch::accept(
+            Arc::new(server),
+            Addressed::new(far, ([192, 0, 2, 1], 1).into()),
+        )
+        .await?;
         let mut ping = [0u8; 4];
         stream.read_exact(&mut ping).await.map_err(PeerError::Io)?;
         stream.write_all(&ping).await.map_err(PeerError::Io)?;

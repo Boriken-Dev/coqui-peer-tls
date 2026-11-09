@@ -143,45 +143,6 @@ where
     accept_as(config, io, source, local).await
 }
 
-/// [`accept`] for a stream that is not a TCP stream, with the address it came from given.
-///
-/// # Errors
-///
-/// [`PeerError::Io`] when the handshake fails; [`PeerError::refusal`] says why this side
-/// refused the peer certificate, when it did.
-#[deprecated(note = "wrap the stream in `Addressed::new(io, source)` and use `accept`")]
-pub async fn accept_from<S>(
-    config: Arc<ServerConfig>,
-    io: S,
-    source: SocketAddr,
-) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    accept_as(config, io, Some(source), None).await
-}
-
-/// As `accept_from`, with the local address the connection arrived at as well, as
-/// `crate::accept_at`.
-///
-/// # Errors
-///
-/// As [`accept`].
-#[deprecated(
-    note = "wrap the stream in `Addressed::new(io, source).local(local)` and use `accept`"
-)]
-pub async fn accept_at<S>(
-    config: Arc<ServerConfig>,
-    io: S,
-    source: SocketAddr,
-    local: SocketAddr,
-) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    accept_as(config, io, Some(source), Some(local)).await
-}
-
 async fn accept_as<S>(
     config: Arc<ServerConfig>,
     io: S,
@@ -218,24 +179,6 @@ where
 {
     let (source, local) = (io.peer_addr(), io.local_addr());
     accept_with_as(io, (source, local), select).await
-}
-
-/// [`accept_with`] for a stream that is not a TCP stream, with the address it came from given.
-///
-/// # Errors
-///
-/// [`PeerError::Io`] when the hello cannot be read or the handshake fails;
-/// [`PeerError::refusal`] says why this side refused the peer certificate, when it did.
-#[deprecated(note = "wrap the stream in `Addressed::new(io, source)` and use `accept_with`")]
-pub async fn accept_with_from<S>(
-    io: S,
-    source: SocketAddr,
-    select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>,
-) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    accept_with_as(io, (Some(source), None), select).await
 }
 
 async fn accept_with_as<S>(
@@ -390,33 +333,6 @@ where
 {
     let (source, local) = (stream.peer_addr(), stream.local_addr());
     pair_accept_as(stream, (source, local), identity, store, desk, config).await
-}
-
-/// [`pair_accept`] for a stream that is not a TCP stream, with the address it came from given.
-///
-/// # Errors
-///
-/// As [`crate::pair_accept`].
-#[deprecated(note = "wrap the stream in `Addressed::new(stream, source)` and use `pair_accept`")]
-pub async fn pair_accept_from<S>(
-    stream: S,
-    source: SocketAddr,
-    identity: &Identity,
-    store: &TrustStore,
-    desk: &PairingDesk,
-    config: &PairConfig,
-) -> Result<Paired, PeerError>
-where
-    S: AsyncRead + AsyncWrite + Unpin,
-{
-    pair_accept(
-        Addressed::new(stream, source),
-        identity,
-        store,
-        desk,
-        config,
-    )
-    .await
 }
 
 async fn pair_accept_as<S>(

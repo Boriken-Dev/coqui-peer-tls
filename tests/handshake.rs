@@ -1,17 +1,17 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Handshakes between real identities. Run with `--all-features`.
 #![cfg(all(feature = "generate", feature = "ca", feature = "tokio"))]
 
+mod support;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
+use support::configs::{TrustVerifiers, client_config, server_config};
 
 use coqui_peer_tls::{
-    CaPolicy, Identity, PeerId, Pins, Trust, TrustStore, accept, client_config, dial, server_config,
+    Addressed, CaPolicy, Identity, PeerId, Pins, Trust, TrustStore, accept, dial,
 };
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
-use rustls::client::danger::ServerCertVerifier;
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
 const ALPN: &[u8] = b"test-proto/1";
@@ -307,10 +307,12 @@ async fn async_dial_and_accept_over_any_stream() {
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let (mut stream, peer) =
-            coqui_peer_tls::asynch::accept_from(server_config, far, "192.0.2.1:1".parse().unwrap())
-                .await
-                .unwrap();
+        let (mut stream, peer) = coqui_peer_tls::asynch::accept(
+            server_config,
+            Addressed::new(far, "192.0.2.1:1".parse().unwrap()),
+        )
+        .await
+        .unwrap();
         let mut byte = [0u8; 4];
         stream.read_exact(&mut byte).await.unwrap();
         stream.write_all(&byte).await.unwrap();
@@ -337,9 +339,8 @@ async fn accept_with_chooses_the_configuration_from_the_hello() {
         Arc::new(client_config(&client, &pinned(server.fingerprint()), &[ALPN]).unwrap());
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
-        let (stream, peer) = coqui_peer_tls::asynch::accept_with_from(
-            far,
-            "192.0.2.1:1".parse().unwrap(),
+        let (stream, peer) = coqui_peer_tls::asynch::accept_with(
+            Addressed::new(far, "192.0.2.1:1".parse().unwrap()),
             |hello| {
                 assert_eq!(hello.alpn().unwrap().next(), Some(ALPN));
                 chosen

@@ -1,14 +1,17 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A peer that lost trust is refused at its next connection: TLS session resumption, which
 //! would skip the certificate check, is off unless the policy allows it.
 #![cfg(all(feature = "generate", feature = "tokio"))]
 
+mod support;
 use std::sync::Arc;
-
-use coqui_peer_tls::{
-    Identity, PeerError, Pins, Policy, TlsVersion, Trust, TrustStore, TrustStoreExt, asynch,
+use support::configs::{
     client_config_with, client_config_without_identity_with, server_config_with,
     server_config_without_client_auth_with,
+};
+
+use coqui_peer_tls::{
+    Addressed, Identity, PeerError, Pins, Policy, TlsVersion, Trust, TrustStore, TrustStoreExt,
+    asynch,
 };
 use rustls::{ClientConfig, HandshakeKind, ServerConfig};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -26,7 +29,8 @@ async fn link(
     let (near, far) = tokio::io::duplex(16384);
     let server = server.clone();
     let accepting = tokio::spawn(async move {
-        let (mut stream, _) = asynch::accept_from(server, far, ([192, 0, 2, 1], 1).into()).await?;
+        let (mut stream, _) =
+            asynch::accept(server, Addressed::new(far, ([192, 0, 2, 1], 1).into())).await?;
         let mut ping = [0u8; 4];
         stream.read_exact(&mut ping).await.map_err(PeerError::Io)?;
         stream.write_all(&ping).await.map_err(PeerError::Io)?;

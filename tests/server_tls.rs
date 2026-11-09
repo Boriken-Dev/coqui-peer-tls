@@ -1,20 +1,23 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Server TLS: the server proves itself by certificate and the client presents none. Covers
 //! the configurations, the handshake that finishes without a peer certificate, identities
 //! with a chain and short-lived generated identities.
 #![cfg(feature = "generate")]
 
+mod support;
 use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use support::configs::{
+    client_config, client_config_without_identity, client_config_without_identity_with,
+    server_config, server_config_without_client_auth, server_config_without_client_auth_with,
+};
 
 use coqui_peer::Handshake;
 use coqui_peer_tls::{
     Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal, TlsHandshake, Trust, accept,
-    client_config, client_config_without_identity, client_config_without_identity_with, dial,
-    server_config, server_config_without_client_auth, server_config_without_client_auth_with,
+    dial,
 };
 use rcgen::{BasicConstraints, Certificate, CertificateParams, DnType, IsCa, Issuer, KeyPair};
 use rustls::{Connection, ServerConfig, StreamOwned};
@@ -186,7 +189,10 @@ fn a_client_without_identity_refuses_a_server_it_does_not_pin() {
 
 #[test]
 fn a_short_lived_identity_serves_a_pinning_client() {
-    let server = Identity::generate_valid_for(Duration::from_secs(14 * 86_400)).unwrap();
+    let server = Identity::builder()
+        .valid_for(Duration::from_secs(14 * 86_400))
+        .generate()
+        .unwrap();
     let (address, served) = serve(server_config_without_client_auth(&server, &[]).unwrap());
     let client = client_config_without_identity(&pinned(server.fingerprint()), &[]).unwrap();
     let (seen, _) = ping(address, client).unwrap();

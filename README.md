@@ -111,7 +111,7 @@ for the dialled name is trusted. The chain, the dates and the name are always ch
 
 | Module | Purpose |
 | --- | --- |
-| `coqui_peer_tls` | `Identity`, `PeerIdentity`; `Trust`, `Pins`, `CaPolicy`, `Roots` and their verifiers; `Policy`; the configuration builders (`ServerBuilder`, `ClientBuilder`, `ClientAuth`, `ServerAuth`), `Built`, and `ServerConfigs` / `ConnectionConfig` for a configuration per connection; `dial`, `accept`, `Addressed` and their variants; `Tls` and `TlsHandshake`; pairing over TLS; rotation; `PeerError`, `Refusal`; re-exports of `coqui-peer`'s ids, store and `Weakening`. |
+| `coqui_peer_tls` | `Identity`, `PeerIdentity`; `Trust`, `Pins`, `CaPolicy`, `Roots` and their verifiers; `Policy`; the configuration builders (`ServerBuilder`, `ClientBuilder`, `ClientAuth`, `ServerAuth`), `Built`, and `ServerConfigs` / `ConnectionConfig` for a configuration per connection; `dial`, `accept`, `Addressed` and their variants; `Tls` and `TlsHandshake`; pairing over TLS; rotation; `PeerError`, `Refusal`; re-exports of `coqui-peer`'s ids, store and `NonDefault`. |
 | `coqui_peer_tls::asynch` | Async dial, accept, pairing and rotation over tokio (`tokio`). |
 | `coqui_peer_tls::pair` | `coqui-peer`'s pairing exchange, re-exported. |
 | `coqui_peer_tls::acl` | `coqui-net-acl`, re-exported (`acl`). |
@@ -252,10 +252,6 @@ With `serde`, `Policy`, `TlsSettings` and `PairConfig` also implement `Serialize
 it with `Policy::from_value_over` (`Policy::deserialize_over` with `serde`), which merges the
 document into the base key by key, a table such as `waiting` included. Committed examples for
 every preset are in the repository's `tests/vectors/policy/`.
-
-The text form of 0.0.0-alpha.1 (`policy_version`, `profile`, the flat `waiting_per_source`,
-`waiting_total` and `waiting_rerecord_secs`) still reads through `Deserialize` and
-`from_value_over`, for one more release; write the current form.
 
 ## Access control
 

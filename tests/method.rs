@@ -1,18 +1,17 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! The TLS method driven through the sans-IO traits of `coqui-peer`, over a byte stream and
 //! over a message transport.
 #![cfg(feature = "generate")]
 
+mod support;
 use std::io;
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
+use support::configs::{client_config, server_config};
 
 use coqui_peer::{DriveError, MessageTransport, Method, drive_messages, drive_stream};
-use coqui_peer_tls::{
-    Identity, Pins, Refusal, Tls, Trust, TrustStore, client_config, server_config,
-};
+use coqui_peer_tls::{Identity, Pins, Refusal, Tls, Trust, TrustStore};
 
 fn pinned(identity: &Identity) -> Trust {
     Trust::Pinned(Pins::fixed([identity.fingerprint()]))
@@ -20,8 +19,8 @@ fn pinned(identity: &Identity) -> Trust {
 
 fn method(client: &Identity, server: &Identity, client_trust: &Trust, server_trust: &Trust) -> Tls {
     Tls::new()
-        .with_client(Arc::new(client_config(client, client_trust, &[]).unwrap()))
-        .with_server(Arc::new(server_config(server, server_trust, &[]).unwrap()))
+        .client(Arc::new(client_config(client, client_trust, &[]).unwrap()))
+        .server(Arc::new(server_config(server, server_trust, &[]).unwrap()))
 }
 
 #[test]
@@ -136,7 +135,7 @@ fn an_unpinned_peer_is_refused_and_a_proven_one_waits_under_its_source() {
 fn a_method_without_a_role_cannot_start_it() {
     let client = Identity::generate().unwrap();
     let server = Identity::generate().unwrap();
-    let only_client = Tls::new().with_client(Arc::new(
+    let only_client = Tls::new().client(Arc::new(
         client_config(&client, &pinned(&server), &[]).unwrap(),
     ));
     assert!(only_client.initiate().is_ok());

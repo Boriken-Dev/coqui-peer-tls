@@ -1,5 +1,5 @@
-//! The configuration builders: the settings by name, the client authentication as a value, and
-//! the old functions as wrappers over them. Run with `--all-features`.
+//! The configuration builders: the settings by name, and the client authentication as a value. Run with
+//! `--all-features`.
 #![cfg(all(feature = "generate", feature = "tokio"))]
 
 use std::io::{Read, Write};
@@ -234,87 +234,9 @@ fn the_identity_builder_keeps_one_end_and_the_last_setter_wins() {
     assert_eq!(window(&by_end_last), (seconds(start), seconds(end)));
 }
 
-/// The old functions are one-line wrappers: the same connection works through them.
+/// A stream wrapped in `Addressed` is accepted as a TCP stream is.
 #[test]
-#[allow(deprecated)]
-fn the_old_functions_build_the_same_configurations() {
-    let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
-    let old_server =
-        coqui_peer_tls::server_config(&server, &pinned(client.fingerprint()), &[ALPN]).unwrap();
-    let old_client =
-        coqui_peer_tls::client_config(&client, &pinned(server.fingerprint()), &[ALPN]).unwrap();
-    assert_eq!(echo(old_server, old_client), Some(client.fingerprint()));
-
-    let old_server = coqui_peer_tls::server_config_without_client_auth(&server, &[ALPN]).unwrap();
-    let old_client =
-        coqui_peer_tls::client_config_without_identity(&pinned(server.fingerprint()), &[ALPN])
-            .unwrap();
-    assert_eq!(echo(old_server, old_client), None);
-
-    let policy = {
-        let mut policy = Policy::default();
-        policy.allow_resumption = true;
-        policy
-    };
-    let built = coqui_peer_tls::server_config_with(
-        &server,
-        &pinned(client.fingerprint()),
-        &[ALPN],
-        &policy,
-    )
-    .unwrap();
-    assert_eq!(built.non_defaults.len(), 1);
-    let _ = coqui_peer_tls::ServerConfigs::without_client_auth(&server, &[ALPN], &policy).unwrap();
-    let _ = Identity::generate_valid_for(Duration::from_secs(3600)).unwrap();
-}
-
-/// The deprecated verifier constructors and address wrappers are the new forms.
-#[test]
-#[allow(deprecated)]
-fn the_old_verifier_and_address_functions_are_the_new_forms() {
-    let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
-    let client_trust = pinned(client.fingerprint());
-    let server_trust = pinned(server.fingerprint());
-
-    let old_client_verifier = client_trust.client_cert_verifier().unwrap();
-    let old_server_verifier = server_trust.server_cert_verifier().unwrap();
-    let built_server = ServerBuilder::new(&server, ClientAuth::Verifier(old_client_verifier))
-        .alpn([ALPN])
-        .build()
-        .unwrap();
-    let built_client = ClientBuilder::new(ServerAuth::Verifier(old_server_verifier))
-        .identity(&client)
-        .alpn([ALPN])
-        .build()
-        .unwrap();
-    assert_eq!(
-        echo(built_server.config, built_client.config),
-        Some(client.fingerprint())
-    );
-    assert!(
-        server_trust
-            .server_cert_verifier_with(&Policy::modern())
-            .is_ok()
-    );
-    let source = "127.0.0.1:50000".parse().unwrap();
-    let local = "127.0.0.1:7000".parse().unwrap();
-    assert!(
-        client_trust
-            .client_cert_verifier_for(&Policy::default(), source, local)
-            .is_ok()
-    );
-    assert!(
-        client_trust
-            .client_cert_verifier_with(&Policy::default())
-            .is_ok()
-    );
-}
-
-/// A stream wrapped in `Addressed` is accepted as a TCP stream is, and the deprecated
-/// `accept_from` and `accept_at` are that.
-#[test]
-#[allow(deprecated)]
-fn an_addressed_stream_is_accepted_and_the_old_accept_functions_are_that() {
+fn an_addressed_stream_is_accepted() {
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     let built_server =
         ServerBuilder::new(&server, ClientAuth::Required(pinned(client.fingerprint())))
@@ -331,38 +253,25 @@ fn an_addressed_stream_is_accepted_and_the_old_accept_functions_are_that() {
     let source: std::net::SocketAddr = "127.0.0.1:50000".parse().unwrap();
     let local: std::net::SocketAddr = "127.0.0.1:7000".parse().unwrap();
 
-    for old in [false, true] {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let config = Arc::clone(&server_config);
-        let served = thread::spawn(move || {
-            let (socket, _) = listener.accept().unwrap();
-            let (mut stream, peer) = if old {
-                coqui_peer_tls::accept_at(config, socket, source, local).ok()?
-            } else {
-                let wrapped = Addressed::new(socket, source).local(local);
-                let (stream, peer) = accept(config, wrapped).ok()?;
-                (
-                    rustls::StreamOwned::new(stream.conn, stream.sock.into_inner()),
-                    peer,
-                )
-            };
-            let mut four = [0u8; 4];
-            stream.read_exact(&mut four).ok()?;
-            stream.write_all(&four).ok()?;
-            stream.flush().ok()?;
-            Some(peer.fingerprint)
-        });
-        let socket = TcpStream::connect(address).unwrap();
-        let (mut stream, _) = dial(Arc::clone(&client_config), socket).unwrap();
-        stream.write_all(b"ping").unwrap();
-        stream.flush().unwrap();
-        let mut back = [0u8; 4];
-        stream.read_exact(&mut back).unwrap();
-        assert_eq!(
-            served.join().unwrap(),
-            Some(client.fingerprint()),
-            "old: {old}"
-        );
-    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let config = Arc::clone(&server_config);
+    let served = thread::spawn(move || {
+        let (socket, _) = listener.accept().unwrap();
+        let wrapped = Addressed::new(socket, source).local(local);
+        let (stream, peer) = accept(config, wrapped).ok()?;
+        let mut stream = rustls::StreamOwned::new(stream.conn, stream.sock.into_inner());
+        let mut four = [0u8; 4];
+        stream.read_exact(&mut four).ok()?;
+        stream.write_all(&four).ok()?;
+        stream.flush().ok()?;
+        Some(peer.fingerprint)
+    });
+    let socket = TcpStream::connect(address).unwrap();
+    let (mut stream, _) = dial(Arc::clone(&client_config), socket).unwrap();
+    stream.write_all(b"ping").unwrap();
+    stream.flush().unwrap();
+    let mut back = [0u8; 4];
+    stream.read_exact(&mut back).unwrap();
+    assert_eq!(served.join().unwrap(), Some(client.fingerprint()));
 }

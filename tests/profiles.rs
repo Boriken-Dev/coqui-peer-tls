@@ -1,4 +1,3 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Cipher profiles: what each allows, how a set of them combines, and what a peer outside
 //! them is refused.
 #![cfg(feature = "generate")]
@@ -7,12 +6,10 @@ mod support;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use support::configs::{client_config_with, server_config_with};
 
 use coqui_peer::Handshake;
-use coqui_peer_tls::{
-    CipherProfile, Identity, PeerError, Policy, TlsHandshake, TlsVersion, Trust,
-    client_config_with, server_config_with,
-};
+use coqui_peer_tls::{CipherProfile, Identity, PeerError, Policy, TlsHandshake, TlsVersion, Trust};
 use rustls::{Connection, SignatureScheme};
 
 const ALPN: &[u8] = b"profiles-test/1";

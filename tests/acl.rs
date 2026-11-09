@@ -1,19 +1,22 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A policy's access control list, applied by every server configuration built under it: by
 //! address at the `ClientHello`, by fingerprint before the trust store is consulted.
 #![cfg(all(feature = "acl", feature = "generate"))]
 
+mod support;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
+use support::configs::{
+    TrustVerifiers, accept_from, client_config, client_config_without_identity, server_config_with,
+    server_config_with_verifier, server_configs,
+};
 
 use coqui_net_acl::{Acl, Action, IpNet, Rule};
 use coqui_peer::Handshake;
 use coqui_peer_tls::{
-    Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal, ServerConfigs, TlsHandshake,
-    Trust, TrustStore, accept, accept_from, client_config, client_config_without_identity, dial,
-    server_config_with, server_config_with_verifier,
+    Identity, PeerError, PeerId, PeerIdentity, Pins, Policy, Refusal, TlsHandshake, Trust,
+    TrustStore, accept, dial,
 };
 use rustls::{AlertDescription, ServerConfig};
 
@@ -231,7 +234,7 @@ fn a_configuration_for_one_connection_decides_without_a_scope() -> Result<(), Pe
     let source: SocketAddr = "192.0.2.7:4000".parse().expect("an address");
     let local: SocketAddr = "198.51.100.1:443".parse().expect("an address");
     assert_eq!(policy.admits_address(source, local), Ok(()));
-    let configs = ServerConfigs::new(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
+    let configs = server_configs(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
     let config = configs.for_connection(source, local)?;
     let client_config = client_config(&client, &Trust::AnyWithKeyProof, &[ALPN])?;
     let mut server = TlsHandshake::server(config.config(), None)?;
@@ -300,12 +303,7 @@ fn a_verifier_for_one_connection_records_waiting_entries_under_its_source() -> R
     let local: SocketAddr = "198.51.100.1:443".parse().expect("an address");
     let trust = Trust::Pinned(Pins::store(store.clone()));
     let verifier = trust.client_cert_verifier_for(&Policy::modern(), source, local)?;
-    let config = coqui_peer_tls::server_config_with_verifier(
-        &identity,
-        verifier,
-        &[ALPN],
-        &Policy::modern(),
-    )?;
+    let config = server_config_with_verifier(&identity, verifier, &[ALPN], &Policy::modern())?;
     let mut server = TlsHandshake::server(Arc::new(config.config), None)?;
     let mut dialer = TlsHandshake::client(Arc::new(client_config(
         &client,

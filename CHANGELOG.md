@@ -28,28 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Coqui-net-acl's `Acl`, coqui-peer's `WaitingLimits` and `Digest` are guatiao values in their own
   crates.
 
-### Deprecated
-
-- Kept one release, as wrappers over the new forms: `server_config`, `server_config_with`,
-  `server_config_with_verifier`, `server_config_without_client_auth`,
-  `server_config_without_client_auth_with`, `client_config`, `client_config_with`,
-  `client_config_with_verifier`, `client_config_without_identity`,
-  `client_config_without_identity_with`, `ServerConfigs::{new, with_verifier,
-  without_client_auth}`, `Trust::{client_cert_verifier, client_cert_verifier_with,
-  client_cert_verifier_for, server_cert_verifier, server_cert_verifier_with}`, `accept_from`,
-  `accept_at`, `asynch::{accept_from, accept_at, accept_with_from, pair_accept_from}`,
-  `pair_accept_from`, `with_source`, `Identity::{generate_valid_for, generate_with}`,
-  `Tls::{with_client, with_server}` (now `client`, `server`), `TlsHandshake::with_local` (now
-  `local`) and `POLICY_VERSION`.
-
 ### Changed
 
 - **Breaking: the text form of `Policy` is the guatiao form.** The `serde` feature forwards to it.
   The flat `waiting_per_source`, `waiting_total` and `waiting_rerecord_secs` are the table `waiting`
   (`per_source`, `total`, `rerecord`, a duration: a number of seconds, `[secs, nanos]` or
-  `{secs, nanos}`). The earlier form's `policy_version`, `profile` and flat `waiting_*` keys still
-  read through `Policy`'s `Deserialize` and `from_value_over` for one release, then go; `profile`
-  picks the preset the document applies over there. The vectors in `tests/vectors/policy/` are
+  `{secs, nanos}`). The earlier form's `policy_version`, `profile` and flat `waiting_*` keys are unknown
+  keys now; a stored document is rewritten once. The vectors in `tests/vectors/policy/` are
   regenerated.
 - **Breaking: `Policy`, `PairConfig` and `Built` are `#[non_exhaustive]`.** Start from a preset or
   `Default` and assign fields; a struct literal no longer compiles outside the crate.
@@ -63,9 +48,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   duration (`["1.3"]`, `[60,0]`); `non_defaults_against(&base)` compares with `base`.
 - **Breaking: a weakened setting is a non-default setting.** `Policy::weakened` and `weakened_against` are
   `non_defaults` and `non_defaults_against`, `ServerConfigs::weakened` is `non_defaults`, and the public field
-  `Built::weakened` is `Built::non_defaults` (no alias is possible for a field). The entries are coqui-peer's
+  `Built::weakened` is `Built::non_defaults` . The entries are coqui-peer's
   `NonDefault { setting, value, default }` (its `strict` field is now `default`) and coqui-net-acl's likewise.
-  The methods and the `Weakening` re-export stay one release as deprecated aliases.
+  The old names are gone: nothing keeps an alias before a release without a pre-release tag.
 
 ### Removed
 

@@ -1,14 +1,13 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Server configurations built for one connection each: addresses from the host, session state
 //! shared from one base, and the refusal kept for a host that sees only the alert.
 #![cfg(feature = "generate")]
 
+mod support;
 use std::sync::Arc;
+use support::configs::{client_config_with, server_configs};
 
 use coqui_peer::Handshake;
-use coqui_peer_tls::{
-    Identity, PeerError, Policy, ServerConfigs, TlsHandshake, Trust, client_config_with,
-};
+use coqui_peer_tls::{Identity, PeerError, Policy, TlsHandshake, Trust};
 use rustls::{Connection, HandshakeKind};
 
 const ALPN: &[u8] = b"connection-test/1";
@@ -47,7 +46,7 @@ fn two_connections_from_one_base_share_their_sessions() -> Result<(), PeerError>
     let identity = Identity::generate()?;
     let client = Identity::generate()?;
     let policy = resumable();
-    let configs = ServerConfigs::new(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
+    let configs = server_configs(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
     let client_config =
         Arc::new(client_config_with(&client, &Trust::AnyWithKeyProof, &[ALPN], &policy)?.config);
     let mut kinds = Vec::new();
@@ -76,7 +75,7 @@ fn connections_from_separate_bases_do_not_resume() -> Result<(), PeerError> {
         Arc::new(client_config_with(&client, &Trust::AnyWithKeyProof, &[ALPN], &policy)?.config);
     let mut kinds = Vec::new();
     for _ in 0..2 {
-        let configs = ServerConfigs::new(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
+        let configs = server_configs(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
         let connection = configs.for_connection(at("192.0.2.7:4000"), at("198.51.100.1:443"))?;
         let session = handshake(
             TlsHandshake::server(connection.config(), None)?,
@@ -95,7 +94,7 @@ fn connections_from_separate_bases_do_not_resume() -> Result<(), PeerError> {
 fn without_resumption_no_connection_resumes() -> Result<(), PeerError> {
     let identity = Identity::generate()?;
     let client = Identity::generate()?;
-    let configs = ServerConfigs::new(
+    let configs = server_configs(
         &identity,
         &Trust::AnyWithKeyProof,
         &[ALPN],
@@ -136,7 +135,7 @@ fn a_resumed_session_still_meets_the_address_rules() -> Result<(), PeerError> {
         )],
         default: Action::Permit,
     });
-    let configs = ServerConfigs::new(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
+    let configs = server_configs(&identity, &Trust::AnyWithKeyProof, &[ALPN], &policy)?;
     let client_config =
         Arc::new(client_config_with(&client, &Trust::AnyWithKeyProof, &[ALPN], &policy)?.config);
     let admitted = configs.for_connection(at("192.0.2.7:4000"), at("198.51.100.1:443"))?;

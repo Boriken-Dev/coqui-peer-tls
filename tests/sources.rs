@@ -1,15 +1,16 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Waiting entries carry the address the handshake came from, and the caps are per source.
 #![cfg(all(feature = "generate", feature = "tokio"))]
 
+mod support;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
+use support::configs::{accept_from, client_config, server_config, server_config_with};
 
 use coqui_peer_tls::{
-    Identity, Pins, Policy, Trust, TrustStore, TrustStoreExt, WaitingLimits, accept, accept_from,
-    client_config, dial, server_config, server_config_with,
+    Addressed, Identity, Pins, Policy, Trust, TrustStore, TrustStoreExt, WaitingLimits, accept,
+    dial,
 };
 
 fn store() -> (tempfile::TempDir, TrustStore) {
@@ -148,7 +149,7 @@ async fn async_accept_from_records_the_address_it_is_given() {
     let given: SocketAddr = "[2001:db8::1]:4000".parse().unwrap();
     let (near, far) = tokio::io::duplex(8192);
     let accepting = tokio::spawn(async move {
-        coqui_peer_tls::asynch::accept_from(server_config, far, given)
+        coqui_peer_tls::asynch::accept(server_config, Addressed::new(far, given))
             .await
             .is_ok()
     });

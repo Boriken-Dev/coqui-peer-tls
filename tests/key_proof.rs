@@ -1,15 +1,15 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A waiting entry is recorded only for a client that proved it holds the certificate's key.
 #![cfg(all(feature = "generate", feature = "ca"))]
 
+mod support;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
+use support::configs::{TrustVerifiers, client_config_with, server_config_with};
 
 use coqui_peer_tls::{
-    CaPolicy, Identity, Pins, Policy, Trust, TrustStore, accept, client_config_with,
-    crypto_provider, dial, server_config_with,
+    CaPolicy, Identity, Pins, Policy, Trust, TrustStore, accept, crypto_provider, dial,
 };
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
 use rustls::client::ResolvesClientCert;

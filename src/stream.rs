@@ -223,39 +223,6 @@ pub fn accept<S: Read + Write + PeerAddr>(
     accept_from_as(config, io, source, local)
 }
 
-/// [`accept`] for a stream that is not a [`TcpStream`], with the address it came from given.
-///
-/// # Errors
-///
-/// [`PeerError::Io`] when the handshake fails; [`PeerError::refusal`] says why this side
-/// refused the peer certificate, when it did.
-#[deprecated(note = "wrap the stream in `Addressed::new(io, source)` and use `accept`")]
-pub fn accept_from<S: Read + Write>(
-    config: Arc<ServerConfig>,
-    io: S,
-    source: SocketAddr,
-) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
-    accept_from_as(config, io, Some(source), None)
-}
-
-/// As `accept_from`, with the local address the connection arrived at as well, which a policy's
-/// access control list reads for rules that name a destination or a port.
-///
-/// # Errors
-///
-/// As [`accept`].
-#[deprecated(
-    note = "wrap the stream in `Addressed::new(io, source).local(local)` and use `accept`"
-)]
-pub fn accept_at<S: Read + Write>(
-    config: Arc<ServerConfig>,
-    io: S,
-    source: SocketAddr,
-    local: SocketAddr,
-) -> Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError> {
-    accept_from_as(config, io, Some(source), Some(local))
-}
-
 pub(crate) fn accept_from_as<S: Read + Write>(
     config: Arc<ServerConfig>,
     mut io: S,

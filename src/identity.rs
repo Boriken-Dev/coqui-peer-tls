@@ -344,29 +344,6 @@ impl Identity {
         IdentityBuilder::default()
     }
 
-    /// Creates a self-signed ECDSA P-256 identity valid from now for `validity`.
-    ///
-    /// # Errors
-    ///
-    /// As [`IdentityBuilder::generate`].
-    #[deprecated(note = "use `Identity::builder().valid_for(..)`")]
-    pub fn generate_valid_for(validity: Duration) -> Result<Self, PeerError> {
-        Self::builder().valid_for(validity).generate()
-    }
-
-    /// Creates a self-signed ECDSA P-256 identity valid from `not_before` to `not_after`.
-    ///
-    /// # Errors
-    ///
-    /// As [`IdentityBuilder::generate`].
-    #[deprecated(note = "use `Identity::builder().not_before(..).not_after(..)`")]
-    pub fn generate_with(not_before: SystemTime, not_after: SystemTime) -> Result<Self, PeerError> {
-        Self::builder()
-            .not_before(not_before)
-            .not_after(not_after)
-            .generate()
-    }
-
     /// rcgen writes the subjectKeyIdentifier only beside basicConstraints, hence
     /// `ExplicitNoCa`. Chrome's `serverCertificateHashes` verifier refuses a certificate
     /// with no extensions.

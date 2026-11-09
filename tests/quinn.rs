@@ -1,15 +1,14 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! A QUIC host (quinn) with a policy access control list: a configuration per incoming
 //! connection, decided from the addresses quinn reports, the refusal kept for the host.
 #![cfg(all(feature = "acl", feature = "generate"))]
 
+mod support;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use support::configs::{client_config, server_config, server_configs};
 
 use coqui_net_acl::{Acl, Action, Rule};
-use coqui_peer_tls::{
-    Identity, PeerError, Policy, Refusal, SERVER_NAME, ServerConfigs, Trust, client_config,
-};
+use coqui_peer_tls::{Identity, PeerError, Policy, Refusal, SERVER_NAME, ServerConfigs, Trust};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 
 const ALPN: &[u8] = b"quinn-test/1";
@@ -70,9 +69,9 @@ async fn dial(server: SocketAddr, client: &Identity) -> Result<(), PeerError> {
 
 async fn attempt(policy: &Policy, client: &Identity) -> Result<(bool, Option<Refusal>), PeerError> {
     let identity = Identity::generate()?;
-    let configs = ServerConfigs::new(&identity, &Trust::AnyWithKeyProof, &[ALPN], policy)?;
+    let configs = server_configs(&identity, &Trust::AnyWithKeyProof, &[ALPN], policy)?;
     let tls = Arc::new(
-        QuicServerConfig::try_from(Arc::new(coqui_peer_tls::server_config(
+        QuicServerConfig::try_from(Arc::new(server_config(
             &identity,
             &Trust::AnyWithKeyProof,
             &[ALPN],

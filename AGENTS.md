@@ -70,8 +70,6 @@ impl Identity {
     pub fn generate() -> Result<Identity, PeerError>;                 // rcgen's default validity (decades)
     pub fn builder() -> IdentityBuilder;                               // a validity window of your own
     pub fn open_or_create(path: &Path) -> Result<Identity, PeerError>;
-    // deprecated one release: generate_valid_for(d) = builder().valid_for(d).generate(),
-    //   generate_with(a, b) = builder().not_before(a).not_after(b).generate()
 }
 #[must_use] pub struct IdentityBuilder;   // Clone, Debug, Default
 impl IdentityBuilder {
@@ -127,9 +125,6 @@ impl PeerClientVerifierBuilder {
     pub fn addresses(self, source: SocketAddr, local: SocketAddr) -> Self;   // for one connection (quinn)
     pub fn build(self) -> Result<Arc<dyn ClientCertVerifier>, PeerError>;    // a policy with an acl and no addresses: PeerError::Policy
 }
-// Deprecated one release: Trust::server_cert_verifier[_with] = PeerServerVerifier::new;
-//   Trust::client_cert_verifier[_with] (Arc<PeerClientVerifier>, an acl refused) and
-//   Trust::client_cert_verifier_for = PeerClientVerifier::builder(trust).policy(p).addresses(s, l).build()
 ```
 
 `PeerClientVerifier` implements rustls `ClientCertVerifier`, `PeerServerVerifier` implements
@@ -278,7 +273,7 @@ impl Policy {
     pub fn modern() -> Policy;  pub fn intermediate() -> Policy;  pub fn legacy() -> Policy;
     pub fn preset(name: &str) -> Result<Policy, PeerError>;
     pub fn non_defaults(&self) -> Vec<NonDefault>;   // names are key paths: "waiting.per_source"
-    pub fn non_defaults_against(&self, baseline: &Policy) -> Vec<NonDefault>;   // weakened, weakened_against: deprecated aliases for one release
+    pub fn non_defaults_against(&self, baseline: &Policy) -> Vec<NonDefault>;
     pub fn check_pin(&self, fingerprint: &PeerId) -> Result<(), PeerError>;
     pub fn check(&self) -> Result<(), PeerError>;   // what a configuration build checks, without one
     pub fn crypto_provider(&self) -> Result<Arc<CryptoProvider>, PeerError>;
@@ -288,8 +283,6 @@ impl Policy {
     pub fn deserialize_over<'de, D: Deserializer<'de>>(base: Policy, d: D) -> Result<Policy, D::Error>;  // feature serde
 }
 pub use coqui_peer::NonDefault;    // { setting, value, default }, NonDefault::new; setting: a field; default = the baseline's value
-pub use coqui_peer::Weakening;   // deprecated alias of NonDefault for one release; its field `strict` is now `default`
-#[deprecated] pub const POLICY_VERSION: u32 = 1;   // a document may still name `policy_version`; it is ignored
 impl TlsVersion { pub const fn as_str(self) -> &'static str; }   // "1.2", "1.3"; also Display; FromStr refuses others
 ```
 
@@ -396,11 +389,7 @@ known), `crypto` (`"ring"`, `"aws-lc"`), `pin_digests` (`"sha256"`, `"sha384"`, 
 or `{secs, nanos}`. `PairConfig` keys: `policy`, `alpn` (text of 1 to 255 bytes), `timeout`.
 `tests/vectors/policy/{modern,intermediate,legacy,acl,profiles}.{toml,json}` are byte-exact.
 
-The 0.0.0-alpha.1 text form's `policy_version`, `profile` and flat `waiting_per_source`, `waiting_total`
-and `waiting_rerecord_secs` keys still read through `Policy`'s `Deserialize` (`profile` picks the
-preset the document applies over) and `from_value_over` (`profile` is ignored: the base is
-given), for one release; they are unknown keys to `Policy::from_value` and the text
-readers. A consumer with its own default profile reads over it with `from_value_over`.
+A consumer with its own default profile reads over it with `from_value_over`.
 With `serde`, `Serialize` / `Deserialize` for these types forward to the same form.
 
 ## Access control (`Policy::acl`, feature `acl`)
@@ -443,7 +432,7 @@ Every server configuration built under a policy with `acl: Some(..)` applies it:
 pub fn with_addresses<R>(source: Option<SocketAddr>, local: Option<SocketAddr>, work: impl FnOnce() -> R) -> R;
 pub trait PeerAddr { fn peer_addr(&self) -> Option<SocketAddr>; fn local_addr(&self) -> Option<SocketAddr> { None } }
 // accept(config, Addressed::new(io, source).local(local)): both addresses for a stream that names none
-impl TlsHandshake { pub fn local(self, local: SocketAddr) -> TlsHandshake; }   // with_local: deprecated one release
+impl TlsHandshake { pub fn local(self, local: SocketAddr) -> TlsHandshake; }
 impl Policy {   // feature acl
     pub fn admits_address(&self, source: SocketAddr, local: SocketAddr) -> Result<(), Refusal>;
     pub fn admits_anonymous(&self, source: SocketAddr, local: SocketAddr) -> Result<(), Refusal>;
@@ -461,9 +450,8 @@ policy with an ACL (`PeerError::Policy`) rather than ignore it.
 ```rust
 pub struct ServerConfigs;   // Clone (shares the session state), Debug; made by ServerBuilder::configs
 impl ServerConfigs {
-    pub fn non_defaults(&self) -> &[NonDefault];   // weakened(): a deprecated alias for one release
+    pub fn non_defaults(&self) -> &[NonDefault];
     pub fn for_connection(&self, source: SocketAddr, local: SocketAddr) -> Result<ConnectionConfig, PeerError>;
-    // deprecated one release: new, with_verifier, without_client_auth (ServerBuilder + ClientAuth, then configs)
 }
 pub struct ConnectionConfig;   // Clone, Debug
 impl ConnectionConfig {
@@ -518,15 +506,6 @@ impl<'a> ClientBuilder<'a> {
     pub fn non_defaults(&self) -> Vec<NonDefault>;
     pub fn build(self) -> Result<Built<ClientConfig>, PeerError>;
 }
-// Deprecated one release, each a one-line wrapper:
-//   server_config(i, t, a)                          = ServerBuilder::new(i, ClientAuth::Required(t)).alpn(a).build()
-//   server_config_with(i, t, a, p)                  = ... .policy(p).build()
-//   server_config_without_client_auth[_with](..)    = ServerBuilder::new(i, ClientAuth::None) ...
-//   server_config_with_verifier(i, v, a, p)         = ServerBuilder::new(i, ClientAuth::Verifier(v)) ...
-//   client_config(i, t, a)                          = ClientBuilder::new(t).identity(i).alpn(a).build()
-//   client_config_with(i, t, a, p)                  = ... .policy(p).build()
-//   client_config_without_identity[_with](t, a[, p])= ClientBuilder::new(t).alpn(a)[.policy(p)].build()
-//   client_config_with_verifier(i, v, a, p)         = ClientBuilder::new(ServerAuth::Verifier(v))[.identity(i)] ...
 pub fn crypto_provider() -> Arc<CryptoProvider>;       // default ring provider
 pub const SERVER_NAME: &str = "coqui-peer.invalid";
 pub fn default_server_name() -> ServerName<'static>;   // SERVER_NAME as rustls takes it
@@ -541,13 +520,10 @@ impl<S> Addressed<S> {
     pub fn get_ref(&self) -> &S;  pub fn get_mut(&mut self) -> &mut S;  pub fn into_inner(self) -> S;
 }
 pub fn with_addresses<R>(source: Option<SocketAddr>, local: Option<SocketAddr>, impl FnOnce() -> R) -> R;
-// Deprecated one release: accept_from(c, io, src) = accept(c, Addressed::new(io, src)); accept_at adds .local(l);
-//   with_source(src, f) = with_addresses(src, None, f)
 // feature tokio, module asynch:
 pub async fn dial<S>(Arc<ClientConfig>, S) -> Result<(client::TlsStream<S>, PeerIdentity), PeerError>;
 pub async fn dial_named<S>(Arc<ClientConfig>, ServerName<'static>, S) -> Result<(client::TlsStream<S>, PeerIdentity), PeerError>;
 pub async fn accept<S: PeerAddr>(Arc<ServerConfig>, S) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
-// accept_from, accept_at, accept_with_from: deprecated one release, as the blocking ones
 pub async fn accept_with<S: PeerAddr>(S, select: impl FnOnce(&ClientHello<'_>) -> Arc<ServerConfig>) -> Result<(server::TlsStream<S>, PeerIdentity), PeerError>;
 ```
 
@@ -587,7 +563,7 @@ certificate, and hosts without an identity of their own.
 
 ```rust
 pub struct Tls;      // Clone, Default
-impl Tls { pub fn new() -> Tls; pub fn client(self, Arc<ClientConfig>) -> Tls; pub fn server(self, Arc<ServerConfig>) -> Tls; }   // with_client, with_server: deprecated one release
+impl Tls { pub fn new() -> Tls; pub fn client(self, Arc<ClientConfig>) -> Tls; pub fn server(self, Arc<ServerConfig>) -> Tls; }
 impl coqui_peer::Method for Tls { /* name() = "tls"; initiate(); respond(source: Option<SocketAddr>) */ }
 pub struct TlsHandshake;   // client(Arc<ClientConfig>), server(Arc<ServerConfig>, Option<SocketAddr>)
 impl TlsHandshake {
@@ -634,7 +610,6 @@ pub fn pair_client_config(&Identity, &Pairing, &ResponderTrust, &PairConfig) -> 
 pub fn pair_dial<S: Read + Write + ReadTimeout + WriteTimeout>(S, &Identity, Pairing, &ResponderTrust, &PairConfig) -> Result<PairDial<S>, PeerError>;
 impl<S> PairDial<S> { pub fn shown(&self) -> Option<&Shown>; pub fn finish(self, &TrustStore) -> Result<Paired, PeerError>; }
 pub fn pair_accept<S: Read + Write + PeerAddr + ReadTimeout + WriteTimeout>(S, &Identity, &TrustStore, &PairingDesk, &PairConfig) -> Result<Paired, PeerError>;
-// pair_accept_from(s, src, ..) is deprecated one release: pair_accept(Addressed::new(s, src), ..)
 pub fn announce(&mut impl Write, successor: &Identity) -> Result<(), PeerError>;
 pub fn receive_announcement(&mut impl Read, &TrustStore, sender: &PeerIdentity) -> Result<PeerId, PeerError>;
 impl Identity { pub fn renew_before(&self, margin: Duration) -> bool; pub fn renew_before_at(&self, Duration, SystemTime) -> bool; }

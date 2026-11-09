@@ -22,7 +22,7 @@ use crate::config::{ClientAuth, ClientBuilder, ServerBuilder, crypto_provider};
 use crate::error::PeerError;
 use crate::identity::{Identity, PeerIdentity};
 use crate::policy::Policy;
-use crate::stream::{Addressed, PeerAddr, SERVER_NAME, accept_from_as, dial_named};
+use crate::stream::{PeerAddr, SERVER_NAME, accept_from_as, dial_named};
 use crate::trust::{Pins, Trust};
 
 /// The default ALPN of a pairing connection.
@@ -366,29 +366,6 @@ pub fn pair_accept<S: Read + Write + PeerAddr + ReadTimeout + WriteTimeout>(
 ) -> Result<Paired, PeerError> {
     let (source, local) = (stream.peer_addr(), stream.local_addr());
     pair_accept_as(stream, (source, local), identity, store, desk, config)
-}
-
-/// [`pair_accept`] for a stream that is not a TCP stream, with the address it came from given.
-///
-/// # Errors
-///
-/// As [`pair_accept`].
-#[deprecated(note = "wrap the stream in `Addressed::new(stream, source)` and use `pair_accept`")]
-pub fn pair_accept_from<S: Read + Write + ReadTimeout + WriteTimeout>(
-    stream: S,
-    source: SocketAddr,
-    identity: &Identity,
-    store: &TrustStore,
-    desk: &PairingDesk,
-    config: &PairConfig,
-) -> Result<Paired, PeerError> {
-    pair_accept(
-        Addressed::new(stream, source),
-        identity,
-        store,
-        desk,
-        config,
-    )
 }
 
 fn pair_accept_as<S: Read + Write + ReadTimeout + WriteTimeout>(

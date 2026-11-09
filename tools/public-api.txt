@@ -13,7 +13,6 @@ pub use coqui_peer_tls::RotationOptions
 pub use coqui_peer_tls::TrustStore
 pub use coqui_peer_tls::WaitingEntry
 pub use coqui_peer_tls::WaitingLimits
-pub use coqui_peer_tls::Weakening
 pub use coqui_peer_tls::WriteTimeout
 pub use coqui_peer_tls::acl
 pub use coqui_peer_tls::pair
@@ -23,15 +22,11 @@ impl<S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + 
 pub async fn coqui_peer_tls::asynch::PairDial<S>::finish(self, &coqui_peer::store::TrustStore) -> core::result::Result<coqui_peer::pair::Paired, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::asynch::PairDial<S>::shown(&self) -> core::option::Option<&coqui_peer::pair::Shown>
 pub async fn coqui_peer_tls::asynch::accept<S>(alloc::sync::Arc<rustls::server::server_conn::ServerConfig>, S) -> core::result::Result<(tokio_rustls::server::TlsStream<S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + coqui_peer_tls::PeerAddr
-pub async fn coqui_peer_tls::asynch::accept_at<S>(alloc::sync::Arc<rustls::server::server_conn::ServerConfig>, S, core::net::socket_addr::SocketAddr, core::net::socket_addr::SocketAddr) -> core::result::Result<(tokio_rustls::server::TlsStream<S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
-pub async fn coqui_peer_tls::asynch::accept_from<S>(alloc::sync::Arc<rustls::server::server_conn::ServerConfig>, S, core::net::socket_addr::SocketAddr) -> core::result::Result<(tokio_rustls::server::TlsStream<S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
 pub async fn coqui_peer_tls::asynch::accept_with<S>(S, impl core::ops::function::FnOnce(&rustls::server::server_conn::ClientHello<'_>) -> alloc::sync::Arc<rustls::server::server_conn::ServerConfig>) -> core::result::Result<(tokio_rustls::server::TlsStream<S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + coqui_peer_tls::PeerAddr
-pub async fn coqui_peer_tls::asynch::accept_with_from<S>(S, core::net::socket_addr::SocketAddr, impl core::ops::function::FnOnce(&rustls::server::server_conn::ClientHello<'_>) -> alloc::sync::Arc<rustls::server::server_conn::ServerConfig>) -> core::result::Result<(tokio_rustls::server::TlsStream<S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
 pub async fn coqui_peer_tls::asynch::announce<S: tokio::io::async_write::AsyncWrite + core::marker::Unpin>(&mut S, &coqui_peer_tls::Identity) -> core::result::Result<(), coqui_peer_tls::PeerError>
 pub async fn coqui_peer_tls::asynch::dial<S>(alloc::sync::Arc<rustls::client::client_conn::ClientConfig>, S) -> core::result::Result<(tokio_rustls::client::TlsStream<S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
 pub async fn coqui_peer_tls::asynch::dial_named<S>(alloc::sync::Arc<rustls::client::client_conn::ClientConfig>, rustls_pki_types::server_name::ServerName<'static>, S) -> core::result::Result<(tokio_rustls::client::TlsStream<S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
 pub async fn coqui_peer_tls::asynch::pair_accept<S>(S, &coqui_peer_tls::Identity, &coqui_peer::store::TrustStore, &coqui_peer::pair::desk::PairingDesk, &coqui_peer_tls::PairConfig) -> core::result::Result<coqui_peer::pair::Paired, coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + coqui_peer_tls::PeerAddr
-pub async fn coqui_peer_tls::asynch::pair_accept_from<S>(S, core::net::socket_addr::SocketAddr, &coqui_peer_tls::Identity, &coqui_peer::store::TrustStore, &coqui_peer::pair::desk::PairingDesk, &coqui_peer_tls::PairConfig) -> core::result::Result<coqui_peer::pair::Paired, coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
 pub async fn coqui_peer_tls::asynch::pair_dial<S>(S, &coqui_peer_tls::Identity, coqui_peer::pair::Pairing, &coqui_peer_tls::ResponderTrust, &coqui_peer_tls::PairConfig) -> core::result::Result<coqui_peer_tls::asynch::PairDial<S>, coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
 pub async fn coqui_peer_tls::asynch::pair_respond<S>(tokio_rustls::server::TlsStream<S>, core::option::Option<core::net::socket_addr::SocketAddr>, &coqui_peer_tls::Identity, &coqui_peer::store::TrustStore, &coqui_peer::pair::desk::PairingDesk, &coqui_peer_tls::PairConfig) -> core::result::Result<coqui_peer::pair::Paired, coqui_peer_tls::PeerError> where S: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin
 pub async fn coqui_peer_tls::asynch::receive_announcement<S: tokio::io::async_read::AsyncRead + core::marker::Unpin>(&mut S, &coqui_peer::store::TrustStore, &coqui_peer_tls::PeerIdentity) -> core::result::Result<coqui_peer::id::PeerId, coqui_peer_tls::PeerError>
@@ -159,11 +154,6 @@ pub coqui_peer_tls::Trust::PinnedOrRoots::pins: coqui_peer_tls::Pins
 pub coqui_peer_tls::Trust::PinnedOrRoots::roots: coqui_peer_tls::Roots
 pub coqui_peer_tls::Trust::Roots(coqui_peer_tls::Roots)
 impl coqui_peer_tls::Trust
-pub fn coqui_peer_tls::Trust::client_cert_verifier(&self) -> core::result::Result<alloc::sync::Arc<coqui_peer_tls::PeerClientVerifier>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::Trust::client_cert_verifier_for(&self, &coqui_peer_tls::Policy, core::net::socket_addr::SocketAddr, core::net::socket_addr::SocketAddr) -> core::result::Result<alloc::sync::Arc<dyn rustls::verify::ClientCertVerifier>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::Trust::client_cert_verifier_with(&self, &coqui_peer_tls::Policy) -> core::result::Result<alloc::sync::Arc<coqui_peer_tls::PeerClientVerifier>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::Trust::server_cert_verifier(&self) -> core::result::Result<alloc::sync::Arc<coqui_peer_tls::PeerServerVerifier>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::Trust::server_cert_verifier_with(&self, &coqui_peer_tls::Policy) -> core::result::Result<alloc::sync::Arc<coqui_peer_tls::PeerServerVerifier>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Trust::verify_client_chain(&self, &coqui_peer_tls::Policy, &[u8], &[&[u8]]) -> core::result::Result<(), coqui_peer_tls::PeerError>
 impl core::convert::From<coqui_peer_tls::Trust> for coqui_peer_tls::ServerAuth
 pub fn coqui_peer_tls::ServerAuth::from(coqui_peer_tls::Trust) -> Self
@@ -232,8 +222,6 @@ pub struct coqui_peer_tls::Identity
 impl coqui_peer_tls::Identity
 pub fn coqui_peer_tls::Identity::builder() -> coqui_peer_tls::IdentityBuilder
 pub fn coqui_peer_tls::Identity::generate() -> core::result::Result<Self, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::Identity::generate_valid_for(core::time::Duration) -> core::result::Result<Self, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::Identity::generate_with(std::time::SystemTime, std::time::SystemTime) -> core::result::Result<Self, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Identity::open_or_create(&std::path::Path) -> core::result::Result<Self, coqui_peer_tls::PeerError>
 impl coqui_peer_tls::Identity
 pub fn coqui_peer_tls::Identity::certificate_chain(&self) -> alloc::vec::Vec<rustls_pki_types::CertificateDer<'static>>
@@ -328,8 +316,6 @@ pub fn coqui_peer_tls::Policy::non_defaults(&self) -> alloc::vec::Vec<coqui_peer
 pub fn coqui_peer_tls::Policy::non_defaults_against(&self, &Self) -> alloc::vec::Vec<coqui_peer::non_default::NonDefault>
 pub fn coqui_peer_tls::Policy::supported_cipher_suites(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::Policy::supported_kx_groups(&self) -> core::result::Result<alloc::vec::Vec<alloc::string::String>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::Policy::weakened(&self) -> alloc::vec::Vec<coqui_peer::non_default::NonDefault>
-pub fn coqui_peer_tls::Policy::weakened_against(&self, &Self) -> alloc::vec::Vec<coqui_peer::non_default::NonDefault>
 impl coqui_peer_tls::Policy
 pub fn coqui_peer_tls::Policy::deserialize_over<'de, D: serde_core::de::Deserializer<'de>>(coqui_peer_tls::Policy, D) -> core::result::Result<coqui_peer_tls::Policy, <D as serde_core::de::Deserializer>::Error>
 impl coqui_peer_tls::Policy
@@ -364,11 +350,7 @@ pub fn coqui_peer_tls::ServerBuilder<'a>::settings(self, coqui_peer_tls::TlsSett
 pub struct coqui_peer_tls::ServerConfigs
 impl coqui_peer_tls::ServerConfigs
 pub fn coqui_peer_tls::ServerConfigs::for_connection(&self, core::net::socket_addr::SocketAddr, core::net::socket_addr::SocketAddr) -> core::result::Result<coqui_peer_tls::ConnectionConfig, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::ServerConfigs::new(&coqui_peer_tls::Identity, &coqui_peer_tls::Trust, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<Self, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::ServerConfigs::non_defaults(&self) -> &[coqui_peer::non_default::NonDefault]
-pub fn coqui_peer_tls::ServerConfigs::weakened(&self) -> &[coqui_peer::non_default::NonDefault]
-pub fn coqui_peer_tls::ServerConfigs::with_verifier(&coqui_peer_tls::Identity, alloc::sync::Arc<dyn rustls::verify::ClientCertVerifier>, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<Self, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::ServerConfigs::without_client_auth(&coqui_peer_tls::Identity, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<Self, coqui_peer_tls::PeerError>
 impl core::fmt::Debug for coqui_peer_tls::ServerConfigs
 pub fn coqui_peer_tls::ServerConfigs::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 pub struct coqui_peer_tls::Tls
@@ -376,8 +358,6 @@ impl coqui_peer_tls::Tls
 pub fn coqui_peer_tls::Tls::client(self, alloc::sync::Arc<rustls::client::client_conn::ClientConfig>) -> Self
 pub fn coqui_peer_tls::Tls::new() -> Self
 pub fn coqui_peer_tls::Tls::server(self, alloc::sync::Arc<rustls::server::server_conn::ServerConfig>) -> Self
-pub fn coqui_peer_tls::Tls::with_client(self, alloc::sync::Arc<rustls::client::client_conn::ClientConfig>) -> Self
-pub fn coqui_peer_tls::Tls::with_server(self, alloc::sync::Arc<rustls::server::server_conn::ServerConfig>) -> Self
 impl coqui_peer::method::Method for coqui_peer_tls::Tls
 pub type coqui_peer_tls::Tls::Handshake = coqui_peer_tls::TlsHandshake
 pub fn coqui_peer_tls::Tls::initiate(&self) -> core::result::Result<coqui_peer_tls::TlsHandshake, coqui_peer_tls::PeerError>
@@ -390,7 +370,6 @@ pub fn coqui_peer_tls::TlsHandshake::client_named(alloc::sync::Arc<rustls::clien
 pub fn coqui_peer_tls::TlsHandshake::finish_unauthenticated(self) -> core::result::Result<(rustls::conn::connection::Connection, core::option::Option<coqui_peer_tls::PeerIdentity>), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::TlsHandshake::local(self, core::net::socket_addr::SocketAddr) -> Self
 pub fn coqui_peer_tls::TlsHandshake::server(alloc::sync::Arc<rustls::server::server_conn::ServerConfig>, core::option::Option<core::net::socket_addr::SocketAddr>) -> core::result::Result<Self, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::TlsHandshake::with_local(self, core::net::socket_addr::SocketAddr) -> Self
 impl coqui_peer::method::Handshake for coqui_peer_tls::TlsHandshake
 pub type coqui_peer_tls::TlsHandshake::Error = coqui_peer_tls::PeerError
 pub type coqui_peer_tls::TlsHandshake::Output = rustls::conn::connection::Connection
@@ -405,7 +384,6 @@ pub coqui_peer_tls::TlsSettings::policy: coqui_peer_tls::Policy
 pub const coqui_peer_tls::EXPORTER_LABEL: &[u8]
 pub const coqui_peer_tls::METHOD: &str
 pub const coqui_peer_tls::PAIR_ALPN: &[u8]
-pub const coqui_peer_tls::POLICY_VERSION: u32
 pub const coqui_peer_tls::SERVER_NAME: &str
 pub trait coqui_peer_tls::PeerAddr
 pub fn coqui_peer_tls::PeerAddr::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
@@ -426,30 +404,16 @@ impl coqui_peer_tls::TrustStoreExt for coqui_peer::store::TrustStore
 pub fn coqui_peer::store::TrustStore::accept_certificate(&self, &[u8]) -> core::result::Result<coqui_peer::id::PeerId, coqui_peer_tls::PeerError>
 pub fn coqui_peer::store::TrustStore::record_waiting_certificate(&self, &[u8], core::option::Option<core::net::socket_addr::SocketAddr>)
 pub fn coqui_peer_tls::accept<S: alloc::io::read::Read + core::io::write::Write + coqui_peer_tls::PeerAddr>(alloc::sync::Arc<rustls::server::server_conn::ServerConfig>, S) -> core::result::Result<(rustls::stream::StreamOwned<rustls::server::server_conn::connection::ServerConnection, S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::accept_at<S: alloc::io::read::Read + core::io::write::Write>(alloc::sync::Arc<rustls::server::server_conn::ServerConfig>, S, core::net::socket_addr::SocketAddr, core::net::socket_addr::SocketAddr) -> core::result::Result<(rustls::stream::StreamOwned<rustls::server::server_conn::connection::ServerConnection, S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::accept_from<S: alloc::io::read::Read + core::io::write::Write>(alloc::sync::Arc<rustls::server::server_conn::ServerConfig>, S, core::net::socket_addr::SocketAddr) -> core::result::Result<(rustls::stream::StreamOwned<rustls::server::server_conn::connection::ServerConnection, S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::announce(&mut impl core::io::write::Write, &coqui_peer_tls::Identity) -> core::result::Result<(), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::certificate_key(&[u8]) -> core::result::Result<coqui_peer::key::KeyMaterial, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::client_config(&coqui_peer_tls::Identity, &coqui_peer_tls::Trust, &[&[u8]]) -> core::result::Result<rustls::client::client_conn::ClientConfig, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::client_config_with(&coqui_peer_tls::Identity, &coqui_peer_tls::Trust, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<coqui_peer_tls::Built<rustls::client::client_conn::ClientConfig>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::client_config_with_verifier(core::option::Option<&coqui_peer_tls::Identity>, alloc::sync::Arc<dyn rustls::verify::ServerCertVerifier>, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<coqui_peer_tls::Built<rustls::client::client_conn::ClientConfig>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::client_config_without_identity(&coqui_peer_tls::Trust, &[&[u8]]) -> core::result::Result<rustls::client::client_conn::ClientConfig, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::client_config_without_identity_with(&coqui_peer_tls::Trust, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<coqui_peer_tls::Built<rustls::client::client_conn::ClientConfig>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::crypto_provider() -> alloc::sync::Arc<rustls::crypto::CryptoProvider>
 pub fn coqui_peer_tls::default_server_name() -> rustls_pki_types::server_name::ServerName<'static>
 pub fn coqui_peer_tls::dial<S: alloc::io::read::Read + core::io::write::Write>(alloc::sync::Arc<rustls::client::client_conn::ClientConfig>, S) -> core::result::Result<(rustls::stream::StreamOwned<rustls::client::client_conn::connection::ClientConnection, S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::dial_named<S: alloc::io::read::Read + core::io::write::Write>(alloc::sync::Arc<rustls::client::client_conn::ClientConfig>, rustls_pki_types::server_name::ServerName<'static>, S) -> core::result::Result<(rustls::stream::StreamOwned<rustls::client::client_conn::connection::ClientConnection, S>, coqui_peer_tls::PeerIdentity), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::pair_accept<S: alloc::io::read::Read + core::io::write::Write + coqui_peer_tls::PeerAddr + coqui_peer::drive::ReadTimeout + coqui_peer::drive::WriteTimeout>(S, &coqui_peer_tls::Identity, &coqui_peer::store::TrustStore, &coqui_peer::pair::desk::PairingDesk, &coqui_peer_tls::PairConfig) -> core::result::Result<coqui_peer::pair::Paired, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::pair_accept_from<S: alloc::io::read::Read + core::io::write::Write + coqui_peer::drive::ReadTimeout + coqui_peer::drive::WriteTimeout>(S, core::net::socket_addr::SocketAddr, &coqui_peer_tls::Identity, &coqui_peer::store::TrustStore, &coqui_peer::pair::desk::PairingDesk, &coqui_peer_tls::PairConfig) -> core::result::Result<coqui_peer::pair::Paired, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::pair_client_config(&coqui_peer_tls::Identity, &coqui_peer::pair::Pairing, &coqui_peer_tls::ResponderTrust, &coqui_peer_tls::PairConfig) -> core::result::Result<(rustls::client::client_conn::ClientConfig, rustls_pki_types::server_name::ServerName<'static>), coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::pair_dial<S: alloc::io::read::Read + core::io::write::Write + coqui_peer::drive::ReadTimeout + coqui_peer::drive::WriteTimeout>(S, &coqui_peer_tls::Identity, coqui_peer::pair::Pairing, &coqui_peer_tls::ResponderTrust, &coqui_peer_tls::PairConfig) -> core::result::Result<coqui_peer_tls::PairDial<S>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::pair_server_config(&coqui_peer_tls::Identity, &coqui_peer_tls::PairConfig) -> core::result::Result<rustls::server::server_conn::ServerConfig, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::random() -> coqui_peer::random::Random
 pub fn coqui_peer_tls::receive_announcement(&mut impl alloc::io::read::Read, &coqui_peer::store::TrustStore, &coqui_peer_tls::PeerIdentity) -> core::result::Result<coqui_peer::id::PeerId, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::server_config(&coqui_peer_tls::Identity, &coqui_peer_tls::Trust, &[&[u8]]) -> core::result::Result<rustls::server::server_conn::ServerConfig, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::server_config_with(&coqui_peer_tls::Identity, &coqui_peer_tls::Trust, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<coqui_peer_tls::Built<rustls::server::server_conn::ServerConfig>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::server_config_with_verifier(&coqui_peer_tls::Identity, alloc::sync::Arc<dyn rustls::verify::ClientCertVerifier>, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<coqui_peer_tls::Built<rustls::server::server_conn::ServerConfig>, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::server_config_without_client_auth(&coqui_peer_tls::Identity, &[&[u8]]) -> core::result::Result<rustls::server::server_conn::ServerConfig, coqui_peer_tls::PeerError>
-pub fn coqui_peer_tls::server_config_without_client_auth_with(&coqui_peer_tls::Identity, &[&[u8]], &coqui_peer_tls::Policy) -> core::result::Result<coqui_peer_tls::Built<rustls::server::server_conn::ServerConfig>, coqui_peer_tls::PeerError>
 pub fn coqui_peer_tls::with_addresses<R>(core::option::Option<core::net::socket_addr::SocketAddr>, core::option::Option<core::net::socket_addr::SocketAddr>, impl core::ops::function::FnOnce() -> R) -> R
-pub fn coqui_peer_tls::with_source<R>(core::option::Option<core::net::socket_addr::SocketAddr>, impl core::ops::function::FnOnce() -> R) -> R

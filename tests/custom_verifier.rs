@@ -1,18 +1,16 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Configurations around a verifier of the host's own: the policy's versions apply, the whole
 //! chain is presented, and the identity's key is available to build them.
 #![cfg(feature = "generate")]
 
+mod support;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
+use support::configs::{TrustVerifiers, client_config_with_verifier, server_config_with_verifier};
 
-use coqui_peer_tls::{
-    Identity, PeerError, Policy, TlsVersion, Trust, client_config_with_verifier,
-    server_config_with_verifier,
-};
+use coqui_peer_tls::{Identity, PeerError, Policy, TlsVersion, Trust};
 use rcgen::{BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair};
 use rustls::pki_types::{CertificateDer, UnixTime};
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};

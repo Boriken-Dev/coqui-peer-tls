@@ -48,20 +48,6 @@ impl Tls {
         self.server = Some(config);
         self
     }
-
-    /// The old name of [`client`](Self::client).
-    #[deprecated(note = "renamed to `client`")]
-    #[must_use]
-    pub fn with_client(self, config: Arc<ClientConfig>) -> Self {
-        self.client(config)
-    }
-
-    /// The old name of [`server`](Self::server).
-    #[deprecated(note = "renamed to `server`")]
-    #[must_use]
-    pub fn with_server(self, config: Arc<ServerConfig>) -> Self {
-        self.server(config)
-    }
 }
 
 impl Method for Tls {
@@ -150,13 +136,6 @@ impl TlsHandshake {
     pub fn local(mut self, local: SocketAddr) -> Self {
         self.local = Some(local);
         self
-    }
-
-    /// The old name of [`local`](Self::local).
-    #[deprecated(note = "renamed to `local`")]
-    #[must_use]
-    pub fn with_local(self, local: SocketAddr) -> Self {
-        self.local(local)
     }
 
     /// Finishes a completed handshake whose peer may have presented no certificate: the

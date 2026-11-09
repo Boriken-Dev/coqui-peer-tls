@@ -1,15 +1,16 @@
-#![allow(deprecated)] // drives the deprecated functions, which stay one release
 //! Pairing over TLS on loopback TCP: invitations, PINs, the device flow, a relaying attacker,
 //! the pairing ALPN kept apart from the app's, and the device's own TLS policy. Blocking and
 //! tokio. Run with `--all-features`.
 #![cfg(all(feature = "generate", feature = "pin", feature = "tokio"))]
 
+mod support;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
+use support::configs::{client_config, server_config};
 
 use coqui_peer_tls::pair::{
     CodeAlphabet, PairRefusal, Paired, Pairing, PairingCode, PairingDesk, PairingError, Pin,
@@ -17,8 +18,8 @@ use coqui_peer_tls::pair::{
 };
 use coqui_peer_tls::{
     Clock, Identity, InvitationOptions, PairConfig, PeerError, Pins, ResponderTrust, Trust,
-    TrustStore, accept, asynch, client_config, dial, pair_accept, pair_client_config, pair_dial,
-    pair_server_config, random, server_config,
+    TrustStore, accept, asynch, dial, pair_accept, pair_client_config, pair_dial,
+    pair_server_config, random,
 };
 
 const APP: &[u8] = b"app/1";
