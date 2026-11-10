@@ -8,12 +8,18 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use coqui_builder::builder::BuildError;
 use coqui_peer_tls::{
-    Addressed, ClientAuth, ClientBuilder, Identity, PairConfig, PeerClientVerifier, PeerError,
-    PeerId, PeerServerVerifier, Pins, Policy, ServerAuth, ServerBuilder, Trust, accept, dial,
+    Addressed, Alpn, ClientAuth, ClientBuilder, Identity, PairConfig, PeerClientVerifier,
+    PeerError, PeerId, PeerServerVerifier, Pins, Policy, ServerAuth, ServerBuilder, Trust, accept,
+    dial,
 };
 
 const ALPN: &[u8] = b"builder/1";
+
+fn alpns() -> Vec<Alpn> {
+    vec![Alpn::try_from(ALPN).unwrap()]
+}
 
 fn pinned(fingerprint: PeerId) -> Trust {
     Trust::Pinned(Pins::fixed([fingerprint]))
@@ -45,15 +51,17 @@ fn echo(server: rustls::ServerConfig, client: rustls::ClientConfig) -> Option<Pe
 #[test]
 fn a_required_client_certificate_is_pinned_both_ways() {
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
-    let built_server =
-        ServerBuilder::new(&server, ClientAuth::Required(pinned(client.fingerprint())))
-            .alpn([ALPN])
-            .build()
-            .unwrap();
-    assert!(built_server.non_defaults.is_empty());
-    let built_client = ClientBuilder::new(pinned(server.fingerprint()))
+    let built_server = ServerBuilder::new()
+        .identity(&server)
+        .client_auth(ClientAuth::Required(pinned(client.fingerprint())))
+        .alpn(alpns())
+        .build()
+        .unwrap();
+    assert!(built_server.non_defaults().is_empty());
+    let built_client = ClientBuilder::new()
+        .server(pinned(server.fingerprint()))
         .identity(&client)
-        .alpn([ALPN])
+        .alpn(alpns())
         .build()
         .unwrap();
     assert_eq!(
@@ -65,12 +73,15 @@ fn a_required_client_certificate_is_pinned_both_ways() {
 #[test]
 fn no_client_auth_is_a_value_the_server_takes() {
     let server = Identity::generate().unwrap();
-    let built_server = ServerBuilder::new(&server, ClientAuth::None)
-        .alpn([ALPN])
+    let built_server = ServerBuilder::new()
+        .identity(&server)
+        .client_auth(ClientAuth::None)
+        .alpn(alpns())
         .build()
         .unwrap();
-    let built_client = ClientBuilder::new(pinned(server.fingerprint()))
-        .alpn([ALPN])
+    let built_client = ClientBuilder::new()
+        .server(pinned(server.fingerprint()))
+        .alpn(alpns())
         .build()
         .unwrap();
     assert_eq!(echo(built_server.config, built_client.config), None);
@@ -84,13 +95,16 @@ fn a_verifier_of_the_hosts_own_is_a_value_each_side_takes() {
         .unwrap();
     let server_verifier =
         PeerServerVerifier::new(&pinned(server.fingerprint()), &Policy::default()).unwrap();
-    let built_server = ServerBuilder::new(&server, ClientAuth::Verifier(client_verifier))
-        .alpn([ALPN])
+    let built_server = ServerBuilder::new()
+        .identity(&server)
+        .client_auth(ClientAuth::Verifier(client_verifier))
+        .alpn(alpns())
         .build()
         .unwrap();
-    let built_client = ClientBuilder::new(ServerAuth::Verifier(server_verifier))
+    let built_client = ClientBuilder::new()
+        .server(ServerAuth::Verifier(server_verifier))
         .identity(&client)
-        .alpn([ALPN])
+        .alpn(alpns())
         .build()
         .unwrap();
     assert_eq!(
@@ -107,16 +121,21 @@ fn the_policy_reaches_the_configuration_and_its_non_defaults_are_reported() {
         policy.allow_resumption = true;
         policy
     };
-    let builder = ServerBuilder::new(&server, ClientAuth::None).policy(policy.clone());
+    let builder = ServerBuilder::new()
+        .identity(&server)
+        .client_auth(ClientAuth::None)
+        .policy(policy.clone());
     assert_eq!(builder.non_defaults().len(), 1);
+    assert_eq!(builder.non_defaults()[0].setting, "policy.allow_resumption");
     let built = builder.build().unwrap();
-    assert_eq!(built.non_defaults.len(), 1);
-    assert_eq!(built.non_defaults[0].setting, "allow_resumption");
-    let client = ClientBuilder::new(pinned(server.fingerprint()))
+    assert_eq!(built.non_defaults().len(), 1);
+    assert_eq!(built.non_defaults()[0].setting, "allow_resumption");
+    let client = ClientBuilder::new()
+        .server(pinned(server.fingerprint()))
         .policy(policy)
         .build()
         .unwrap();
-    assert_eq!(client.non_defaults[0].setting, "allow_resumption");
+    assert_eq!(client.non_defaults()[0].setting, "allow_resumption");
 }
 
 #[test]
@@ -128,26 +147,31 @@ fn a_policy_the_provider_cannot_serve_is_refused_at_build() {
         policy
     };
     assert!(matches!(
-        ServerBuilder::new(&server, ClientAuth::None)
+        ServerBuilder::new()
+            .identity(&server)
+            .client_auth(ClientAuth::None)
             .policy(policy)
             .build(),
-        Err(PeerError::Policy(_))
+        Err(BuildError::Failed(PeerError::Policy(_)))
     ));
 }
 
 #[test]
 fn a_listener_takes_a_configuration_per_connection() {
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
-    let configs = ServerBuilder::new(&server, ClientAuth::Required(pinned(client.fingerprint())))
-        .alpn([ALPN])
+    let configs = ServerBuilder::new()
+        .identity(&server)
+        .client_auth(ClientAuth::Required(pinned(client.fingerprint())))
+        .alpn(alpns())
         .configs()
         .unwrap();
     let source = "127.0.0.1:50000".parse().unwrap();
     let local = "127.0.0.1:7000".parse().unwrap();
     let connection = configs.for_connection(source, local).unwrap();
-    let built_client = ClientBuilder::new(pinned(server.fingerprint()))
+    let built_client = ClientBuilder::new()
+        .server(pinned(server.fingerprint()))
         .identity(&client)
-        .alpn([ALPN])
+        .alpn(alpns())
         .build()
         .unwrap();
     let seen = echo(
@@ -160,11 +184,11 @@ fn a_listener_takes_a_configuration_per_connection() {
 #[test]
 fn pair_config_is_plain_data_assigned_by_field() {
     let mut config = PairConfig::default();
-    config.alpn = b"mine/1".to_vec();
-    config.timeout = Duration::from_secs(5);
+    config.alpn = Alpn::try_from("mine/1").unwrap();
+    config.timeout = Some(Duration::from_secs(5));
     config.policy = Policy::modern();
-    assert_eq!(config.alpn, b"mine/1");
-    assert_eq!(config.timeout, Duration::from_secs(5));
+    assert_eq!(config.alpn.as_bytes(), b"mine/1");
+    assert_eq!(config.timeout, Some(Duration::from_secs(5)));
     assert_eq!(config.policy, Policy::modern());
     assert_ne!(config, PairConfig::default());
 }
@@ -238,14 +262,16 @@ fn the_identity_builder_keeps_one_end_and_the_last_setter_wins() {
 #[test]
 fn an_addressed_stream_is_accepted() {
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
-    let built_server =
-        ServerBuilder::new(&server, ClientAuth::Required(pinned(client.fingerprint())))
-            .alpn([ALPN])
-            .build()
-            .unwrap();
-    let built_client = ClientBuilder::new(pinned(server.fingerprint()))
+    let built_server = ServerBuilder::new()
+        .identity(&server)
+        .client_auth(ClientAuth::Required(pinned(client.fingerprint())))
+        .alpn(alpns())
+        .build()
+        .unwrap();
+    let built_client = ClientBuilder::new()
+        .server(pinned(server.fingerprint()))
         .identity(&client)
-        .alpn([ALPN])
+        .alpn(alpns())
         .build()
         .unwrap();
     let server_config = Arc::new(built_server.config);

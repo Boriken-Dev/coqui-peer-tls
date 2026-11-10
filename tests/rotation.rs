@@ -42,7 +42,8 @@ impl Hand {
 
 fn store(hand: &Hand) -> (tempfile::TempDir, TrustStore) {
     let directory = tempfile::tempdir().unwrap();
-    let store = TrustStore::builder(directory.path())
+    let store = TrustStore::builder()
+        .state_dir(directory.path())
         .clock(hand.clock())
         .build()
         .unwrap();
@@ -151,7 +152,8 @@ fn a_client_rotates_and_its_old_certificate_retires() {
 fn a_successor_waits_for_approval_when_the_store_requires_it() {
     let hand = Hand::new();
     let (_directory, _) = store(&hand);
-    let store = TrustStore::builder(_directory.path())
+    let store = TrustStore::builder()
+        .state_dir(_directory.path())
         .clock(hand.clock())
         .rotation({
             let mut value = RotationOptions::default();
@@ -310,7 +312,8 @@ async fn an_async_announcement_is_recorded() {
 fn a_client_that_requires_approval_records_the_servers_proof_and_waits() {
     let hand = Hand::new();
     let (_directory, _) = store(&hand);
-    let client_store = TrustStore::builder(_directory.path())
+    let client_store = TrustStore::builder()
+        .state_dir(_directory.path())
         .clock(hand.clock())
         .rotation({
             let mut value = RotationOptions::default();

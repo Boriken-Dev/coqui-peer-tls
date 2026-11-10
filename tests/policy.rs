@@ -240,12 +240,14 @@ async fn a_sha1_pin_is_accepted_only_when_the_policy_allows_it() {
         .is_err()
     );
     let legacy = Policy::legacy();
-    let Built {
-        config: server_config,
-        non_defaults,
-        ..
-    } = server_config_with(&server, &sha1_pin(&client), &[ALPN], &legacy).unwrap();
-    assert!(non_defaults.iter().any(|w| w.setting == "pin_digests"));
+    let built = server_config_with(&server, &sha1_pin(&client), &[ALPN], &legacy).unwrap();
+    assert!(
+        built
+            .non_defaults()
+            .iter()
+            .any(|w| w.setting == "pin_digests")
+    );
+    let server_config = built.config;
     let Built {
         config: client_config,
         ..
@@ -272,8 +274,11 @@ fn non_default_settings_are_reported_as_plain_data() {
     assert_eq!(settings(&Policy::legacy()), ["pin_digests", "require_ems"]);
     let modern = Policy::modern().non_defaults();
     assert_eq!(
-        (modern[0].value.as_str(), modern[0].default.as_str()),
-        ("[\"1.3\"]", "[\"1.2\",\"1.3\"]")
+        (modern[0].value.to_string(), modern[0].default.to_string()),
+        (
+            "[TlsVersion(1.3)]".to_owned(),
+            "[TlsVersion(1.2), TlsVersion(1.3)]".to_owned()
+        )
     );
     // Against a baseline of the consumer's own, the difference is the other way.
     let against_modern = Policy::default().non_defaults_against(&Policy::modern());
@@ -281,10 +286,14 @@ fn non_default_settings_are_reported_as_plain_data() {
     assert_eq!(
         (
             against_modern[0].setting.as_str(),
-            against_modern[0].value.as_str(),
-            against_modern[0].default.as_str()
+            against_modern[0].value.to_string(),
+            against_modern[0].default.to_string()
         ),
-        ("tls_versions", "[\"1.2\",\"1.3\"]", "[\"1.3\"]")
+        (
+            "tls_versions",
+            "[TlsVersion(1.2), TlsVersion(1.3)]".to_owned(),
+            "[TlsVersion(1.3)]".to_owned()
+        )
     );
     assert!(
         Policy::modern()
@@ -310,7 +319,7 @@ fn non_default_settings_are_reported_as_plain_data() {
     // The builders hand the same list back.
     let (server, client) = (Identity::generate().unwrap(), Identity::generate().unwrap());
     let built = client_config_with(&client, &pinned(&server), &[ALPN], &policy).unwrap();
-    assert_eq!(built.non_defaults, policy.non_defaults());
+    assert_eq!(built.non_defaults(), policy.non_defaults());
 }
 
 /// Each setting, changed alone, reports itself by its key and nothing else.
@@ -438,7 +447,8 @@ fn the_extended_master_secret_is_required_unless_the_policy_says_otherwise() {
         loose
             .non_defaults()
             .iter()
-            .any(|non_default| non_default.setting == "require_ems" && non_default.value == "false")
+            .any(|non_default| non_default.setting == "require_ems"
+                && non_default.value.to_string() == "bool(false)")
     );
     let identity = Identity::generate().unwrap();
     let trust = pinned(&identity);

@@ -1,21 +1,14 @@
-//! The serialized form of `Policy` pinned by committed files in `tests/vectors/policy/`, in
-//! TOML and in JSON, for implementations in other languages.
-//!
-//! Regenerating them is a format change:
-//! `cargo test -p coqui-peer-tls --all-features --test policy_vectors -- --ignored regenerate`
+//! The text form of `Policy` pinned by committed files in `tests/vectors/policy/`, in TOML and in
+//! JSON, for implementations in other languages. The files are data: they are read, never
+//! written, by this crate.
 #![cfg(feature = "acl")]
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use coqui_builder::Partial;
 use coqui_peer_tls::acl::{Acl, Action, IpNet, Rule};
 use coqui_peer_tls::{CipherProfile, Crypto, Policy};
-use guatiao_serde::Presentation;
-use guatiao_serde::text::{json, toml};
-
-fn plain() -> Presentation {
-    Presentation::new()
-}
 
 fn directory() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/policy")
@@ -55,41 +48,37 @@ fn policies() -> Vec<(&'static str, Policy)> {
     ]
 }
 
-fn toml_of(policy: &Policy) -> String {
-    toml::to_string_of(policy, plain()).unwrap()
+fn partial_of_toml(text: &str) -> Result<Partial<Policy>, String> {
+    toml::from_str(text).map_err(|error| error.to_string())
 }
 
-fn json_of(policy: &Policy) -> String {
-    let mut text = json::to_string_pretty_of(policy, plain()).unwrap();
-    text.push('\n');
-    text
+fn from_toml(text: &str) -> Result<Policy, String> {
+    partial_of_toml(text)?
+        .build()
+        .map_err(|missing| missing.to_string())
 }
 
-fn from_toml(text: &str) -> Result<Policy, guatiao_serde::text::Error> {
-    toml::from_str_as(text, plain())
+fn from_json(text: &str) -> Result<Policy, String> {
+    serde_json::from_str::<Partial<Policy>>(text)
+        .map_err(|error| error.to_string())?
+        .build()
+        .map_err(|missing| missing.to_string())
+}
+
+/// A document read over `base`, as a consumer with its own default profile reads one.
+fn over(base: &Policy, text: &str) -> Result<Policy, String> {
+    let mut partial = Partial::from(base.clone());
+    partial.overlay(partial_of_toml(text)?);
+    partial.build().map_err(|missing| missing.to_string())
 }
 
 #[test]
-fn each_vector_reads_back_to_its_policy_in_both_encodings_byte_for_byte() {
+fn each_vector_reads_to_its_policy_in_both_encodings() {
     for (name, policy) in policies() {
         let toml_text = fs::read_to_string(directory().join(format!("{name}.toml"))).unwrap();
         let json_text = fs::read_to_string(directory().join(format!("{name}.json"))).unwrap();
         assert_eq!(from_toml(&toml_text).unwrap(), policy, "{name}.toml");
-        assert_eq!(
-            json::from_str_as::<Policy>(&json_text, plain()).unwrap(),
-            policy,
-            "{name}.json"
-        );
-        assert_eq!(
-            toml_of(&policy),
-            toml_text,
-            "{name}.toml is not the canonical text"
-        );
-        assert_eq!(
-            json_of(&policy),
-            json_text,
-            "{name}.json is not the canonical text"
-        );
+        assert_eq!(from_json(&json_text).unwrap(), policy, "{name}.json");
     }
 }
 
@@ -147,27 +136,11 @@ fn the_acl_example_reads_like_a_router_listing() {
 }
 
 #[test]
-#[ignore = "rewrites the committed vectors"]
-fn regenerate() {
-    fs::create_dir_all(directory()).unwrap();
-    for (name, policy) in policies() {
-        fs::write(directory().join(format!("{name}.toml")), toml_of(&policy)).unwrap();
-        fs::write(directory().join(format!("{name}.json")), json_of(&policy)).unwrap();
-    }
-}
-
-#[test]
 fn a_consumer_reads_a_document_over_its_own_profile() {
     let mut mine = Policy::intermediate();
     mine.waiting.total = 50;
     mine.waiting.per_source = 3;
-    let document = guatiao_serde::text::toml::from_str(
-        "check_validity = false",
-        guatiao::Alloc::rust(),
-        plain(),
-    )
-    .unwrap();
-    let policy = Policy::from_value_over(&mine, &document).unwrap();
+    let policy = over(&mine, "check_validity = false").unwrap();
     assert_eq!(policy.waiting.total, 50);
     assert!(!policy.check_validity);
     assert_eq!(policy.tls_versions.len(), 2);
@@ -176,14 +149,15 @@ fn a_consumer_reads_a_document_over_its_own_profile() {
 
 #[cfg(feature = "serde")]
 #[test]
-fn the_serde_impls_forward_to_the_same_form() {
+fn the_serde_impls_read_the_same_form() {
     let (_, policy) = policies()
         .into_iter()
         .find(|(n, _)| *n == "legacy")
         .unwrap();
-    let text = ::toml::to_string(&policy).unwrap();
-    assert_eq!(text, toml_of(&policy));
+    let text = fs::read_to_string(directory().join("legacy.toml")).unwrap();
     assert_eq!(::toml::from_str::<Policy>(&text).unwrap(), policy);
+    let text = fs::read_to_string(directory().join("legacy.json")).unwrap();
+    assert_eq!(serde_json::from_str::<Policy>(&text).unwrap(), policy);
     let over = Policy::deserialize_over(
         Policy::modern(),
         ::toml::Deserializer::parse("check_validity = false").unwrap(),
@@ -191,10 +165,24 @@ fn the_serde_impls_forward_to_the_same_form() {
     .unwrap();
     assert!(!over.check_validity);
     assert_eq!(over.tls_versions, Policy::modern().tls_versions);
+    assert!(::toml::from_str::<Policy>("surprise = 1").is_err());
 }
 
-fn value_of(text: &str) -> guatiao::Value {
-    guatiao_serde::text::toml::from_str(text, guatiao::Alloc::rust(), plain()).unwrap()
+#[cfg(feature = "serde")]
+#[test]
+fn a_policy_read_through_serde_has_its_acl_fingerprints_made_canonical() {
+    let shouted = format!(
+        "[acl]\ndefault = \"deny\"\n[[acl.rule]]\naction = \"permit\"\nsource = \"any\"\nfingerprint = \"SHA256:{}\"\n",
+        "AB".repeat(32)
+    );
+    let policy = ::toml::from_str::<Policy>(&shouted).unwrap();
+    let rules = policy.acl.unwrap().rules;
+    assert_eq!(
+        rules[0].fingerprint.as_deref(),
+        Some(format!("sha256:{}", "ab".repeat(32)).as_str())
+    );
+    let bad = "[acl]\ndefault = \"deny\"\n[[acl.rule]]\naction = \"permit\"\nsource = \"any\"\nfingerprint = \"nonsense\"\n";
+    assert!(::toml::from_str::<Policy>(bad).is_err());
 }
 
 #[test]
@@ -203,31 +191,16 @@ fn a_nested_key_over_a_base_replaces_that_key_and_keeps_its_siblings() {
     mine.waiting.total = 50;
     mine.waiting.per_source = 3;
     mine.pin_digests = vec![coqui_peer_tls::Digest::Sha256];
-    let policy = Policy::from_value_over(
-        &mine,
-        &value_of(
-            "[waiting]
-per_source = 9
-",
-        ),
-    )
-    .unwrap();
+    let policy = over(&mine, "[waiting]\nper_source = 9\n").unwrap();
     assert_eq!(policy.waiting.per_source, 9);
     assert_eq!(policy.waiting.total, 50);
     assert_eq!(policy.waiting.rerecord, mine.waiting.rerecord);
     assert_eq!(policy.pin_digests, mine.pin_digests);
     // A list replaces whole.
-    let policy = Policy::from_value_over(&mine, &value_of("pin_digests = [\"sha384\"]")).unwrap();
+    let policy = over(&mine, "pin_digests = [\"sha384\"]").unwrap();
     assert_eq!(policy.pin_digests, [coqui_peer_tls::Digest::Sha384]);
     // A duration is a number of seconds in a hand-written document.
-    let policy = Policy::from_value_over(
-        &mine,
-        &value_of(
-            "[waiting]
-rerecord = 5",
-        ),
-    )
-    .unwrap();
+    let policy = over(&mine, "[waiting]\nrerecord = 5").unwrap();
     assert_eq!(policy.waiting.rerecord, core::time::Duration::from_secs(5));
 }
 
@@ -261,6 +234,25 @@ fn non_defaults_name_every_changed_setting_by_its_key_path() {
     );
 }
 
+#[test]
+fn an_access_list_inside_a_policy_is_one_entry() {
+    let (_, policy) = policies()
+        .into_iter()
+        .find(|(name, _)| *name == "acl")
+        .unwrap();
+    let settings: Vec<String> = policy
+        .non_defaults()
+        .into_iter()
+        .map(|setting| setting.setting)
+        .collect();
+    assert_eq!(
+        settings,
+        ["acl", "cipher_suites", "kx_groups", "waiting.per_source"]
+    );
+    let inner = coqui_builder::non_defaults(policy.acl.as_ref().unwrap());
+    assert!(!inner.is_empty());
+}
+
 /// The alpha.1 keys are unknown keys: a stored document is rewritten once.
 #[test]
 fn the_alpha_1_keys_are_refused() {
@@ -271,9 +263,6 @@ fn the_alpha_1_keys_are_refused() {
         "waiting_total = 4",
         "waiting_rerecord_secs = 4",
     ] {
-        assert!(
-            Policy::from_value_over(&Policy::default(), &value_of(document)).is_err(),
-            "{document}"
-        );
+        assert!(from_toml(document).is_err(), "{document}");
     }
 }

@@ -65,32 +65,27 @@ fn the_default_server_name_is_server_name() {
 }
 
 #[test]
-fn a_policy_reports_non_defaults_with_coqui_peers_type() {
+fn a_policy_reports_non_defaults_with_coqui_builders_type() {
     let mut policy = Policy::default();
     policy.allow_resumption = true;
-    let listed: Vec<coqui_peer::NonDefault> = policy.non_defaults();
-    assert_eq!(
-        listed,
-        [coqui_peer::NonDefault::new(
-            "allow_resumption",
-            "true",
-            "false"
-        )]
-    );
+    let listed: Vec<coqui_builder::NonDefault> = policy.non_defaults();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].setting, "allow_resumption");
+    assert_eq!(listed[0].value.to_string(), "bool(true)");
+    assert_eq!(listed[0].default.to_string(), "bool(false)");
 }
 
 #[cfg(feature = "acl")]
 #[test]
-fn an_acl_non_default_is_converted_field_for_field() {
+fn an_acl_inside_a_policy_is_one_non_default() {
     let mut policy = Policy::default();
     policy.acl = Some(coqui_net_acl::Acl {
         rules: Vec::new(),
         default: coqui_net_acl::Action::Permit,
     });
-    assert_eq!(
-        policy.non_defaults(),
-        [NonDefault::new("acl.default", "permit", "deny")]
-    );
+    let listed = policy.non_defaults();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].setting, "acl");
 }
 
 #[test]

@@ -7,8 +7,9 @@ use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use coqui_builder::builder::BuildError;
 use coqui_peer_tls::{
-    Addressed, Built, ClientAuth, ClientBuilder, Identity, PeerClientVerifier, PeerError,
+    Addressed, Alpn, Built, ClientAuth, ClientBuilder, Identity, PeerClientVerifier, PeerError,
     PeerIdentity, PeerServerVerifier, Policy, ServerAuth, ServerBuilder, Trust,
 };
 use rustls::client::danger::ServerCertVerifier;
@@ -22,10 +23,12 @@ pub fn client_config(
     trust: &Trust,
     alpn: &[&[u8]],
 ) -> Result<ClientConfig, PeerError> {
-    ClientBuilder::new(trust.clone())
+    ClientBuilder::new()
+        .server(trust.clone())
         .identity(identity)
-        .alpn(alpn)
+        .alpn(alpns(alpn))
         .build()
+        .map_err(flat)
         .map(|built| built.config)
 }
 
@@ -36,11 +39,13 @@ pub fn client_config_with(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ClientConfig>, PeerError> {
-    ClientBuilder::new(trust.clone())
+    ClientBuilder::new()
+        .server(trust.clone())
         .identity(identity)
-        .alpn(alpn)
+        .alpn(alpns(alpn))
         .policy(policy.clone())
         .build()
+        .map_err(flat)
 }
 
 /// A client configuration under the default policy that presents no certificate.
@@ -48,9 +53,11 @@ pub fn client_config_without_identity(
     trust: &Trust,
     alpn: &[&[u8]],
 ) -> Result<ClientConfig, PeerError> {
-    ClientBuilder::new(trust.clone())
-        .alpn(alpn)
+    ClientBuilder::new()
+        .server(trust.clone())
+        .alpn(alpns(alpn))
         .build()
+        .map_err(flat)
         .map(|built| built.config)
 }
 
@@ -60,10 +67,12 @@ pub fn client_config_without_identity_with(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ClientConfig>, PeerError> {
-    ClientBuilder::new(trust.clone())
-        .alpn(alpn)
+    ClientBuilder::new()
+        .server(trust.clone())
+        .alpn(alpns(alpn))
         .policy(policy.clone())
         .build()
+        .map_err(flat)
 }
 
 /// A client configuration under `policy` that verifies the server with `verifier`, presenting
@@ -74,13 +83,14 @@ pub fn client_config_with_verifier(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ClientConfig>, PeerError> {
-    let mut builder = ClientBuilder::new(ServerAuth::Verifier(verifier))
-        .alpn(alpn)
+    let mut builder = ClientBuilder::new()
+        .server(ServerAuth::Verifier(verifier))
+        .alpn(alpns(alpn))
         .policy(policy.clone());
     if let Some(identity) = identity {
         builder = builder.identity(identity);
     }
-    builder.build()
+    builder.build().map_err(flat)
 }
 
 /// A server configuration under the default policy that presents `identity` and requires a client
@@ -90,9 +100,12 @@ pub fn server_config(
     trust: &Trust,
     alpn: &[&[u8]],
 ) -> Result<ServerConfig, PeerError> {
-    ServerBuilder::new(identity, ClientAuth::Required(trust.clone()))
-        .alpn(alpn)
+    ServerBuilder::new()
+        .identity(identity)
+        .client_auth(ClientAuth::Required(trust.clone()))
+        .alpn(alpns(alpn))
         .build()
+        .map_err(flat)
         .map(|built| built.config)
 }
 
@@ -103,10 +116,13 @@ pub fn server_config_with(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    ServerBuilder::new(identity, ClientAuth::Required(trust.clone()))
-        .alpn(alpn)
+    ServerBuilder::new()
+        .identity(identity)
+        .client_auth(ClientAuth::Required(trust.clone()))
+        .alpn(alpns(alpn))
         .policy(policy.clone())
         .build()
+        .map_err(flat)
 }
 
 /// A server configuration under the default policy that asks for no client certificate.
@@ -114,9 +130,12 @@ pub fn server_config_without_client_auth(
     identity: &Identity,
     alpn: &[&[u8]],
 ) -> Result<ServerConfig, PeerError> {
-    ServerBuilder::new(identity, ClientAuth::None)
-        .alpn(alpn)
+    ServerBuilder::new()
+        .identity(identity)
+        .client_auth(ClientAuth::None)
+        .alpn(alpns(alpn))
         .build()
+        .map_err(flat)
         .map(|built| built.config)
 }
 
@@ -126,10 +145,13 @@ pub fn server_config_without_client_auth_with(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    ServerBuilder::new(identity, ClientAuth::None)
-        .alpn(alpn)
+    ServerBuilder::new()
+        .identity(identity)
+        .client_auth(ClientAuth::None)
+        .alpn(alpns(alpn))
         .policy(policy.clone())
         .build()
+        .map_err(flat)
 }
 
 /// A server configuration under `policy` that verifies clients with `verifier`.
@@ -139,10 +161,13 @@ pub fn server_config_with_verifier(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<Built<ServerConfig>, PeerError> {
-    ServerBuilder::new(identity, ClientAuth::Verifier(verifier))
-        .alpn(alpn)
+    ServerBuilder::new()
+        .identity(identity)
+        .client_auth(ClientAuth::Verifier(verifier))
+        .alpn(alpns(alpn))
         .policy(policy.clone())
         .build()
+        .map_err(flat)
 }
 
 type Accepted<S> = Result<(StreamOwned<ServerConnection, S>, PeerIdentity), PeerError>;
@@ -188,10 +213,13 @@ pub fn server_configs(
     alpn: &[&[u8]],
     policy: &Policy,
 ) -> Result<coqui_peer_tls::ServerConfigs, PeerError> {
-    ServerBuilder::new(identity, ClientAuth::Required(trust.clone()))
-        .alpn(alpn)
+    ServerBuilder::new()
+        .identity(identity)
+        .client_auth(ClientAuth::Required(trust.clone()))
+        .alpn(alpns(alpn))
         .policy(policy.clone())
         .configs()
+        .map_err(flat)
 }
 
 /// The verifiers `Trust` once built, each one expression over the verifier builders.
@@ -257,5 +285,21 @@ impl TrustVerifiers for Trust {
     ) -> Result<Arc<dyn ServerCertVerifier>, PeerError> {
         let verifier: Arc<dyn ServerCertVerifier> = PeerServerVerifier::new(self, policy)?;
         Ok(verifier)
+    }
+}
+
+/// The protocol names a test gives as bytes, as the builders take them.
+pub fn alpns(names: &[&[u8]]) -> Vec<Alpn> {
+    names
+        .iter()
+        .map(|name| Alpn::try_from(*name).expect("a test's protocol name is text"))
+        .collect()
+}
+
+/// A builder's failure as the crate's error; a test supplies every input.
+pub fn flat(error: BuildError<PeerError>) -> PeerError {
+    match error {
+        BuildError::Failed(error) => error,
+        other => panic!("{other}"),
     }
 }

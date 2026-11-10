@@ -29,11 +29,11 @@ fields = ["dep:x509-parser"]
 tokio = ["dep:tokio", "dep:tokio-rustls", "coqui-peer/tokio"]
 # PIN pairing: coqui-peer's `pin` (SPAKE2, HKDF, HMAC).
 pin = ["coqui-peer/pin"]
-# `Policy`, `TlsSettings` and `PairConfig` as serde types, forwarding to their guatiao form (read and
-# written as text by any serde format); ids as text.
-serde = ["dep:serde", "dep:guatiao-serde", "coqui-peer/serde"]
+# `Policy` as a serde type and the settings types filled from any serde format through
+# `coqui_builder::Partial`; ids as text.
+serde = ["dep:serde", "coqui-builder/serde", "coqui-peer/serde"]
 # An access control list inside `Policy` (the `coqui-net-acl` crate).
-acl = ["dep:coqui-net-acl"]
+acl = ["dep:coqui-net-acl", "coqui-net-acl/describe"]
 # Verify servers against the operating system's roots and verifier (`Roots::platform`).
 platform-roots = ["dep:rustls-platform-verifier"]
 # The aws-lc-rs crypto provider (`Policy::crypto = Crypto::AwsLc`): post-quantum key exchange
@@ -47,18 +47,16 @@ fips = ["aws-lc", "rustls/fips"]
 [dependencies]
 # The peer id, trust store, pairing and handshake this crate is the TLS method of. Alpha: the
 # family's crates are released together, at exact versions.
-coqui-peer = { version = "=0.0.0-alpha.1", git = "https://github.com/Boriken-Dev/coqui-peer", rev = "381e2a8144a228e592dc7d82eeb7db85885422ec" }
+coqui-peer = { version = "=0.0.0-alpha.1", git = "https://github.com/Boriken-Dev/coqui-peer", rev = "984db3d54b73de10c7892b06fe269a259de2d1c5" }
 # TLS. Pre-1.0: rustls's current release line; the ring provider is passed explicitly. TLS 1.2
 # is rustls's own code (no dependency); a policy chooses whether it is offered.
 rustls = { version = "0.23.27", default-features = false, features = ["std", "ring", "tls12"] }
 # The signature verification algorithms the cipher profiles name; already a dependency of rustls.
 webpki = { package = "rustls-webpki", version = "0.103", default-features = false, features = ["ring"] }
 # The access control list inside a `Policy`, behind `acl`. Alpha, released with this crate.
-coqui-net-acl = { version = "0.0.0-alpha.0", git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "6cbcb4b937ea1902291aaf1636d4d6bd391adc3a", features = ["guatiao"], optional = true }
-# The settings types' value form and schema; alpha, by revision, as the family pins it.
-guatiao = { git = "https://github.com/Boriken-Dev/guatiao", rev = "0350bae7fef4cef2aa46ce73f1ef6be15983d83b", default-features = false, features = ["derive"] }
-# Reads and writes the settings types through serde, behind `serde`.
-guatiao-serde = { git = "https://github.com/Boriken-Dev/guatiao", rev = "0350bae7fef4cef2aa46ce73f1ef6be15983d83b", default-features = false, optional = true }
+coqui-net-acl = { version = "0.0.0-alpha.0", git = "https://github.com/Boriken-Dev/coqui-net-acl", rev = "839435acc29b76ec0190b7099f870863313d3fcd", optional = true }
+# Describes, fills, checks and builds the settings types and their builders; alpha, by revision, as the family pins it.
+coqui-builder = { git = "https://github.com/Boriken-Dev/coqui-builder", rev = "c1875f8276bd6366c38e9133fdb1181a0ffbaaad", features = ["derive"] }
 # The serde impls of the settings types, behind `serde`.
 serde = { version = "1", default-features = false, features = ["derive", "std"], optional = true }
 # Self-signed identities, behind `generate`. Pre-1.0: rcgen's and time's current release lines.
@@ -79,8 +77,8 @@ rustls-platform-verifier = { version = "0.7.1", default-features = false, option
 tempfile = "3"
 # Certificate chains and CAs in tests.
 rcgen = "0.14"
-# The settings types' text forms in tests, through guatiao-serde and through serde.
-guatiao-serde = { git = "https://github.com/Boriken-Dev/guatiao", rev = "0350bae7fef4cef2aa46ce73f1ef6be15983d83b", default-features = false, features = ["json", "toml", "yaml"] }
+# The settings types' text forms in tests, read into a `Partial`.
+coqui-builder = { git = "https://github.com/Boriken-Dev/coqui-builder", rev = "c1875f8276bd6366c38e9133fdb1181a0ffbaaad", features = ["derive", "serde"] }
 serde_json = "1"
 toml = "0.9"
 # Reads the extensions of generated certificates in tests.

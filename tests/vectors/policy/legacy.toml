@@ -10,4 +10,4 @@ require_ems = false
 [waiting]
 per_source = 16
 total = 1000
-rerecord = [60, 0]
+rerecord = "60s"

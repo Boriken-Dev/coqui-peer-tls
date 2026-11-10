@@ -29,7 +29,8 @@ fn one_source_filling_its_cap_does_not_block_another() {
     let directory = tempfile::tempdir().unwrap();
     // coqui-peer refuses a newcomer at a full source and spaces one source's records by default; this asks for the
     // replacing, unspaced behaviour the test is about.
-    let store = TrustStore::builder(directory.path())
+    let store = TrustStore::builder()
+        .state_dir(directory.path())
         .limits({
             let mut value = WaitingLimits::default();
             value.per_source = 2;

@@ -53,7 +53,8 @@ struct Device {
 
 fn device(hand: &Hand) -> Device {
     let directory = tempfile::tempdir().unwrap();
-    let store = TrustStore::builder(directory.path())
+    let store = TrustStore::builder()
+        .state_dir(directory.path())
         .clock(hand.clock())
         .build()
         .unwrap();
@@ -65,7 +66,8 @@ fn device(hand: &Hand) -> Device {
 }
 
 fn desk(hand: &Hand) -> PairingDesk {
-    PairingDesk::builder(random())
+    PairingDesk::builder()
+        .random(random())
         .clock(hand.clock())
         .build()
         .unwrap()
@@ -769,10 +771,11 @@ const EXPIRED: [u8; 3] = [1, 8, 2];
 fn a_joiner_that_stalls_is_told_expired_and_its_place_freed() {
     let hand = Hand::new();
     let (server, client) = (device(&hand), device(&hand));
-    let desk = PairingDesk::builder(random())
+    let desk = PairingDesk::builder()
+        .random(random())
         .options({
             let mut value = coqui_peer_tls::pair::PairingOptions::default();
-            value.pin_ttl = Duration::from_millis(300);
+            value.pin_ttl = Some(Duration::from_millis(300));
             value
         })
         .limits({
@@ -806,7 +809,7 @@ fn a_dialer_gives_up_after_its_timeout() {
     let held = thread::spawn(move || listener.accept().map(|(socket, _)| socket));
     let config = {
         let mut config = PairConfig::default();
-        config.timeout = Duration::from_millis(200);
+        config.timeout = Some(Duration::from_millis(200));
         config
     };
     let shown = Pin::parse(&CodeAlphabet::pin(), "000000").unwrap();
@@ -834,10 +837,11 @@ fn a_dialer_gives_up_after_its_timeout() {
 async fn async_a_joiner_that_stalls_is_told_expired() {
     let hand = Hand::new();
     let (server, client) = (device(&hand), device(&hand));
-    let desk = PairingDesk::builder(random())
+    let desk = PairingDesk::builder()
+        .random(random())
         .options({
             let mut value = coqui_peer_tls::pair::PairingOptions::default();
-            value.pin_ttl = Duration::from_millis(300);
+            value.pin_ttl = Some(Duration::from_millis(300));
             value
         })
         .build()

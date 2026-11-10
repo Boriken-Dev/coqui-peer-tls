@@ -26,10 +26,7 @@
   "waiting": {
     "per_source": 8,
     "total": 1000,
-    "rerecord": [
-      60,
-      0
-    ]
+    "rerecord": "60s"
   },
   "acl": {
     "rule": [

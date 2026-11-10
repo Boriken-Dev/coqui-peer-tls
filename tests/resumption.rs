@@ -182,13 +182,13 @@ async fn resumption_is_an_opt_in_reported_as_a_non_default() {
     let mut policy = Policy::modern();
     policy.allow_resumption = true;
     let built = server_config_with(&server, &client_pin, &[ALPN], &policy).unwrap();
-    let settings: Vec<&str> = built
-        .non_defaults
-        .iter()
-        .map(|non_default| non_default.setting.as_str())
+    let settings: Vec<String> = built
+        .non_defaults()
+        .into_iter()
+        .map(|non_default| non_default.setting)
         .collect();
     assert_eq!(settings, ["allow_resumption", "tls_versions"]);
-    assert_eq!(built.non_defaults[0].value, "true");
+    assert_eq!(built.non_defaults()[0].value.to_string(), "bool(true)");
     let server_config = Arc::new(built.config);
     let client_config = Arc::new(
         client_config_with(&client, &server_pin, &[ALPN], &policy)
@@ -261,15 +261,15 @@ async fn server_tls_configurations_resume_only_when_allowed() {
     let mut policy = Policy::modern();
     policy.allow_resumption = true;
     let built = server_config_without_client_auth_with(&server, &[ALPN], &policy).unwrap();
-    let settings: Vec<&str> = built
-        .non_defaults
-        .iter()
-        .map(|non_default| non_default.setting.as_str())
+    let settings: Vec<String> = built
+        .non_defaults()
+        .into_iter()
+        .map(|non_default| non_default.setting)
         .collect();
     assert_eq!(settings, ["allow_resumption", "tls_versions"]);
     let server_config = Arc::new(built.config);
     let built = client_config_without_identity_with(&server_pin, &[ALPN], &policy).unwrap();
-    assert_eq!(built.non_defaults.len(), 2);
+    assert_eq!(built.non_defaults().len(), 2);
     let client_config = Arc::new(built.config);
     let (accepted, _) = link_server_tls(&server_config, &client_config).await;
     assert_eq!(accepted, HandshakeKind::Full);

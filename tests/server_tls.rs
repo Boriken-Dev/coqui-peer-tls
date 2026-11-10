@@ -105,7 +105,7 @@ fn a_client_without_identity_reaches_a_server_tls_server_that_reports_no_peer() 
     let server = Identity::generate().unwrap();
     let built =
         server_config_without_client_auth_with(&server, &[ALPN], &Policy::default()).unwrap();
-    assert!(built.non_defaults.is_empty());
+    assert!(built.non_defaults().is_empty());
     let (address, served) = serve(built.config);
 
     let client = client_config_without_identity(&pinned(server.fingerprint()), &[ALPN]).unwrap();
@@ -350,8 +350,8 @@ fn a_pinning_client_refuses_a_chain_unless_its_policy_allows_one() {
     let mut policy = Policy::default();
     policy.allow_chain_when_pinned = true;
     let built = client_config_without_identity_with(&trust, &[], &policy).unwrap();
-    assert_eq!(built.non_defaults.len(), 1);
-    assert_eq!(built.non_defaults[0].setting, "allow_chain_when_pinned");
+    assert_eq!(built.non_defaults().len(), 1);
+    assert_eq!(built.non_defaults()[0].setting, "allow_chain_when_pinned");
     let (address, served) = serve(server_config_without_client_auth(&identity, &[]).unwrap());
     let (_, presented) = ping(address, built.config).unwrap();
     assert_eq!(presented.len(), 2);
